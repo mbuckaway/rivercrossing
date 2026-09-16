@@ -969,7 +969,7 @@ def test_render_given_a_pending_miss_disables_both_new_corrections() -> None:
     roster = _solo_roster()
     engine = _running_engine(roster)
     engine.record_miss(_dt(10, 2), reason="missed number")
-    view = _miss_view(engine)
+    view = _miss_view(engine, roster=roster)
 
     view.render()
 
@@ -2141,12 +2141,94 @@ def test_build_miss_fields_given_any_naive_instant_keeps_the_placeholders(
     assert fields.time == crossing_detail._local_time(crossed_at)
 
 
+# The miss's Edit answer, resolved: once the operator types a plate, the
+# preview names the rider and team that plate belongs to -- the entry
+# `build_fields` would show had the crossing been recorded -- while the
+# lap, timing and card cells keep the miss's own placeholders.
+
+
+def test_build_resolved_miss_fields_given_a_pooled_rider_plate_names_the_rider() -> None:
+    """A pooled rider's own plate previews that rider and the team."""
+    roster = _pooled_team_roster()
+    miss = PendingMiss(miss_seq=1, crossed_at=_dt(10, 2))
+
+    fields = crossing_detail.build_resolved_miss_fields(miss, "45", roster)
+
+    assert (fields.rider, fields.team, fields.plate) == ("Sarah", "Dirt Dynamos", "45")
+
+
+def test_build_resolved_miss_fields_given_a_relay_plate_names_the_entry() -> None:
+    """Relay riders carry no plate (S1), so the entry stands."""
+    roster = _relay_team_roster()
+    miss = PendingMiss(miss_seq=1, crossed_at=_dt(10, 2))
+
+    fields = crossing_detail.build_resolved_miss_fields(miss, "9", roster)
+
+    assert (fields.rider, fields.team, fields.plate) == ("Dirt Dynamos", "Dirt Dynamos", "9")
+
+
+def test_build_resolved_miss_fields_given_a_solo_plate_names_the_entry() -> None:
+    """A solo plate resolves to its rider and the "solo" team text."""
+    roster = _solo_roster()
+    miss = PendingMiss(miss_seq=1, crossed_at=_dt(10, 2))
+
+    fields = crossing_detail.build_resolved_miss_fields(miss, "12", roster)
+
+    assert (fields.rider, fields.team, fields.plate) == ("Amy", "solo", "12")
+
+
+@pytest.mark.parametrize("plate", ["999", ""], ids=["unknown", "blank"])
+def test_build_resolved_miss_fields_given_an_unresolved_plate_keeps_the_placeholders(
+    plate: str,
+) -> None:
+    """T-3/T-4 negative: an unresolved plate shows what was typed."""
+    roster = _solo_roster()
+    miss = PendingMiss(miss_seq=1, crossed_at=_dt(10, 2))
+
+    fields = crossing_detail.build_resolved_miss_fields(miss, plate, roster)
+
+    assert (fields.rider, fields.team, fields.plate) == ("-", "missed", plate)
+
+
+def test_build_resolved_miss_fields_given_a_resolved_plate_keeps_the_miss_timing() -> None:
+    """Only rider/team/plate move: the instant stays the miss's own."""
+    roster = _pooled_team_roster()
+    miss = PendingMiss(miss_seq=1, crossed_at=_dt(10, 2))
+
+    fields = crossing_detail.build_resolved_miss_fields(miss, "45", roster)
+
+    assert (fields.lap, fields.time, fields.lap_time) == ("", "10:02:00", "")
+    assert (fields.total, fields.card, fields.held) == ("", "", "Not yet scored")
+
+
+@given(plate=st.text())
+def test_build_resolved_miss_fields_given_any_typed_plate_keeps_the_timing(
+    plate: str,
+) -> None:
+    """T-7 property: only rider, team and plate can move."""
+    roster = _pooled_team_roster()
+    miss = PendingMiss(miss_seq=1, crossed_at=_dt(10, 2))
+
+    fields = crossing_detail.build_resolved_miss_fields(miss, plate, roster)
+
+    assert fields.plate == plate
+    assert (fields.lap, fields.time, fields.lap_time, fields.total, fields.card) == (
+        "",
+        "10:02:00",
+        "",
+        "",
+        "",
+    )
+    assert fields.held == "Not yet scored"
+
+
 # ------------------------------------------------------- the miss view
 
 
-def _miss_view(
+def _miss_view(  # noqa: PLR0913 -- (engine, roster, miss, plate)
     engine: RideEngine,
     *,
+    roster: Roster,
     miss: PendingMiss | None = None,
     plate: str | None = None,
 ) -> crossing_detail.MissDetailView:
@@ -2154,12 +2236,16 @@ def _miss_view(
 
     Built with ``object.__new__`` (``_view``'s own precedent): the
     handlers under test touch only these attributes, so no desktop and
-    no ``__init__`` control binding is needed. *plate* is the number
-    Edit's own prompt stored -- ``None`` when Edit never ran.
+    no ``__init__`` control binding is needed. *roster* is the ride's
+    own roster -- the plate preview's resolver
+    (``MissDetailView.roster``, the crossing mode's own attribute).
+    *plate* is the number Edit's own prompt stored -- ``None`` when
+    Edit never ran.
     """
     view = object.__new__(crossing_detail.MissDetailView)
     view.dialog = _RecordingDialog()
     view.miss = miss if miss is not None else engine.pending_misses()[-1]
+    view.roster = roster
     view.engine = engine
     view._miss_plate = plate
     for attr in _VALUE_ATTRS:
@@ -2178,7 +2264,7 @@ def test_render_given_a_pending_miss_fills_the_placeholder_cells() -> None:
     roster = _solo_roster()
     engine = _running_engine(roster)
     engine.record_miss(_dt(10, 2), reason="missed number")
-    view = _miss_view(engine)
+    view = _miss_view(engine, roster=roster)
 
     view.render()
 
@@ -2200,7 +2286,7 @@ def test_render_given_a_pending_miss_disables_delete_and_enables_edit() -> None:
     roster = _solo_roster()
     engine = _running_engine(roster)
     engine.record_miss(_dt(10, 2), reason="missed number")
-    view = _miss_view(engine)
+    view = _miss_view(engine, roster=roster)
 
     view.render()
 
@@ -2217,7 +2303,7 @@ def test_on_edit_given_a_miss_opens_the_plate_prompt_on_an_empty_field(
     roster = _solo_roster()
     engine = _running_engine(roster)
     engine.record_miss(_dt(10, 2), reason="missed number")
-    view = _miss_view(engine)
+    view = _miss_view(engine, roster=roster)
     calls = _stub_plate_dialog(monkeypatch, None)
 
     view._on_edit(_RecordingEvent())
@@ -2233,7 +2319,7 @@ def test_on_edit_given_a_miss_and_a_saved_number_stores_and_shows_it(
     roster = _solo_roster()
     engine = _running_engine(roster)
     engine.record_miss(_dt(10, 2), reason="missed number")
-    view = _miss_view(engine)
+    view = _miss_view(engine, roster=roster)
     _stub_plate_dialog(monkeypatch, "34")
     event = _RecordingEvent()
 
@@ -2243,12 +2329,56 @@ def test_on_edit_given_a_miss_and_a_saved_number_stores_and_shows_it(
     assert (view.dialog.modal_ids, len(engine.pending_misses())) == ([], 1)
 
 
+def test_on_edit_given_a_resolvable_number_rerenders_the_resolved_fields(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Edit previews the rider and team the typed plate names."""
+    roster = _two_solo_roster()
+    engine = _running_engine(roster)
+    engine.record_miss(_dt(10, 2), reason="missed number")
+    view = _miss_view(engine, roster=roster)
+    _stub_plate_dialog(monkeypatch, "34")
+
+    view._on_edit(_RecordingEvent())
+
+    assert (
+        view.crossing_rider_lbl.value,
+        view.crossing_team_lbl.value,
+        view.crossing_plate_lbl.value,
+        view.crossing_lap_lbl.value,
+        view.crossing_time_lbl.value,
+        view.crossing_lap_time_lbl.value,
+        view.crossing_total_lbl.value,
+        view.crossing_card_lbl.value,
+        view.crossing_held_lbl.value,
+    ) == ("Bob", "solo", "34", "", "10:02:00", "", "", "", "Not yet scored")
+
+
+def test_on_edit_given_a_pooled_rider_number_rerenders_its_team(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A pooled rider's plate previews the rider and the team name."""
+    roster = _pooled_team_roster()
+    engine = _running_engine(roster)
+    engine.record_miss(_dt(10, 2), reason="missed number")
+    view = _miss_view(engine, roster=roster)
+    _stub_plate_dialog(monkeypatch, "45")
+
+    view._on_edit(_RecordingEvent())
+
+    assert (
+        view.crossing_rider_lbl.value,
+        view.crossing_team_lbl.value,
+        view.crossing_plate_lbl.value,
+    ) == ("Sarah", "Dirt Dynamos", "45")
+
+
 def test_on_ok_given_a_plate_assigns_it_to_the_miss_and_closes() -> None:
     """OK records the crossing and deals its card at that instant."""
     roster = _two_solo_roster()
     engine = _running_engine(roster)
     engine.record_miss(_dt(10, 2), reason="missed number")
-    view = _miss_view(engine, plate="34")
+    view = _miss_view(engine, roster=roster, plate="34")
     shoe_before = engine.shoe_remaining
 
     view._on_ok(_RecordingEvent())
@@ -2272,7 +2402,7 @@ def test_on_ok_given_a_blank_stored_plate_refuses_and_keeps_the_dialog_open(
     roster = _solo_roster()
     engine = _running_engine(roster)
     engine.record_miss(_dt(10, 2), reason="missed number")
-    view = _miss_view(engine, plate=plate)
+    view = _miss_view(engine, roster=roster, plate=plate)
 
     view._on_ok(_RecordingEvent())
 
@@ -2286,7 +2416,7 @@ def test_on_ok_given_an_unknown_plate_refuses_and_keeps_the_dialog_open() -> Non
     roster = _two_solo_roster()
     engine = _running_engine(roster)
     engine.record_miss(_dt(10, 2), reason="missed number")
-    view = _miss_view(engine, plate="999")
+    view = _miss_view(engine, roster=roster, plate="999")
 
     view._on_ok(_RecordingEvent())
 
@@ -2300,7 +2430,7 @@ def test_on_ok_given_a_finished_ride_keeps_the_miss_dialog_open() -> None:
     engine = _running_engine(roster)
     engine.record_miss(_dt(10, 2), reason="missed number")
     engine.finish()
-    view = _miss_view(engine, plate="34")
+    view = _miss_view(engine, roster=roster, plate="34")
 
     view._on_ok(_RecordingEvent())
 
@@ -2591,9 +2721,11 @@ def test_open_crossing_detail_for_given_a_miss_row_opens_the_miss_view(
     opened: list[tuple[object, ...]] = []
 
     class _RecordingMissView:
-        def __init__(self, dialog: object, *, miss: object, engine: object) -> None:
+        def __init__(  # noqa: PLR0913 -- (dialog, miss, roster, engine) mirrors the view
+            self, dialog: object, *, miss: object, roster: object, engine: object
+        ) -> None:
             """Record the decorated dialog and the miss it shows."""
-            opened.append((dialog, miss, engine))
+            opened.append((dialog, miss, roster, engine))
 
     monkeypatch.setattr(app_module.zoom, "apply_to", lambda _window: None)
     monkeypatch.setattr(dialogs, "run_dialog", _run_dialog_stub)
@@ -2601,7 +2733,7 @@ def test_open_crossing_detail_for_given_a_miss_row_opens_the_miss_view(
 
     app_module._open_crossing_detail_for(context, 0)
 
-    assert opened == [(window, engine.pending_misses()[0], engine)]
+    assert opened == [(window, engine.pending_misses()[0], roster, engine)]
     assert window.destroyed is True
 
 

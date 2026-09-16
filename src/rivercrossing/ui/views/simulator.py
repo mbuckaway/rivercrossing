@@ -10,7 +10,13 @@ code-side behaviour:
   behaviour dropdowns (G9), seeds them from the persisted settings,
   derives the solo field from the riders and teams counts, forwards
   Generate Riders and Check to the presenter's rules, and runs the
-  race through :class:`SimRunningDialog` when GO validates.
+  race through :class:`SimRunningDialog` when GO validates. Opened
+  with no ride at all (``roster=None``) it is trimmed instead: every
+  generator and race control is disabled, its fields are seeded from
+  the same settings anyway (the app's close-persist reads them back),
+  and ``new_ride_btn`` -- the dialog's one live action -- routes to
+  the app's New Ride flow and closes the dialog. With a ride already
+  open that button has nothing to do, so it is disabled and unbound.
 * :class:`SimRunningDialog` owns the progress gauge and the status
   line, and pumps the event loop so the gauge repaints and Cancel is
   dispatched while the race runs.
@@ -137,6 +143,16 @@ class SimulatorDialog(DialogFindMixin):  # _find: ui.views._support
     the three behaviour choices (G9) -- as last confirmed in
     :meth:`_on_generate_riders`/:meth:`_on_go`; the app reads them
     after the modal ends, when the real window is gone (plan §1).
+
+    Opened with no ride (``roster=None``) it is trimmed instead, on
+    :meth:`_open_without_ride`: every generator and race control is
+    disabled and ``new_ride_btn`` is the one live action, so the
+    operator's way forward is the app's own New Ride route
+    (:attr:`on_new_ride`), which the dialog runs before it closes. The
+    dead fields are seeded from the settings all the same, so the
+    close-persist writes the operator's counts back rather than the
+    XRC's authored ones. Opened over a ride, ``new_ride_btn`` is
+    disabled and left unbound -- there is no ride to create.
     """
 
     # The five spin values, snapshotted before each successful close so
@@ -147,12 +163,22 @@ class SimulatorDialog(DialogFindMixin):  # _find: ui.views._support
     # same way and from the same three dropdowns.
     sim_behaviors: tuple[int, int, int]
 
-    def __init__(  # noqa: PLR0913 -- (dialog, engine, roster) + the seeds and the speed setting
+    # Typed non-optional on purpose: the no-ride open sets ``None``
+    # (__init__ below), and nothing reachable then dereferences it --
+    # every control that would is disabled and unbound.
+    presenter: SimulatorPresenter
+
+    # The app's New Ride route, called by ``new_ride_btn``; ``None``
+    # when the app threaded none in.
+    on_new_ride: Callable[[], None] | None
+
+    def __init__(  # noqa: PLR0913 -- (dialog, engine, roster) + the seeds, the speed setting and the New Ride route
         self,
         dialog: wx.Dialog,
         *,
-        engine: RideEngine,
-        roster: Roster,
+        engine: RideEngine | None,
+        roster: Roster | None,
+        on_new_ride: Callable[[], None] | None = None,
         sim_riders: int = 175,
         sim_teams: int = 40,
         sim_solo: int = 15,
@@ -170,7 +196,14 @@ class SimulatorDialog(DialogFindMixin):  # _find: ui.views._support
                 loaded from ``simulation.xrc``.
             engine: The live ride engine the simulated crossings
                 record into; its lap length sizes the interval seed.
+                ``None`` when no ride is open.
             roster: The in-memory roster the generator fills.
+                ``None`` opens the dialog with no ride: every
+                generator and race control is disabled and only
+                ``new_ride_btn`` stays live.
+            on_new_ride: The app's New Ride route, run when
+                ``new_ride_btn`` fires; ``None`` when the app
+                threaded none in.
             sim_riders: The persisted "Number of riders" seed.
             sim_teams: The persisted "Number of teams" seed.
             sim_solo: The persisted "Solo riders" seed, replaced on
@@ -186,7 +219,7 @@ class SimulatorDialog(DialogFindMixin):  # _find: ui.views._support
                 setting the interval seed derives from.
         """
         self.dialog = dialog
-        self.presenter = SimulatorPresenter(engine, roster)
+        self.on_new_ride = on_new_ride
 
         self.riders_spin = self._find(ids.RIDERS_SPIN, wx.SpinCtrl)
         self.teams_spin = self._find(ids.TEAMS_SPIN, wx.SpinCtrl)
@@ -199,36 +232,117 @@ class SimulatorDialog(DialogFindMixin):  # _find: ui.views._support
         self.check_btn = self._find(ids.CHECK_BTN, wx.Button)
         self.gen_riders_btn = self._find(ids.GEN_RIDERS_BTN, wx.Button)
         self.go_btn = self._find(ids.GO_BTN, wx.Button)
+        # Resolved on both opens so the ride-open path can disable it
+        # rather than leave XRC's enabled-but-unbound button clickable.
+        self.new_ride_btn = self._find(ids.NEW_RIDE_BTN, wx.Button)
 
-        self._seed_spins(
-            (sim_riders, sim_teams, sim_solo, sim_laps, sim_interval),
-            avg_speed_kmh=avg_speed_kmh,
-        )
-        self._seed_choices((sim_short_laps, sim_lapped, sim_team_stop))
+        self.sim_infobar = self._build_infobar()
+
+        seeds = (sim_riders, sim_teams, sim_solo, sim_laps, sim_interval)
+        behaviors = (sim_short_laps, sim_lapped, sim_team_stop)
+
+        if roster is None:
+            # The no-ride open has nothing to present, and no method
+            # reachable from it dereferences the presenter.
+            self.presenter = None  # type: ignore[assignment]
+            self._open_without_ride(seeds, behaviors, avg_speed_kmh=avg_speed_kmh)
+            return
+
+        # SimulatorPresenter's own signature still demands an engine,
+        # even though the dialog can open with none; widening that is
+        # the presenter's change to make, not this view's.
+        self.presenter = SimulatorPresenter(engine, roster)  # type: ignore[arg-type]
+        self._seed_spins(seeds, engine=engine, avg_speed_kmh=avg_speed_kmh)
+        self._seed_choices(behaviors)
         self._auto_solo()
         self._snapshot_sim_values()
 
-        self.sim_infobar = self._build_infobar()
+        # A ride is already open, so New Ride has nothing to do: it
+        # stays in the frozen button row disabled and unbound, never a
+        # live-looking control with no handler behind it.
+        self.new_ride_btn.Enable(False)  # noqa: FBT003 -- wx API takes a positional bool
 
         self._bind_events()
         self._apply_roster_state()
         self.dialog.SetMinSize(wx.Size(MIN_WIDTH, -1))
         self.dialog.Fit()
 
-    def _seed_spins(self, values: tuple[int, int, int, int, int], *, avg_speed_kmh: float) -> None:
+    def _open_without_ride(
+        self,
+        seeds: tuple[int, int, int, int, int],
+        behaviors: tuple[int, int, int],
+        *,
+        avg_speed_kmh: float,
+    ) -> None:
+        """Trim a ride-less open down to New Ride.
+
+        There is no roster to generate into and no engine to race, so
+        the five counts, the three behaviour dropdowns, Generate
+        Riders, Check and GO are all disabled, and ``new_ride_btn`` --
+        the row's only live control -- routes to New Ride and closes
+        the dialog.
+
+        The dead fields are still seeded from *seeds*/*behaviors*: the
+        app reads :attr:`sim_values`/:attr:`sim_behaviors` after the
+        modal ends and writes them back, so a dialog left on the XRC's
+        authored defaults would clobber the operator's saved counts.
+        With no engine threaded in the interval keeps the persisted
+        seed rather than deriving one from the ride's lap length.
+        """
+        self.new_ride_btn.Enable(True)  # noqa: FBT003 -- wx API takes a positional bool
+        for control in (
+            self.riders_spin,
+            self.teams_spin,
+            self.solo_spin,
+            self.laps_spin,
+            self.interval_spin,
+            self.short_lap_choice,
+            self.lapped_choice,
+            self.team_stop_choice,
+            self.gen_riders_btn,
+            self.check_btn,
+            self.go_btn,
+        ):
+            control.Enable(False)  # noqa: FBT003 -- wx API takes a positional bool
+        self._seed_spins(seeds, engine=None, avg_speed_kmh=avg_speed_kmh)
+        self._seed_choices(behaviors)
+        self._snapshot_sim_values()
+        self.dialog.Bind(wx.EVT_BUTTON, self._on_new_ride, self.new_ride_btn)
+        self.dialog.SetMinSize(wx.Size(MIN_WIDTH, -1))
+        self.dialog.Fit()
+
+    def _on_new_ride(self, _event: wx.CommandEvent) -> None:
+        """Route to New Ride, then close this dialog (no-ride open).
+
+        The ride-less dialog cannot create a ride itself, so it hands
+        over through :attr:`on_new_ride` and ends the modal with
+        ``wx.ID_OK`` -- the same "the operator acted" result Generate
+        and GO close on, so the app persists its settings either way.
+        """
+        if self.on_new_ride is not None:
+            self.on_new_ride()
+        self.dialog.EndModal(wx.ID_OK)
+
+    def _seed_spins(
+        self,
+        values: tuple[int, int, int, int, int],
+        *,
+        engine: RideEngine | None,
+        avg_speed_kmh: float,
+    ) -> None:
         """Seed the five spins with *values* (plan §1/§3).
 
         ``wx.SpinCtrl.SetValue`` clamps to the control's own min/max, so
         a hand-edited settings file carrying an out-of-range count
         still opens on a usable field. The interval opens on the
-        speed-derived default whenever an engine is threaded in -- the
+        speed-derived default whenever *engine* is threaded in -- the
         live ride's own lap length decides (plan §3) -- and falls back
-        to the persisted value for a dialog with no engine (the plain
-        XRC route). The keyword defaults mirror the XRC values, so an
-        open with no seeds passed keeps them.
+        to the persisted value for a dialog with no engine (the
+        no-ride open, whose fields are seeded but never raced). The
+        keyword defaults mirror the XRC values, so an open with no
+        seeds passed keeps them.
         """
         riders, teams, solo, laps, interval = values
-        engine = self.presenter.engine
         if engine is not None:
             interval = default_interval_minutes(engine.config.lap_km, avg_speed_kmh)
         self.riders_spin.SetValue(riders)

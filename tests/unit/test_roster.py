@@ -155,6 +155,86 @@ def test_roster_construction_max_team_size_limit_matches_hard_ceiling() -> None:
     assert (MIN_TEAM_SIZE, MAX_TEAM_SIZE_LIMIT) == (2, 10)
 
 
+# --------------------------------------------------------- update_shape
+
+
+def test_update_shape_replaces_entry_mode_max_team_size_and_plate_model() -> None:
+    """update_shape assigns all three ride-wide settings at once."""
+    roster = Roster()
+
+    roster.update_shape(
+        entry_mode=EntryMode.MIXED,
+        max_team_size=6,
+        plate_model=PlateModel.TEAM_RELAY,
+    )
+
+    assert (roster.entry_mode, roster.max_team_size, roster.plate_model) == (
+        EntryMode.MIXED,
+        6,
+        PlateModel.TEAM_RELAY,
+    )
+
+
+def test_update_shape_appends_no_audit_event() -> None:
+    """update_shape swaps settings; it audits nothing at all."""
+    roster = Roster()
+
+    roster.update_shape(
+        entry_mode=EntryMode.MIXED,
+        max_team_size=6,
+        plate_model=PlateModel.TEAM_RELAY,
+    )
+
+    assert roster.audit_log == ()
+
+
+def test_update_shape_leaves_existing_entries_untouched() -> None:
+    """update_shape never rewrites the entries already present."""
+    roster = Roster()
+    entry = roster.create_solo_entry(first_name="Alex", last_name="", plate="1")
+
+    roster.update_shape(
+        entry_mode=EntryMode.MIXED,
+        max_team_size=6,
+        plate_model=PlateModel.TEAM_RELAY,
+    )
+
+    assert (roster.entries, entry.plate, entry.riders[0].plate) == ((entry,), "1", "1")
+
+
+@pytest.mark.parametrize("max_team_size", [1, 11])  # min - 1, max + 1
+def test_update_shape_max_team_size_out_of_range_raises(max_team_size: int) -> None:
+    """max_team_size outside 2..10 raises on update_shape too."""
+    roster = Roster()
+
+    with pytest.raises(TeamSizeError, match=re.escape("max_team_size")):
+        roster.update_shape(
+            entry_mode=EntryMode.MIXED,
+            max_team_size=max_team_size,
+            plate_model=PlateModel.TEAM_RELAY,
+        )
+
+    assert (roster.entry_mode, roster.max_team_size, roster.plate_model) == (
+        EntryMode.SOLO,
+        DEFAULT_MAX_TEAM_SIZE,
+        PlateModel.RIDER_POOLED,
+    )
+
+
+@pytest.mark.parametrize("max_team_size", [2, 3, 9, 10])  # min, min+1, max-1, max
+def test_update_shape_max_team_size_in_range_is_accepted(max_team_size: int) -> None:
+    """max_team_size within 2..10 is accepted as given."""
+    roster = Roster()
+
+    roster.update_shape(
+        entry_mode=EntryMode.MIXED,
+        max_team_size=max_team_size,
+        plate_model=PlateModel.TEAM_RELAY,
+    )
+
+    assert roster.max_team_size == max_team_size
+
+
 # ---------------------------------------------------- create_solo_entry
 
 
@@ -457,7 +537,8 @@ def test_next_free_plate_is_one_past_the_highest_numeric_plate_in_use() -> None:
 def test_next_free_plate_ignores_non_numeric_plates() -> None:
     """A non-numeric plate never influences next_free_plate's result."""
     roster = Roster(plate_model=PlateModel.TEAM_RELAY)
-    roster.create_solo_entry(first_name="rider", last_name="", plate="paceCAR")
+    # Only the unvalidated restore seam can still introduce one.
+    roster.load_entries([Entry(plate="paceCAR", display_name="Rider", type=EntryType.SOLO)])
 
     assert roster.next_free_plate() == "1"
 
@@ -2792,11 +2873,170 @@ def test_add_rider_to_team_pooled_non_numeric_plate_raises_and_keeps_the_team() 
     assert [rider.plate for rider in entry.riders] == ["1", "2"]
 
 
+# ------- review fix: relay plates are whole numbers too (W7 extended)
+# W7 closed the relay-blank hole; this closes the rest. A relay plate
+# is the CSV NUMBER column's domain exactly like a pooled one, so every
+# plate this module accepts is a whole-number string. The refused values
+# are a letter, an alphanumeric, a blank, and the two punctuation plates
+# a NUMBER cell carries; the accepted ones are the brief's.
+
+_RELAY_NON_WHOLE_PLATES = [
+    ("", "plate '' must not be empty"),
+    ("   ", "plate '   ' must not be empty"),
+    ("A1", "plate 'A1' must be a whole number"),
+    ("77A", "plate '77A' must be a whole number"),
+    (".", "plate '.' must be a whole number"),
+    ("-", "plate '-' must be a whole number"),
+]
+
+_RELAY_WHOLE_PLATES = ["1", "77"]
+
+
+@pytest.mark.parametrize(("plate", "problem"), _RELAY_NON_WHOLE_PLATES)
+def test_create_solo_entry_relay_non_whole_plate_raises_plate_shape_error(
+    plate: str, problem: str
+) -> None:
+    """team_relay: a solo entry's plate must be a whole number."""
+    roster = Roster(plate_model=PlateModel.TEAM_RELAY)
+
+    with pytest.raises(PlateShapeError, match=re.escape(problem)):
+        roster.create_solo_entry(first_name="Alex", last_name="", plate=plate)
+
+    assert roster.entries == ()
+
+
+@pytest.mark.parametrize("plate", _RELAY_WHOLE_PLATES)
+def test_create_solo_entry_relay_whole_number_plate_is_stored_on_the_entry(plate: str) -> None:
+    """team_relay: the plate stays on the entry, not on the rider."""
+    roster = Roster(plate_model=PlateModel.TEAM_RELAY)
+
+    entry = roster.create_solo_entry(first_name="Alex", last_name="", plate=plate)
+
+    assert (entry.plate, entry.riders[0].plate) == (plate, None)
+
+
+@pytest.mark.parametrize(("plate", "problem"), _RELAY_NON_WHOLE_PLATES)
+def test_create_team_entry_relay_non_whole_plate_raises_plate_shape_error(
+    plate: str, problem: str
+) -> None:
+    """team_relay: a team's own plate must be a whole number too."""
+    roster = Roster(entry_mode=EntryMode.MIXED, plate_model=PlateModel.TEAM_RELAY)
+
+    with pytest.raises(PlateShapeError, match=re.escape(problem)):
+        roster.create_team_entry(
+            display_name="Team A",
+            riders=[Rider(first_name="Alex"), Rider(first_name="Bo")],
+            plate=plate,
+        )
+
+    assert roster.entries == ()
+
+
+@pytest.mark.parametrize("plate", _RELAY_WHOLE_PLATES)
+def test_create_team_entry_relay_whole_number_plate_is_accepted(plate: str) -> None:
+    """team_relay: the plate is the team's; riders stay plateless."""
+    roster = Roster(entry_mode=EntryMode.MIXED, plate_model=PlateModel.TEAM_RELAY)
+
+    entry = roster.create_team_entry(
+        display_name="Team A",
+        riders=[Rider(first_name="Alex"), Rider(first_name="Bo")],
+        plate=plate,
+    )
+
+    assert (entry.plate, [rider.plate for rider in entry.riders]) == (plate, [None, None])
+
+
+@pytest.mark.parametrize(("plate", "problem"), _RELAY_NON_WHOLE_PLATES)
+def test_create_team_entry_of_one_relay_non_whole_plate_raises_plate_shape_error(
+    plate: str, problem: str
+) -> None:
+    """team_relay: the transient size-1 path refuses a bad plate."""
+    roster = Roster(entry_mode=EntryMode.MIXED, plate_model=PlateModel.TEAM_RELAY)
+
+    with pytest.raises(PlateShapeError, match=re.escape(problem)):
+        roster.create_team_entry_of_one(
+            display_name="Team A", rider=Rider(first_name="Alex"), plate=plate
+        )
+
+    assert roster.entries == ()
+
+
+@pytest.mark.parametrize(("plate", "problem"), _RELAY_NON_WHOLE_PLATES)
+def test_create_empty_team_relay_non_whole_plate_raises_plate_shape_error(
+    plate: str, problem: str
+) -> None:
+    """team_relay: an empty team's own plate is a whole number too."""
+    roster = Roster(entry_mode=EntryMode.MIXED, plate_model=PlateModel.TEAM_RELAY)
+
+    with pytest.raises(PlateShapeError, match=re.escape(problem)):
+        roster.create_empty_team(display_name="Trail Blazers", plate=plate)
+
+    assert roster.entries == ()
+
+
+@pytest.mark.parametrize(("plate", "problem"), _RELAY_NON_WHOLE_PLATES)
+def test_change_solo_plate_relay_non_whole_plate_raises_and_changes_nothing(
+    plate: str, problem: str
+) -> None:
+    """team_relay: change_solo_plate refuses a non-whole plate."""
+    roster = Roster(plate_model=PlateModel.TEAM_RELAY)
+    entry = roster.create_solo_entry(first_name="Alex", last_name="", plate="9")
+
+    with pytest.raises(PlateShapeError, match=re.escape(problem)):
+        roster.change_solo_plate(entry, plate=plate)
+
+    assert (entry.plate, entry.riders[0].plate) == ("9", None)
+
+
+@pytest.mark.parametrize("plate", _RELAY_WHOLE_PLATES)
+def test_change_solo_plate_relay_whole_number_plate_is_accepted(plate: str) -> None:
+    """team_relay: a whole-number change updates the entry only."""
+    roster = Roster(plate_model=PlateModel.TEAM_RELAY)
+    entry = roster.create_solo_entry(first_name="Alex", last_name="", plate="9")
+
+    roster.change_solo_plate(entry, plate=plate)
+
+    assert (entry.plate, entry.riders[0].plate) == (plate, None)
+
+
+@pytest.mark.parametrize(("plate", "problem"), _RELAY_NON_WHOLE_PLATES)
+def test_change_team_plate_non_whole_plate_raises_and_changes_nothing(
+    plate: str, problem: str
+) -> None:
+    """team_relay: change_team_plate refuses a non-whole plate."""
+    roster = Roster(entry_mode=EntryMode.MIXED, plate_model=PlateModel.TEAM_RELAY)
+    entry = roster.create_team_entry(
+        display_name="Team A",
+        riders=[Rider(first_name="Alex"), Rider(first_name="Bo")],
+        plate="5",
+    )
+
+    with pytest.raises(PlateShapeError, match=re.escape(problem)):
+        roster.change_team_plate(entry, plate=plate)
+
+    assert entry.plate == "5"
+
+
+@pytest.mark.parametrize("plate", _RELAY_WHOLE_PLATES)
+def test_change_team_plate_whole_number_plate_is_accepted(plate: str) -> None:
+    """team_relay: a whole-number change updates the entry only."""
+    roster = Roster(entry_mode=EntryMode.MIXED, plate_model=PlateModel.TEAM_RELAY)
+    entry = roster.create_team_entry(
+        display_name="Team A",
+        riders=[Rider(first_name="Alex"), Rider(first_name="Bo")],
+        plate="5",
+    )
+
+    roster.change_team_plate(entry, plate=plate)
+
+    assert (entry.plate, [rider.plate for rider in entry.riders]) == (plate, [None, None])
+
+
 # ------------- W7: plates must be non-empty (relay-blank hole closed)
 
 
 def test_create_solo_entry_relay_blank_plate_raises_plate_shape_error() -> None:
-    """team_relay: a solo entry's plate must be a non-empty string."""
+    """team_relay: a solo entry's plate must not be blank."""
     roster = Roster(plate_model=PlateModel.TEAM_RELAY)
 
     with pytest.raises(PlateShapeError, match=re.escape("plate '' must not be empty")):
@@ -2915,9 +3155,9 @@ def test_roster_create_empty_team_relay_uses_the_given_relay_plate() -> None:
     """team_relay: the given plate becomes the empty entry's plate."""
     roster = Roster(entry_mode=EntryMode.MIXED, plate_model=PlateModel.TEAM_RELAY)
 
-    entry = roster.create_empty_team(display_name="Trail Blazers", plate="RC 88")
+    entry = roster.create_empty_team(display_name="Trail Blazers", plate="120")
 
-    assert (entry.plate, entry.type, entry.team_size) == ("RC 88", EntryType.TEAM, 0)
+    assert (entry.plate, entry.type, entry.team_size) == ("120", EntryType.TEAM, 0)
     assert entry.riders == []
 
 

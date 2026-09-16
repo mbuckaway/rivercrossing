@@ -800,7 +800,7 @@ def test_show_crossing_detail_dialog_given_a_pending_miss_builds_the_miss_view(
 
     app_module._show_crossing_detail_dialog(context, engine, miss)
 
-    assert built == [{"miss": miss, "engine": engine}]
+    assert built == [{"miss": miss, "roster": context.roster, "engine": engine}]
 
 
 # ================================================================== D

@@ -68,10 +68,10 @@ class TargetKind(Enum):
     COMMAND = "command"
 
 
-_DRAFT = frozenset({RideStatus.DRAFT})
 _RUNNING = frozenset({RideStatus.RUNNING})
 _RUNNING_REOPENED = frozenset({RideStatus.RUNNING, RideStatus.REOPENED})
 _FINISHED = frozenset({RideStatus.FINISHED})
+_DRAFT_RUNNING = frozenset({RideStatus.DRAFT, RideStatus.RUNNING})
 _DRAFT_RUNNING_REOPENED = frozenset({RideStatus.DRAFT, RideStatus.RUNNING, RideStatus.REOPENED})
 
 
@@ -95,8 +95,9 @@ class Enablement:
             open" (D1): the row is enabled only while no ride is
             loaded, since the setup dialog it opens is the way *into*
             a ride and Edit Ride… is the row for one already open.
-        requires_ride_stopped: Start Ride's "or stopped RUNNING"
-            clause -- only consulted while ``status == RUNNING``.
+        requires_ride_stopped: The "or stopped RUNNING" clause -- only
+            consulted while ``status == RUNNING``. Start Ride, Clear
+            Ride… and Simulation… declare it.
         teams_allowed: The ride's entry_mode is mixed, so team
             records exist to edit (Phase 4's Teams Editor gate).
         min_crossings: The row's "≥1 crossing" condition, as a
@@ -221,10 +222,13 @@ ROUTE_TABLE: tuple[MenuRoute, ...] = (
         label="Simulation…",
         ids=("mi_simulation",),
         # The Rider Simulator generates a placeholder field, so it only
-        # makes sense on a ride whose roster is still open for edits.
+        # makes sense while the roster is still open for edits -- DRAFT,
+        # or a RUNNING ride whose console Stop has locked entry. Its GO
+        # leaves the ride stopped-RUNNING, so the row stays live for a
+        # second rehearsal.
         kind=TargetKind.DIALOG,
         target=ids.SIMULATION_DLG,
-        enabled_when=Enablement(requires_ride_open=True, allowed_states=_DRAFT),
+        enabled_when=Enablement(allowed_states=_DRAFT_RUNNING, requires_ride_stopped=True),
     ),
     MenuRoute(
         menu="File",

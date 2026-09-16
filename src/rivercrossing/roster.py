@@ -9,11 +9,12 @@ none; ``rider_pooled`` (the default) gives every rider a unique
 plate, with the entry's own plate derived -- the rider's own plate
 for a solo entry, the lowest-numbered rider's plate for a team.
 Every entry's and pooled rider's plate shares one namespace per
-ride (R-20). A ``rider_pooled`` plate is always a whole-number
-string -- the CSV NUMBER column's domain, and what "lowest-numbered"
-needs to compare -- while a ``team_relay`` plate may be any
-non-empty string (W7: blank plates are refused everywhere;
-``next_free_plate`` ignores non-numeric plates either way).
+ride (R-20), and every plate -- ``rider_pooled`` or ``team_relay`` --
+is a whole-number string: the CSV NUMBER column's domain, and what
+"lowest-numbered" needs to compare. W7 refuses blank plates
+everywhere and every plate entry point refuses non-numeric ones;
+``next_free_plate`` still ignores a non-numeric plate, which only
+the unvalidated :meth:`Roster.load_entries` can restore.
 
 W8's empty teams (R-81 amended in that workstream) relax the
 entry's lower bound further: :meth:`Roster.create_empty_team`
@@ -290,13 +291,31 @@ def _lowest_plate(plates: Iterable[str]) -> str:
     return min(plates, key=int)
 
 
+def _require_max_team_size(max_team_size: int) -> None:
+    """Raise TeamSizeError unless *max_team_size* is 2..10 (R-12).
+
+    The one guard for the ride-wide ceiling, shared by
+    :meth:`Roster.__init__` and :meth:`Roster.update_shape`.
+
+    Raises:
+        TeamSizeError: *max_team_size* is outside 2..10.
+    """
+    if not MIN_TEAM_SIZE <= max_team_size <= MAX_TEAM_SIZE_LIMIT:
+        msg = (
+            f"max_team_size must be between {MIN_TEAM_SIZE} and "
+            f"{MAX_TEAM_SIZE_LIMIT}, got {max_team_size}"
+        )
+        raise TeamSizeError(msg)
+
+
 def _require_whole_plate(plate: str) -> None:
     """Raise PlateShapeError unless *plate* is a whole-number string.
 
-    Pooled plates are the NUMBER column's domain (spec S7): they feed
-    ``_lowest_plate``'s "lowest-numbered" derivation, which needs
-    comparable integers. A team_relay plate may be any non-empty
-    string, so relay callers never invoke this.
+    Every plate this module accepts is the NUMBER column's domain
+    (spec S7), relay plates included: they feed the same per-ride
+    namespace and the same CSV round trip. Pooled plates additionally
+    feed ``_lowest_plate``'s "lowest-numbered" derivation, which needs
+    comparable integers.
 
     Raises:
         PlateShapeError: *plate* contains a non-digit character.
@@ -312,10 +331,9 @@ def _require_plate_nonempty(plate: str) -> None:
     W7 closes the relay-blank hole: a blank or whitespace-only plate
     is refused by every plate entry point -- create paths reach it
     through ``_shape_and_validate``, edit paths through the three
-    ``change_*_plate`` methods. This resolves the csvio-vs-roster
-    docstring contradiction in favour of NON-EMPTY (csvio's own
-    module docstring now records the same resolution): a relay plate
-    is "any non-empty string", never a blank one.
+    ``change_*_plate`` methods. Every caller checks this before
+    :func:`_require_whole_plate`, so a blank plate reads as blank
+    rather than as a malformed number.
 
     Raises:
         PlateShapeError: *plate* is empty or whitespace-only.
@@ -450,12 +468,7 @@ class Roster:
         Raises:
             TeamSizeError: *max_team_size* is outside 2..10.
         """
-        if not MIN_TEAM_SIZE <= max_team_size <= MAX_TEAM_SIZE_LIMIT:
-            msg = (
-                f"max_team_size must be between {MIN_TEAM_SIZE} and "
-                f"{MAX_TEAM_SIZE_LIMIT}, got {max_team_size}"
-            )
-            raise TeamSizeError(msg)
+        _require_max_team_size(max_team_size)
         self._entry_mode = entry_mode
         self._max_team_size = max_team_size
         self._plate_model = plate_model
@@ -506,6 +519,29 @@ class Roster:
         for the lock matrix to consult.
         """
         self._status = value
+
+    def update_shape(
+        self, *, entry_mode: EntryMode, max_team_size: int, plate_model: PlateModel
+    ) -> None:
+        """Replace this ride's entry_mode/max_team_size/plate_model.
+
+        The ride-setup seam (S1/R-11/R-12/R-16): re-applies the three
+        stored ride-wide settings on a roster a caller already holds,
+        instead of rebuilding it. Mechanics only -- the existing
+        entries and :attr:`audit_log` are left exactly as they are.
+
+        Args:
+            entry_mode: The ride's new team policy (R-11).
+            max_team_size: The ride's new max riders per team.
+            plate_model: The ride's new plate policy (R-16).
+
+        Raises:
+            TeamSizeError: *max_team_size* is outside 2..10.
+        """
+        _require_max_team_size(max_team_size)
+        self._entry_mode = entry_mode
+        self._max_team_size = max_team_size
+        self._plate_model = plate_model
 
     @property
     def entries(self) -> tuple[Entry, ...]:
@@ -692,8 +728,8 @@ class Roster:
             LockedError: the ride has left DRAFT.
             SoloOnlyRideError: this ride's entry_mode is solo-only.
             PlateShapeError: *plate* violates the ride's plate_model
-                shape (blank on relay, or any value on rider_pooled,
-                whose plates are derived from riders).
+                shape (blank or non-numeric on relay, or any value on
+                rider_pooled, whose plates are derived from riders).
             DuplicatePlateError: *plate* collides with an existing
                 entry's or rider's plate.
         """
@@ -870,8 +906,8 @@ class Roster:
             EntryNotFoundError: *entry* is not a member of this
                 roster.
             LockedError: the ride has left DRAFT.
-            PlateShapeError: *entry* is not type SOLO, or this is a
-                rider_pooled ride and *plate* is not a whole number.
+            PlateShapeError: *entry* is not type SOLO, or *plate* is
+                not a whole number.
             DuplicatePlateError: *plate* collides with an existing
                 entry's or rider's plate.
         """
@@ -883,8 +919,7 @@ class Roster:
             msg = "change_solo_plate requires a solo entry"
             raise PlateShapeError(msg)
         _require_plate_nonempty(plate)
-        if self._plate_model is PlateModel.RIDER_POOLED:
-            _require_whole_plate(plate)
+        _require_whole_plate(plate)
         old_plate = entry.plate
         self._require_plate_free_for_change(plate, exclude=old_plate)
         entry.plate = plate
@@ -950,13 +985,15 @@ class Roster:
         it is derived from its riders' plates; change a member's
         own plate with :meth:`change_pooled_rider_plate` instead. A
         solo entry's plate goes through :meth:`change_solo_plate`.
+        The new plate is a whole number, like every plate here.
 
         Raises:
             EntryNotFoundError: *entry* is not a member of this
                 roster.
             LockedError: the ride has left DRAFT.
-            PlateShapeError: *entry* is not type TEAM, or this
-                ride's plate_model is not team_relay.
+            PlateShapeError: *entry* is not type TEAM, this ride's
+                plate_model is not team_relay, or *plate* is not a
+                whole number.
             DuplicatePlateError: *plate* collides with an existing
                 entry's or rider's plate.
         """
@@ -974,6 +1011,7 @@ class Roster:
             )
             raise PlateShapeError(msg)
         _require_plate_nonempty(plate)
+        _require_whole_plate(plate)
         old_plate = entry.plate
         self._require_plate_free_for_change(plate, exclude=old_plate)
         entry.plate = plate
@@ -1278,14 +1316,15 @@ class Roster:
         """Return the entry plate of a zero-rider team (W8).
 
         See :meth:`create_empty_team`'s docstring for the model rule:
-        team_relay carries its explicit relay plate (next free when
-        none is given); rider_pooled claims the next free plate
-        provisionally -- no rider exists to derive one from -- to be
-        replaced by the first joined rider's own plate.
+        team_relay carries its explicit relay plate -- a whole-number
+        string, next free when none is given; rider_pooled claims the
+        next free plate provisionally -- no rider exists to derive one
+        from -- to be replaced by the first joined rider's own plate.
 
         Raises:
-            PlateShapeError: *plate* is blank on a relay ride, or any
-                value at all on a rider_pooled ride.
+            PlateShapeError: *plate* is blank or non-numeric on a
+                relay ride, or any value at all on a rider_pooled
+                ride.
             DuplicatePlateError: *plate* collides with an existing
                 entry's or rider's plate.
         """
@@ -1293,6 +1332,7 @@ class Roster:
             if plate is None:
                 return self.next_free_plate()
             _require_plate_nonempty(plate)
+            _require_whole_plate(plate)
             self._require_plates_free([plate])
             return plate
         if plate is not None:
@@ -1308,8 +1348,9 @@ class Roster:
 
         Applies S1's plate-model rule for both solo and team
         entries: team_relay clears every rider's plate and requires
-        *plate*; rider_pooled requires every rider to already carry
-        one and derives the entry's plate as the lowest-numbered.
+        *plate* -- a whole number, like every plate here; rider_pooled
+        requires every rider to already carry one and derives the
+        entry's plate as the lowest-numbered.
 
         Raises:
             PlateShapeError: the given riders/plate do not fit the
@@ -1322,6 +1363,7 @@ class Roster:
                 msg = "team_relay entries require an explicit plate"
                 raise PlateShapeError(msg)
             _require_plate_nonempty(plate)
+            _require_whole_plate(plate)
             for rider in riders:
                 rider.plate = None
             self._require_plates_free([plate])

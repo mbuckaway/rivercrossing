@@ -253,15 +253,24 @@ def review_issue(row: FeedRow) -> str:
     Why the row entered review. A live duplicate pair (``row.
     duplicate``, Phase 3) is listed by its own bit and takes the
     wording first: the earlier twin's derived lap time is real, so it
-    can carry no ``flagged`` bit of its own. Otherwise a short lap
-    (``row.flagged``, R-34) reads as a plain short lap, whoever holds
-    its card: the Card column carries the held/credited/voided state
+    can carry no ``flagged`` bit of its own. Then the flagged row's
+    *kind*: a short lap on a TEAM entry (``row.team_overlap``, the
+    team-overlap report) is that team's riders' laps overlapping, so
+    it reads "Team overlap"; any other short lap (``row.flagged``,
+    R-34) reads as a plain short lap, whoever holds its card -- the
+    Card column carries the held/credited/voided state
     (``FeedRow.card_status``, :func:`card_status_text`), so the Issue
-    cell never repeats it. A row that is neither duplicated nor
-    flagged has no issue to show, so the cell is blank.
+    cell never repeats it. A row that is none of the three has no
+    issue to show, so the cell is blank.
+
+    The design docs name only the duplicate and short-lap wordings
+    (xrc-windows.md's ``flagged_list`` Issue column); this middle
+    reading is pinned here.
     """
     if row.duplicate:
         return "Duplicate crossing"
+    if row.team_overlap:
+        return "Team overlap"
     if row.flagged:
         return "Short lap"
     return ""

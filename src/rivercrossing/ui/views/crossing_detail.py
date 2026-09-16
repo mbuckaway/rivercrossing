@@ -42,8 +42,12 @@ later laps.
 A **miss** row (a pending miss, K) opens the same dialog in miss mode:
 :class:`MissDetailView` renders the placeholders the feed row itself
 shows (Plate ``-``, Name ``missed``). Its Edit opens the same Plate
-prompt, blank (a miss has no plate to correct), and the number it saves
-is shown in the plate entry box; its OK assigns that number through
+prompt, blank (a miss has no plate to correct), and the number it
+saves is previewed as the crossing that plate would have been:
+:func:`build_resolved_miss_fields` resolves the number through the
+ride's roster, so the rider and team it names replace the placeholders
+and a number that names nobody is shown alone; its OK assigns that
+number through
 :meth:`~rivercrossing.ride.RideEngine.assign_plate_to_miss`, which
 records the crossing and deals its card at the miss's own instant.
 Delete is not offered: a miss is not ``engine.crossings[-1]`` and cannot
@@ -56,9 +60,11 @@ around the dialog's existing sizer with both slide effects disabled --
 the measured hang remedy ``RiderEditor._build_infobar`` documents.
 
 The rendered values come from the pure view-models :func:`build_fields`
-(over the live ``Crossing``, ``Roster`` and ``RideEngine``) and
-:func:`build_miss_fields` (over the ``PendingMiss``) -- no ``wx`` -- so
-the field mapping is pinned headlessly
+(over the live ``Crossing``, ``Roster`` and ``RideEngine``),
+:func:`build_miss_fields` (over the ``PendingMiss``) and
+:func:`build_resolved_miss_fields` (a miss's typed plate, resolved
+against the ``Roster``) -- no ``wx`` -- so the field mapping is pinned
+headlessly
 (``tests/unit/ui/test_crossing_detail.py``). The views are deliberately
 not wired to a presenter: every change they commit goes straight
 through the engine, whose ``on_event`` sink persists it
@@ -66,7 +72,7 @@ through the engine, whose ``on_event`` sink persists it
 the engine on its own 1 s tick.
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any
 
 import wx
@@ -99,6 +105,7 @@ __all__ = [
     "MissDetailView",
     "build_fields",
     "build_miss_fields",
+    "build_resolved_miss_fields",
     "confirm_delete_crossing",
     "delete_message",
     "is_last_crossing",
@@ -316,10 +323,10 @@ def build_miss_fields(miss: PendingMiss) -> CrossingDetailFields:
     A miss has no entry, lap or card, so only the instant the operator
     signalled it is known; every other cell renders the placeholder the
     feed's own ``-``/``missed`` row uses. The plate a scorer types is
-    not one of these boxes: Edit opens the Plate prompt and shows its
-    answer in the plate box, and OK commits that number through
-    ``assign_plate_to_miss``. Pure -- no ``wx`` -- so the mapping is
-    pinned headlessly.
+    not one of these boxes: Edit opens the Plate prompt, re-renders its
+    answer through :func:`build_resolved_miss_fields`, and OK commits
+    that number through ``assign_plate_to_miss``. Pure -- no ``wx`` --
+    so the mapping is pinned headlessly.
     """
     return CrossingDetailFields(
         rider="-",
@@ -331,6 +338,38 @@ def build_miss_fields(miss: PendingMiss) -> CrossingDetailFields:
         total="",
         card="",
         held="Not yet scored",
+    )
+
+
+def build_resolved_miss_fields(
+    miss: PendingMiss, plate: str, roster: Roster
+) -> CrossingDetailFields:
+    """Return :func:`build_miss_fields` with *plate* resolved (K2).
+
+    The miss mode's Edit answer, previewed before OK commits it: the
+    operator typed *plate* into the §9 Plate prompt, so showing the
+    rider and team that number names tells them what
+    ``assign_plate_to_miss`` is about to record -- the same
+    rider/team/plate mapping :func:`build_fields` renders for a
+    recorded crossing, through the same :func:`_rider_name` (a pooled
+    team's typing rider) and :func:`_team_name` (``solo`` for a solo
+    entry) rules. A plate the roster does not know fills nothing: the
+    cell keeps the miss's own placeholder and only the typed number
+    itself is shown, so Edit never invents an identity.
+
+    The timing and card cells are always the miss's own placeholders:
+    they describe a crossing that does not exist yet. Pure -- no ``wx``
+    -- so the mapping is pinned headlessly.
+    """
+    fields = build_miss_fields(miss)
+    entry = roster.resolve_plate(plate)
+    if entry is None:
+        return replace(fields, plate=plate)
+    return replace(
+        fields,
+        rider=_rider_name(entry, plate) or entry.display_name,
+        team=_team_name(entry, entry.plate),
+        plate=plate,
     )
 
 
@@ -878,26 +917,38 @@ class MissDetailView(_DetailDialogView):
     :func:`build_miss_fields` once at construction and offers exactly
     one action -- score the miss. Its Edit opens the same §9 Plate
     prompt the crossing mode uses, blank (a miss has no plate to
-    correct), and shows the saved number in the plate box; OK assigns
-    it through
+    correct), and re-renders the saved number as
+    :func:`build_resolved_miss_fields`' rider/team/plate preview; OK
+    assigns it through
     :meth:`~rivercrossing.ride.RideEngine.assign_plate_to_miss`, which
     records the crossing and deals its card at the miss's own instant.
     Delete is not bound: the button stays disabled, because a miss is
     not ``engine.crossings[-1]`` and cannot be ``undo_last``.
     """
 
-    def __init__(self, dialog: wx.Dialog, *, miss: PendingMiss, engine: RideEngine) -> None:
+    def __init__(  # noqa: PLR0913 -- (dialog, miss, roster, engine)
+        self,
+        dialog: wx.Dialog,
+        *,
+        miss: PendingMiss,
+        roster: Roster,
+        engine: RideEngine,
+    ) -> None:
         """Decorate an already-loaded dialog for *miss*.
 
         Args:
             dialog: The ``wx.Dialog`` the app bootstrap loaded from
                 ``dialogs.xrc``.
             miss: The pending miss this dialog scores.
+            roster: The ride's in-memory roster, for the rider and team
+                names the plate preview resolves (the crossing mode's
+                own roster).
             engine: The ride's live engine -- the read side of the
                 miss's instant and the write side of the assignment.
         """
         super().__init__(dialog, engine)
         self.miss = miss
+        self.roster = roster
         # The number Edit's own prompt stored, the one OK assigns;
         # there is no plate to read off the miss itself.
         self._miss_plate: str | None = None
@@ -929,15 +980,19 @@ class MissDetailView(_DetailDialogView):
 
         The same §9 Plate prompt the crossing mode opens, on a blank
         field: a miss has no plate to correct, only one to enter. The
-        saved number is stored for OK to commit and shown at once, so
-        the operator sees what will be assigned.
+        saved number is stored for OK to commit and re-rendered at once
+        as the **resolved** preview
+        (:func:`build_resolved_miss_fields`), so the operator sees the
+        rider and team the number names -- or the miss's own
+        placeholders, with the typed number alone, when it names nobody
+        -- before OK records it.
         """
         event.Skip()
         new_plate = run_plate_dialog(wx.xrc.XmlResource.Get(), opener=self.dialog, plate="")
         if new_plate is None:
             return
         self._miss_plate = new_plate
-        self.crossing_plate_lbl.SetValue(new_plate)
+        self._render_fields(build_resolved_miss_fields(self.miss, new_plate, self.roster))
 
     def _on_ok(self, event: Any) -> None:  # noqa: ANN401, ARG002 -- wx ships no stubs
         """Handle ``wxID_OK``: assign the miss's plate and close.

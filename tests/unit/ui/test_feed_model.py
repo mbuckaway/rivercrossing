@@ -324,6 +324,7 @@ def _feed_row(  # noqa: PLR0913 -- one keyword per feed field a test varies
     edited: bool = False,
     missed: bool = False,
     duplicate: bool = False,
+    team_overlap: bool = False,
     dnf: bool = False,
     card: str = "9H",
     card_status: str = "",
@@ -346,6 +347,7 @@ def _feed_row(  # noqa: PLR0913 -- one keyword per feed field a test varies
         edited=edited,
         missed=missed,
         duplicate=duplicate,
+        team_overlap=team_overlap,
         dnf=dnf,
         card_status=card_status,
         elapsed_s=elapsed_s,
@@ -621,55 +623,104 @@ def test_card_status_text_given_any_known_status_is_blank_exactly_when_that_stat
 # --- review_issue (Needs Review tab: why this row is here) -----------
 
 
-# The three texts the Needs Review tab can show, and the full
-# decision table (T-13): three independent booleans, 2^3 rows. A
-# duplicate outranks a short lap. ``held`` no longer refines the
-# wording -- the Card column carries the held/credited/voided state
-# (``FeedRow.card_status``, ``card_status_text``), so a held short lap
-# reads exactly like the credited one and the held rows pin that.
+# The four texts the Needs Review tab can show, and the full decision
+# table (T-13): four independent booleans, 2^4 rows -- the limit the
+# rule allows without asking first. A duplicate outranks everything
+# (the earlier twin's derived lap time is real, so it can carry no
+# flagged bit of its own); a team overlap outranks the plain short lap
+# (a flagged crossing on a TEAM entry, ``FeedRow.team_overlap``);
+# ``held`` never refines the wording at all -- the Card column carries
+# the held/credited/voided state (``FeedRow.card_status``,
+# ``card_status_text``), so a held short lap reads exactly like the
+# credited one and the held rows pin that.
 REVIEW_ISSUE_TEXT = "Short lap"
 REVIEW_ISSUE_HELD_TEXT = REVIEW_ISSUE_TEXT
+REVIEW_ISSUE_TEAM_OVERLAP_TEXT = "Team overlap"
 REVIEW_ISSUE_DUPLICATE_TEXT = "Duplicate crossing"
 REVIEW_ISSUE_TEXTS = frozenset(
-    {"", REVIEW_ISSUE_TEXT, REVIEW_ISSUE_HELD_TEXT, REVIEW_ISSUE_DUPLICATE_TEXT}
+    {
+        "",
+        REVIEW_ISSUE_TEXT,
+        REVIEW_ISSUE_HELD_TEXT,
+        REVIEW_ISSUE_TEAM_OVERLAP_TEXT,
+        REVIEW_ISSUE_DUPLICATE_TEXT,
+    }
 )
 
 REVIEW_ISSUE_CASES = (
-    (False, False, False, ""),
-    (False, False, True, ""),
-    (False, True, False, REVIEW_ISSUE_TEXT),
-    (False, True, True, REVIEW_ISSUE_HELD_TEXT),
-    (True, False, False, REVIEW_ISSUE_DUPLICATE_TEXT),
-    (True, False, True, REVIEW_ISSUE_DUPLICATE_TEXT),
-    (True, True, False, REVIEW_ISSUE_DUPLICATE_TEXT),
-    (True, True, True, REVIEW_ISSUE_DUPLICATE_TEXT),
+    (False, False, False, False, ""),
+    (False, False, False, True, ""),
+    (False, False, True, False, REVIEW_ISSUE_TEAM_OVERLAP_TEXT),
+    (False, False, True, True, REVIEW_ISSUE_TEAM_OVERLAP_TEXT),
+    (False, True, False, False, REVIEW_ISSUE_TEXT),
+    (False, True, False, True, REVIEW_ISSUE_HELD_TEXT),
+    (False, True, True, False, REVIEW_ISSUE_TEAM_OVERLAP_TEXT),
+    (False, True, True, True, REVIEW_ISSUE_TEAM_OVERLAP_TEXT),
+    (True, False, False, False, REVIEW_ISSUE_DUPLICATE_TEXT),
+    (True, False, False, True, REVIEW_ISSUE_DUPLICATE_TEXT),
+    (True, False, True, False, REVIEW_ISSUE_DUPLICATE_TEXT),
+    (True, False, True, True, REVIEW_ISSUE_DUPLICATE_TEXT),
+    (True, True, False, False, REVIEW_ISSUE_DUPLICATE_TEXT),
+    (True, True, False, True, REVIEW_ISSUE_DUPLICATE_TEXT),
+    (True, True, True, False, REVIEW_ISSUE_DUPLICATE_TEXT),
+    (True, True, True, True, REVIEW_ISSUE_DUPLICATE_TEXT),
 )
 
 
 @pytest.mark.parametrize(
-    ("duplicate", "flagged", "held", "expected"),
+    ("duplicate", "flagged", "team_overlap", "held", "expected"),
     REVIEW_ISSUE_CASES,
     ids=[
         "clean",
         "clean_held",
+        "team_overlap",
+        "team_overlap_held",
         "credited_short_lap",
         "held_short_lap",
+        "flagged_team_overlap",
+        "held_team_overlap",
         "duplicate",
         "duplicate_held",
+        "duplicate_team_overlap",
+        "duplicate_team_overlap_held",
         "duplicate_short_lap",
         "duplicate_held_short_lap",
+        "duplicate_flagged_team_overlap",
+        "duplicate_held_flagged_team_overlap",
     ],
 )
-def test_review_issue_given_a_rows_flags_returns_its_review_reason(  # noqa: PLR0913, PLR0917 -- the three flags plus the reason
+def test_review_issue_given_a_rows_flags_returns_its_review_reason(  # noqa: PLR0913, PLR0917 -- the four flags plus the reason
     duplicate: bool,  # noqa: FBT001 -- parametrize passes the flags positionally
     flagged: bool,  # noqa: FBT001 -- parametrize passes the flags positionally
+    team_overlap: bool,  # noqa: FBT001 -- parametrize passes the flags positionally
     held: bool,  # noqa: FBT001 -- parametrize passes the flags positionally
     expected: str,
 ) -> None:
-    """T-13: duplicate outranks short lap; held never changes it."""
-    row = _feed_row(duplicate=duplicate, flagged=flagged, held=held)
+    """T-13: duplicate outranks overlap, which outranks short lap."""
+    row = _feed_row(duplicate=duplicate, flagged=flagged, team_overlap=team_overlap, held=held)
 
     assert review_issue(row) == expected
+
+
+def test_review_issue_given_a_flagged_team_crossing_reads_as_a_team_overlap() -> None:
+    """A TEAM entry's flagged crossing is the overlap, not a lap."""
+    row = _feed_row(flagged=True, team="Trail Blazers", team_overlap=True)
+
+    assert review_issue(row) == "Team overlap"
+
+
+def test_review_issue_given_a_flagged_solo_crossing_reads_as_a_short_lap() -> None:
+    """T-3 negative: a solo short lap is no overlap."""
+    row = _feed_row(flagged=True, team="solo", team_overlap=False)
+
+    assert review_issue(row) == "Short lap"
+
+
+def test_review_issue_given_a_duplicated_team_crossing_reads_as_a_duplicate() -> None:
+    """A duplicate stays the first wording, overlap beside it or not."""
+    row = _feed_row(duplicate=True, flagged=True, team_overlap=True)
+
+    assert review_issue(row) == "Duplicate crossing"
 
 
 def test_review_issue_given_a_held_short_lap_reads_as_a_plain_short_lap() -> None:
@@ -679,14 +730,19 @@ def test_review_issue_given_a_held_short_lap_reads_as_a_plain_short_lap() -> Non
     assert review_issue(row) == "Short lap"
 
 
-@given(duplicate=st.booleans(), flagged=st.booleans(), held=st.booleans())
-def test_review_issue_given_any_flags_is_blank_exactly_when_clean(
-    *, duplicate: bool, flagged: bool, held: bool
+@given(
+    duplicate=st.booleans(),
+    flagged=st.booleans(),
+    team_overlap=st.booleans(),
+    held=st.booleans(),
+)
+def test_review_issue_given_any_flags_is_blank_exactly_when_clean(  # noqa: PLR0913 -- one argument per review flag
+    *, duplicate: bool, flagged: bool, team_overlap: bool, held: bool
 ) -> None:
-    """T-7: an issue shows iff the row is duplicated or flagged."""
-    row = _feed_row(duplicate=duplicate, flagged=flagged, held=held)
+    """T-7: an issue shows iff one of the three review bits is set."""
+    row = _feed_row(duplicate=duplicate, flagged=flagged, team_overlap=team_overlap, held=held)
 
     issue = review_issue(row)
 
-    assert (issue == "") is not (duplicate or flagged)
+    assert (issue == "") is not (duplicate or flagged or team_overlap)
     assert issue in REVIEW_ISSUE_TEXTS

@@ -2932,6 +2932,65 @@ def test_preview_pooled_solo_non_digit_plate_cell_is_a_conflict(tmp_path: Path) 
     assert result.entries == ()
 
 
+def test_preview_relay_solo_non_digit_plate_cell_is_a_conflict(tmp_path: Path) -> None:
+    """team_relay: a solo row's non-digit NUMBER cell conflicts."""
+    path = _unified_file(tmp_path, [_Row(first="Alex", last="Doe", type_="solo", number="77A")])
+    roster = _relay_roster()
+
+    result = preview(path, roster)
+
+    assert result.conflicts == (ImportConflict(row=2, problem=_NON_DIGIT_PLATE_PROBLEM),)
+    assert result.entries == ()
+
+
+def test_preview_relay_team_non_digit_plate_cell_conflicts_once_and_excludes_the_group(
+    tmp_path: Path,
+) -> None:
+    """team_relay: a team's non-digit NUMBER cell conflicts once."""
+    path = _unified_file(
+        tmp_path,
+        [
+            _Row(first="Alex", last="Doe", type_="solo", number="7"),
+            _Row(first="Bo", type_="team", team="Wolves", number="77A"),
+            _Row(first="Cy", type_="team", team="Wolves", number="77A"),
+        ],
+    )
+    roster = _relay_roster()
+
+    result = preview(path, roster)
+
+    assert result.conflicts == (ImportConflict(row=3, problem=_NON_DIGIT_PLATE_PROBLEM),)
+    assert result.entries == (
+        ParsedEntry(
+            plate="7",
+            display_name="Alex Doe",
+            type=EntryType.SOLO,
+            riders=(ParsedRider(first_name="Alex", last_name="Doe"),),
+        ),
+    )
+
+
+@pytest.mark.parametrize(
+    ("row", "expected_plate"),
+    [
+        (_Row(first="Alex", last="Doe", type_="solo", number="7"), "7"),
+        (_Row(first="Alex", last="Doe", type_="solo", number="007"), "007"),
+        (_Row(first="Alex", last="Doe", type_="solo", number="12345"), "12345"),
+        (_Row(first="Bo", type_="team", team="Wolves", number="42"), "42"),
+    ],
+)
+def test_preview_relay_whole_number_plate_cell_imports_cleanly(
+    tmp_path: Path, row: _Row, expected_plate: str
+) -> None:
+    """team_relay: an explicit whole-number NUMBER cell imports."""
+    path = _unified_file(tmp_path, [row])
+    roster = _relay_roster()
+
+    result = preview(path, roster)
+
+    assert (result.conflicts, [entry.plate for entry in result.entries]) == ((), [expected_plate])
+
+
 def test_preview_utf8_bom_before_the_number_header_keeps_the_plate_column(
     tmp_path: Path,
 ) -> None:
@@ -2989,7 +3048,9 @@ def test_export_roster_with_zero_rider_teams_writes_only_entries_with_riders(
     """W8: an empty team exports nothing; its members join later."""
     path = tmp_path / "out.csv"
     roster = _relay_roster()
-    roster.create_empty_team(display_name="Trail Blazers", plate="RC 88")
+    # Every plate is the NUMBER column's domain now, relay included:
+    # "RC 88" is refused by the roster before export is reached.
+    roster.create_empty_team(display_name="Trail Blazers", plate="88")
     roster.create_solo_entry(first_name="Alex", last_name="Tremblay", plate="1")
 
     export(roster, path)

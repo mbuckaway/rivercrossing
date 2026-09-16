@@ -78,7 +78,7 @@ Plate | Name | Team   `console_riders_list (wxDataViewCtrl — the live roster; 
 
 Issue | Card | Plate | Lap | Rider | Team   `flagged_list (wxDataViewCtrl — the R-34 flag rows, six columns at widths 136/76/64/52/256/136; the Card column reads Held/Credited/Void via feed_model.card_status_text, the Issue column reads Short lap or Duplicate crossing, Rider reads FeedRow.entry and Team reads FeedRow.team — "solo" for a solo entry)`
 Show Held Cards Only   `show_held_only_chk (view-local filter: ticked, the tab shows only rows with card_status "held" or the duplicate flag; unticked, every flagged/duplicate row)`
-Review… `review_btn — and the Cards ▸ Review Held Cards route both land on this page (focus_review_panel looks the "Needs Review" page up by its label rather than by a fixed index, then focuses flagged_list)`
+Review… `review_btn — the Needs Review page's own jump (focus_review_panel looks the "Needs Review" page up by its label rather than by a fixed index, then focuses flagged_list); the Cards ▸ Review Held Cards menu route that also landed here retired, so the button is the page's single surface`
 
 epic-2026.prdb
 
@@ -423,9 +423,9 @@ Teams Solo`results_notebook (wxNotebook — a MIXED ride's two standings pages; 
 | 2 | 8 | R. Dubois | 7 | A♣ A♦ A♥ 4♦ 4♠ | Full House — Aces over Fours |
 
 `solo_standings_list (wxDataViewCtrl — the Solo page, the notebook's second tab) · standings_list (wxDataViewCtrl — a SOLO-only ride's one list, standing in the notebook's place; the view shows the notebook or this list, never both. All three carry the same six columns — G6's Place · Plate · Entry · Laps · Best 5 · Hand, each pinned to its own width (60 / 50 / 160 / 50 / 160 / 210, the Team list's Hand taking 260 when its Plate column is hidden) — and rank their own kind from 1, DNF entrants excluded outright — a kind absent from the ride simply has no rows. The Teams list hides its Plate column on a `rider_pooled` ride (a pooled team's plate derives from its members, so the column would only repeat one); it stays visible under `team_relay` and on the solo list. The three lists' columns are natively sortable and resizable (DATAVIEW_COL_SORTABLE | DATAVIEW_COL_RESIZABLE — both bits spelled out, since an explicit flags= replaces AppendTextColumn's own default; the platform's own header arrow); Place and Laps sort on their integer values, never as strings)`
-Export HTML…Export PDF…Podium poster…Export CSV…Close
+Close
 
-`export_html_btn · export_pdf_btn · poster_btn · export_csv_btn — all four are disabled until the ride is FINISHED, the same gate the four Results-menu export rows carry (one handler serves the menu row and the button) · wxID_CLOSE (the four custom ids keep this row a plain sibling wxBoxSizer — wxStdDialogButtonSizer positions only the stock Close)`
+`wxID_CLOSE (right-justified — a leading spacer keeps the stock Close alone at the window's right, since wxStdDialogButtonSizer positions only the stock Close; the four export buttons that shared this row retired with the UI-removals batch, so the Results menu's own mi_export_* rows are the single export surface and the dialog carries no export at all)`
 
 ⚠ code-side: standings rows — the presenter feeds each list its own kind (the notebook's two pages on a MIXED ride, the lone standings_list on a SOLO one, Phase 3, R-65); "draw required" tie rows highlighted with a ⚠ badge in the Place cell (the six pinned columns), the badge explained on activation — double-click or Enter opens an OK-only `std_dialogs.show_info` alert carrying the row's own tie note ("draw required" plus the venue-draw sentence), since a DataViewCtrl has no per-row tooltip and hover is keyboard-unreachable; stale-export flag banner (wxInfoBar stale_infobar — built in code, named with SetName()) after reopened corrections. G6 moved the five publish options out of this dialog onto checkable Results-menu items (each persisting in `AppSettings.publish_*`), so the dialog carries no checkbox and the show-times setting no longer hides any column here. The window is a modal wxDialog opened through dialogs.run_dialog — a transient over the console, so its title bar carries the ✕ alone (no ▢), and the tie-break panel and Reopen ride button left with the frame: tie-break order is ride_setup_dlg's own tiebreak_list and nothing else, and reopening a ride is the menu's Ride ▸ Reopen Ride (mi_reopen_ride). Standings is always available — the Results ▸ Standings row (F5) is never gated on a ride open; with none open the dialog renders its empty state. The Teams list hides its Plate column under `rider_pooled` (a pooled team's plate is derived from its members, so the column would only repeat one) and keeps it under `team_relay`, where the plate is the entry's identity; the solo list keeps it always. It floors at 740 px wide (MIN_SIZE, code-side: the six pinned columns total 690 px plus the list's scrollbar and the notebook/sizer borders — the publish-checkbox row that used to set the 755 px floor is gone), with each of the three standings lists (`standings_list`/`teams_standings_list`/`solo_standings_list`) floored at 198 px high — a 28 px header plus 10 × 17 px rows (measured on wxPython 4.3.1), so ten standings rows are visible. The window lives in results.xrc (§15b).
 
@@ -454,20 +454,20 @@ DeleteCancel
 
 Audit Trail`audit_dlg`✕
 
-All actionsCrossing editsCard deals/voidsMovesDNFShoe reshuffle
+All actions · Record Crossing · Add Crossing at Time · Edit Crossing · Void Crossing · Undo Last Crossing · Reassign Crossing · Record Miss · Assign Plate to Miss · Deal Bonus Card · Confirm Held Card · Void Held Card · Return to Held · Void Card · Move Rider · Add Rider to Team · Extract Rider to Solo · Change Solo Plate · Change Pooled Rider Plate · Change Team Plate · Remove Rider · Mark DNF · Shoe Reshuffle · Start Ride · Continue Ride · Set Start Time · Stop Ride · Finish Ride · Reopen Ride
 
-`audit_search (wxSearchCtrl) · action_choice`
+`audit_search (wxSearchCtrl) · action_choice (the flat 29-item filter — "All actions" plus one item per audited action, in presenters/audit.py's ACTION_CHOICES order, which test_audit.py pins against the .xrc; the six action buckets this dropdown used to draw are retired)`
 
-| When | Who | Action | Entry | Reason |
-|---|---|---|---|---|
-| 14:23:02 | scorer | Void crossing | 45 | mis-key |
-| 14:21:40 | scorer | Manual deal 7♦ | 45 | flag confirmed |
+| When | Action | Entry | Reason |
+|---|---|---|---|
+| 14:23:02 | Void crossing | 45 | mis-key |
+| 14:21:40 | Manual deal 7♦ | 45 | flag confirmed |
 
-`audit_list (wxDataViewCtrl · newest first · fixed opening column widths When 90 · Who 120 · Action 180 · Entry 120 · Reason 330, every column still user-resizable)`
+`audit_list (wxDataViewCtrl · opening on When, newest first · pinned opening column widths When 90 · Action 180 · Entry 120 · Reason 330, every column sortable and resizable (DATAVIEW_COL_SORTABLE | DATAVIEW_COL_RESIZABLE) — the When-descending default is re-imposed after every rebuild — and the Who column retired)`
 
 Close
 
-⚠ code-side (Phase 6): the dialog floors at 1000×600 (`MIN_SIZE` — about 2× its measured content at the pinned widths above), applied with `SetMinSize` + `Fit` and clamped to the display's work area, since XRC has no window-level minsize (audit.xrc declares no <size>).
+⚠ code-side (Phase 6): the dialog floors at 1000×600 (`MIN_SIZE` — about 2× its measured content at the pinned widths above), applied with `SetMinSize` + `Fit` and clamped to the display's work area, since XRC has no window-level minsize (audit.xrc declares no <size>). The four columns (When · Action · Entry · Reason) are appended in code, the Who column retired — the engine never records another actor, so every cell read the same word — and the Reason cell is the event payload's own: a correction carries the reason the operator typed, while the actions that record none fill their own at write time (record_crossing the rider and the entry crossed for, "Sam Ellis · Trail Blazers"; shoe_reshuffle its joker count, "2 jokers added"; the lifecycle actions start/continue/stop/finish/reopen/set_start_time their elapsed h:mm:ss; a plate change its "old → new").
 
 E · System & help
 
@@ -494,8 +494,6 @@ OKCancel
 
 About RiverCrossing`about_dlg (Help ▸ wxID_ABOUT)`✕
 
-`about_logo_bmp (the ride's logo; without one the embedded RiverCrossing logo — about.py's EMBEDDED_LOGO_SVG — so the About box never shows a blank bitmap, ux-polish)`
-
 RiverCrossing 1.0.0 `version_lbl ("RiverCrossing <package version>", written by AboutDialog)`
 
 Timing & poker-hand scoring for poker-run rides.
@@ -508,7 +506,7 @@ Built for GORBA — [gorba.ca](https://gorba.ca) `gorba_link (wxHyperlinkCtrl)`
 
 Close
 
-⚠ ux-polish: fixed-size — about_dlg alone drops wxRESIZE_BORDER (wxDEFAULT_DIALOG_STYLE only) and AboutDialog pins ABOUT_SIZE (500×420) via SetSize + min/max hints, so its short fixed copy can never re-wrap from a user resize at any text zoom. The three attribution lines (author_lbl/copyright_lbl/license_lbl) are fixed XRC wording; the logo chain and version text are code-side.
+⚠ ux-polish: fixed-size — about_dlg alone drops wxRESIZE_BORDER (wxDEFAULT_DIALOG_STYLE only) and AboutDialog pins ABOUT_SIZE (500×420) via SetSize + min/max hints, so its short fixed copy can never re-wrap from a user resize at any text zoom. The three attribution lines (author_lbl/copyright_lbl/license_lbl) are fixed XRC wording; the version text is code-side, and the logo chain retired with the bitmap — the box carries no logo at all.
 
 Keyboard Shortcuts`shortcuts_dlg (Help ▸ mi_shortcuts)`✕
 
@@ -537,7 +535,9 @@ Evaluator Self-Test`selftest_dlg`✕
 Joker vector table (28) ..... PASS
 Five-of-a-kind ordering ..... PASS
 Whole-field 180×12 timing ... 0.31 s PASS
-`selftest_output (read-only wxTextCtrl, monospace) · rerun_btn`
+compare() total order ....... PASS
+best_hand() joker bound ..... PASS
+`selftest_output (read-only wxTextCtrl, monospace) · rerun_btn — the six checks hands.self_test() runs: the canvas's own four lines, then the follow-up compare() total-order sweep and best_hand() joker-count bound`
 
 Run againClose
 
@@ -590,7 +590,7 @@ Generate RidersCheckGOCancel
 
 ⚠ team riders must be between 4 and 20, got 3`sim_infobar (wxInfoBar — built in code and named with SetName(); the dialog reserves no slot, so the bar is inserted at sizer index 0 above the generator grid; XRC cannot author one; hidden by default)`
 
-⚠ code-side (Rider Simulator): the field generator and the scripted race. "Generate Riders" is the dialog's one generator (the Generate Teams button retired): it creates the requested `TEAM-0001`-style empty teams first when the roster holds none, then `FIRSTNAME-0001`/`LASTNAME-0001` placeholders off one shared counter (unique by construction) — the solo entries first, so their plates sit below every team rider's, then the team riders round-robin, each with a random M/F sex, an auto-assigned plate on a pooled ride and none on a relay one. A MIXED ride's "Generate Riders" reads all three count fields; a SOLO-only ride has no teams to create, so teams_spin/solo_spin leave the dialog and the button generates solo entries only. A successful generation closes the dialog; on a refused count the presenter's own message lands on `sim_infobar` and the dialog stays open for a correction. A roster that already holds entries was loaded from a ride, so every generator control is disabled — generating would collide with the real riders — while the lap and interval fields stay live. "GO" validates the race settings (laps ≥ 1, interval ≥ 1 minute; a refusal lands on `sim_infobar` too), then starts the DRAFT ride and records deterministic lap times through the console's own `RideEngine.record_crossing(plate, at=…)` seam: the entry order is shuffled once from the run's seed and every lap reuses it, with one crossing per entry per lap — a relay team under its own plate, a pooled team under the one rider on course that lap (rotating round-robin), so a 4-rider team's lap count equals a solo's — lap 1 at the ride's start (elapsed 0), riders spread across whole minutes 0 … interval − 1, and at least a minute before the next lap opens at `actual_start + (L − 1) * interval`; the run calls `RideEngine.stop()` when it ends, leaving the ride stopped-RUNNING. The three G9 behaviour dropdowns bend that script, each selecting the leading entries of the run's one shuffled order so a seed still reproduces the whole run: short-lap riders cross impossibly fast (each lap at the entry's own previous recorded instant plus `min_lap_s − 30 s`, clamped at one second), so the engine flags their every lap and, under the hold policy, holds their cards; lapped riders sit out the first wave only and finish one lap short; and team riders stop after lap 4 — they record their first four laps and never cross again (out of the race, never a DNF), a pooled team whose rotation slot lands on a stopped rider sending the next active rider so the team still laps once per wave, while a relay team crosses under its own entry plate and the behaviour is a no-op there. One seed reproduces a whole run, and every mutation goes through the shipped `Roster`/`RideEngine` methods, so a simulated ride is the same ride the console records. Opened from File ▸ Simulation… (`mi_simulation`), a route enabled only when a ride is open and in DRAFT — a generated field only makes sense while the roster is still open for edits; it floors at 425 px wide (MIN_WIDTH, code-side: the generator row is wider than the label/field grid, and below it the Generate and GO buttons would be squeezed); the window lives in simulation.xrc (§15b).
+⚠ code-side (Rider Simulator): the field generator and the scripted race. "Generate Riders" is the dialog's one generator (the Generate Teams button retired): it creates the requested `TEAM-0001`-style empty teams first when the roster holds none, then `FIRSTNAME-0001`/`LASTNAME-0001` placeholders off one shared counter (unique by construction) — the solo entries first, so their plates sit below every team rider's, then the team riders round-robin, each with a random M/F sex, an auto-assigned plate on a pooled ride and none on a relay one. A MIXED ride's "Generate Riders" reads all three count fields; a SOLO-only ride has no teams to create, so teams_spin/solo_spin leave the dialog and the button generates solo entries only. A successful generation closes the dialog; on a refused count the presenter's own message lands on `sim_infobar` and the dialog stays open for a correction. A roster that already holds entries was loaded from a ride, so every generator control is disabled — generating would collide with the real riders — while the lap and interval fields stay live. "GO" validates the race settings (laps ≥ 1, interval ≥ 1 minute; a refusal lands on `sim_infobar` too), then starts the DRAFT ride and records deterministic lap times through the console's own `RideEngine.record_crossing(plate, at=…)` seam: the entry order is shuffled once from the run's seed and every lap reuses it, with one crossing per entry per lap — a relay team under its own plate, a pooled team under the one rider on course that lap (rotating round-robin), so a 4-rider team's lap count equals a solo's — lap 1 at the ride's start (elapsed 0), riders spread across whole minutes 0 … interval − 1, and at least a minute before the next lap opens at `actual_start + (L − 1) * interval`; the run calls `RideEngine.stop()` when it ends, leaving the ride stopped-RUNNING. The three G9 behaviour dropdowns bend that script, each selecting the leading entries of the run's one shuffled order so a seed still reproduces the whole run: short-lap riders cross impossibly fast (each lap at the entry's own previous recorded instant plus `min_lap_s − 30 s`, clamped at one second), so the engine flags their every lap and, under the hold policy, holds their cards; lapped riders sit out the first wave only and finish one lap short; and team riders stop after lap 4 — they record their first four laps and never cross again (out of the race, never a DNF), a pooled team whose rotation slot lands on a stopped rider sending the next active rider so the team still laps once per wave, while a relay team crosses under its own entry plate and the behaviour is a no-op there. One seed reproduces a whole run, and every mutation goes through the shipped `Roster`/`RideEngine` methods, so a simulated ride is the same ride the console records. Opened from File ▸ Simulation… (`mi_simulation`), a route enabled in DRAFT (open or none) or stopped RUNNING — a generated field only makes sense while the roster is still open for edits, and a stopped ride can add a lap at a time; it floors at 425 px wide (MIN_WIDTH, code-side: the generator row is wider than the label/field grid, and below it the Generate and GO buttons would be squeezed); the window lives in simulation.xrc (§15b).
 
 Simulating…`sim_running_dlg`✕
 

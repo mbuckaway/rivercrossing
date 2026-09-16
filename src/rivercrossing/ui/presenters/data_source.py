@@ -98,6 +98,15 @@ class FeedRow:
     ``flagged`` on its own -- and the operator can open either one and
     delete it.
 
+    ``team_overlap`` is the flagged crossing's *kind* (the
+    team-overlap report): True for a flagged crossing whose plate
+    still resolves to a TEAM entry, False for every other row -- a
+    solo short lap, an unflagged lap, and a miss (which has no entry
+    to resolve at all). The Needs Review tab words that row's Issue
+    cell "Team overlap" rather than a plain "Short lap"
+    (:func:`~rivercrossing.ui.feed_model.review_issue`), so the two
+    readings can be told apart without opening the row.
+
     ``card_status`` carries that card's *disposition* -- ``"held"``,
     ``"credited"`` or ``"voided"`` -- derived by elimination
     (:func:`_card_status_for`). The ``held`` bool alone cannot say it:
@@ -125,6 +134,7 @@ class FeedRow:
     lap_time_s: float = 0.0
     total_s: float = 0.0
     duplicate: bool = False
+    team_overlap: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -649,6 +659,14 @@ def _crossing_feed_row(context: _FeedContext, crossing: Crossing) -> tuple[datet
     card otherwise. ``card_status`` names that disposition for the
     Card column (``_card_status_for``). The seq guard covers a stale
     crossing whose lap is past the entry's recorded times.
+
+    ``team_overlap`` (task 6) is the flagged bit's own kind: a short
+    lap on a TEAM entry is read as an overlap between that team's
+    riders' laps, so the Needs Review tab words its row differently
+    (``feed_model.review_issue``). It derives from *flagged* rather
+    than recomputing the short-lap test, so the two bits cannot
+    disagree; the plate must still resolve to an entry for its type to
+    be readable, and a miss never reaches this builder at all.
     """
     engine = context.engine
     feed_entry = context.roster.resolve_plate(crossing.entry_id)
@@ -662,6 +680,7 @@ def _crossing_feed_row(context: _FeedContext, crossing: Crossing) -> tuple[datet
     team_name = _team_name_for(feed_entry)
     elapsed_s = _elapsed_seconds(crossing.crossed_at, context.start)
     rider_plate = crossing.rider_plate
+    flagged = crossing.seq <= len(times) and lap_time_s < engine.config.min_lap_s
     return (
         crossing.crossed_at,
         FeedRow(
@@ -674,7 +693,8 @@ def _crossing_feed_row(context: _FeedContext, crossing: Crossing) -> tuple[datet
             total=format_duration(total_s),
             card=(held_card.code() if held_card is not None else engine.card_for(crossing).code()),
             card_status=_card_status_for(engine, crossing, held_card),
-            flagged=crossing.seq <= len(times) and lap_time_s < engine.config.min_lap_s,
+            flagged=flagged,
+            team_overlap=flagged and feed_entry is not None and feed_entry.type is EntryType.TEAM,
             held=crossing in context.held_crossings,
             edited=(crossing.entry_id, crossing.seq) in context.edited,
             duplicate=crossing in context.duplicates,

@@ -31,11 +31,15 @@
   wave, and team riders stop after lap 4. The authored selections are
   the product defaults (one short-lap rider, the other two Disabled),
   and the dialog seeds all three from settings.json like the spins.
-  gen_riders_btn and
-  check_btn are custom ids, so the bottom row is a plain wxBoxSizer
-  rather than a wxStdDialogButtonSizer (which only places the ids it
-  recognises); wxID_CANCEL stays a stock id so wx keeps its own Escape
-  and click handling.
+  new_ride_btn, gen_riders_btn and check_btn are custom ids, so the
+  bottom row is a plain wxBoxSizer rather than a
+  wxStdDialogButtonSizer (which only places the ids it recognises);
+  wxID_CANCEL stays a stock id so wx keeps its own Escape and click
+  handling. new_ride_btn leads the row ("New Ride") because the
+  simulator also opens with no ride at all: with no roster to generate
+  into and no engine to race, the view disables every generator and
+  race control, leaving New Ride the dialog's one live action: it
+  routes to the app's New Ride flow and closes the dialog.
 
   sim_running_dlg is intentionally fixed: the progress gauge and the
   status line are the only content, and the run is modal while it is
@@ -224,6 +228,14 @@
 
           <object class="sizeritem">
             <flag>wxALIGN_CENTRE_VERTICAL</flag>
+            <object class="wxButton" name="new_ride_btn">
+              <label>New Ride</label>
+            </object>
+          </object>
+
+          <object class="sizeritem">
+            <flag>wxALIGN_CENTRE_VERTICAL|wxLEFT</flag>
+            <border>6</border>
             <object class="wxButton" name="gen_riders_btn">
               <label>Generate Riders</label>
             </object>
