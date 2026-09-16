@@ -836,3 +836,100 @@ def test_feed_rows_given_a_pending_miss_carries_no_card_status() -> None:
     feed = source.feed_rows()
 
     assert feed[0].card_status == ""
+
+
+# --------------------------------------------------------- team overlap
+# A flagged crossing on a TEAM entry (``FeedRow.team_overlap``) is read
+# as an overlap between the team's riders' laps, so the Needs Review tab
+# words it "Team overlap" rather than a plain "Short lap"
+# (``feed_model.review_issue``, which puts the more specific reading
+# ahead of the short-lap one). The bit is set only for a flagged
+# crossing whose plate still resolves to a TEAM entry: a solo short lap
+# and a crossing whose entry left the roster both stay clear.
+
+
+def test_feed_rows_given_a_flagged_team_crossing_marks_the_team_overlap() -> None:
+    """A pooled team's short lap is an overlap; its real lap is not."""
+    roster = _pooled_team_roster()
+    engine = _running_engine(roster)
+    engine.record_crossing("45", at=_dt(10, 2))
+    engine.record_crossing("45", at=_half_a_second_on(_dt(10, 2)))
+    source = EngineDataSource(engine, roster)
+
+    feed = source.feed_rows()
+
+    assert [(row.lap, row.flagged, row.team_overlap) for row in feed] == [
+        (2, True, True),
+        (1, False, False),
+    ]
+
+
+def test_feed_rows_given_a_flagged_solo_crossing_leaves_the_team_overlap_clear() -> None:
+    """T-3 negative: a solo short lap is no overlap between riders."""
+    roster = _solo_roster()
+    engine = _running_engine(roster)
+    engine.record_crossing("12", at=_dt(10, 2))
+    engine.record_crossing("12", at=_half_a_second_on(_dt(10, 2)))
+    source = EngineDataSource(engine, roster)
+
+    feed = source.feed_rows()
+
+    assert [(row.lap, row.flagged, row.team_overlap) for row in feed] == [
+        (2, True, False),
+        (1, False, False),
+    ]
+
+
+def test_feed_rows_given_a_flagged_relay_team_crossing_marks_the_team_overlap() -> None:
+    """A relay team's one-plate entry is a TEAM entry too."""
+    roster = _relay_team_roster()
+    engine = _running_engine(roster)
+    engine.record_crossing("9", at=_dt(10, 2))
+    engine.record_crossing("9", at=_half_a_second_on(_dt(10, 2)))
+    source = EngineDataSource(engine, roster)
+
+    feed = source.feed_rows()
+
+    assert (feed[0].flagged, feed[0].team_overlap) == (True, True)
+
+
+def test_feed_rows_given_an_unflagged_team_crossing_leaves_the_team_overlap_clear() -> None:
+    """T-3 negative: a real team lap is never an overlap."""
+    roster = _pooled_team_roster()
+    engine = _running_engine(roster)
+    engine.record_crossing("45", at=_dt(10, 2))
+    source = EngineDataSource(engine, roster)
+
+    feed = source.feed_rows()
+
+    assert (feed[0].flagged, feed[0].team_overlap) == (False, False)
+
+
+def test_feed_rows_given_a_crossing_whose_entry_left_the_roster_keeps_the_flag_clear() -> None:
+    """T-3 negative: no resolvable entry means no lap times to flag.
+
+    The crossing is recorded against the real roster and then read
+    through a source whose roster no longer holds it, so neither the
+    short-lap flag nor the team reading has anything to stand on.
+    """
+    roster = _pooled_team_roster()
+    engine = _running_engine(roster)
+    engine.record_crossing("45", at=_dt(10, 2))
+    engine.record_crossing("45", at=_half_a_second_on(_dt(10, 2)))
+    source = EngineDataSource(engine, Roster(entry_mode=EntryMode.MIXED))
+
+    feed = source.feed_rows()
+
+    assert (feed[0].flagged, feed[0].team_overlap) == (False, False)
+
+
+def test_feed_rows_given_a_pending_miss_leaves_the_team_overlap_clear() -> None:
+    """A miss has no entry, so its row is never a team overlap."""
+    roster = _pooled_team_roster()
+    engine = _running_engine(roster)
+    engine.record_miss(_dt(10, 2), reason="missed number")
+    source = EngineDataSource(engine, roster)
+
+    feed = source.feed_rows()
+
+    assert (feed[0].missed, feed[0].team_overlap) == (True, False)

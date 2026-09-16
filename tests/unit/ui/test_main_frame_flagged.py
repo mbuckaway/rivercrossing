@@ -48,6 +48,7 @@ def _row(  # noqa: PLR0913 -- one keyword per feed field a test varies
     flagged: bool = True,
     held: bool = False,
     duplicate: bool = False,
+    team_overlap: bool = False,
 ) -> FeedRow:
     """Build the review row the flagged list wraps."""
     return FeedRow(
@@ -63,6 +64,7 @@ def _row(  # noqa: PLR0913 -- one keyword per feed field a test varies
         held=held,
         card_status=card_status,
         duplicate=duplicate,
+        team_overlap=team_overlap,
     )
 
 
@@ -84,6 +86,11 @@ def _voided_row(plate: str = "56") -> FeedRow:
 def _duplicate_row(plate: str = "78") -> FeedRow:
     """Return one half of a live duplicate pair."""
     return _row(plate=plate, flagged=False, card_status="", duplicate=True)
+
+
+def _team_overlap_row(plate: str = "45") -> FeedRow:
+    """Return a TEAM entry's flagged crossing: a team overlap."""
+    return _row(plate=plate, team="Dirt Dynamos", team_overlap=True)
 
 
 # ------------------------------------------------------------ the model
@@ -191,6 +198,13 @@ def test_flagged_list_model_given_a_credited_short_lap_shows_the_short_lap_issue
     model = main_frame.FlaggedListModel([_credited_row()])
 
     assert model.GetValueByRow(0, main_frame.FLAG_COL_ISSUE) == "Short lap"
+
+
+def test_flagged_list_model_given_a_team_overlap_row_shows_the_team_overlap_issue() -> None:
+    """A flagged TEAM crossing reads "Team overlap", not "Short lap"."""
+    model = main_frame.FlaggedListModel([_team_overlap_row()])
+
+    assert model.GetValueByRow(0, main_frame.FLAG_COL_ISSUE) == "Team overlap"
 
 
 @pytest.mark.parametrize(
