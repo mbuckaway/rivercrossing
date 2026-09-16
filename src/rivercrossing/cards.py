@@ -286,6 +286,20 @@ class Shoe:
         return self._cycle
 
     @property
+    def jokers_in_cycle(self) -> int:
+        """Count of jokers the cycle currently being dealt carries.
+
+        The reshuffle audit's own reading (ride.py's ``_deal_card``):
+        per-deck mode re-deals ``jokers_per_deck`` jokers every cycle,
+        so the answer is that constant; total mode rebuilds each cycle
+        from whatever the ride's allowance has left, so the answer is
+        the live budget -- 0 once every joker has been dealt, and the
+        budget an undone joker was returned to. Read after
+        :meth:`reshuffle`, it is exactly what the new cycle holds.
+        """
+        return self._joker_budget if self._jokers_total else self._jokers_per_deck
+
+    @property
     def is_closed(self) -> bool:
         """Whether :meth:`close` has run and :meth:`reopen` has not.
 

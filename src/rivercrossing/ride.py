@@ -559,6 +559,62 @@ def _payload_dt(event: Event, key: str) -> datetime:
     return datetime.fromisoformat(str(event.payload[key]))
 
 
+def _format_elapsed(seconds: float) -> str:
+    """Render *seconds* as the session's h:mm:ss reading (scope 6d).
+
+    The audit trail's own elapsed formatter: ``0:00:00`` at the gun,
+    ``1:02:05`` past an hour. Unlike
+    ``ui.presenters.data_source.format_duration`` this keeps the sign
+    -- a back-dated gun (``set_start_time``) reads ``"-0:05:00"`` -- so
+    the two formatters are deliberately separate: one renders a display
+    clock (never negative), this one renders an audit reading. A
+    fractional second truncates toward zero, the recording instants
+    being whole seconds.
+    """
+    total = int(seconds)
+    sign = "-" if total < 0 else ""
+    hours, remainder = divmod(abs(total), 3600)
+    minutes, secs = divmod(remainder, 60)
+    return f"{sign}{hours}:{minutes:02d}:{secs:02d}"
+
+
+def _rider_name_for(entry: Entry, plate: str) -> str:
+    """Return the name of *entry*'s rider whose own plate is *plate*.
+
+    The ``record_crossing`` reason's attribution (scope 6d), mirroring
+    ``ui.presenters.data_source._rider_name_for``: under
+    ``PlateModel.RIDER_POOLED`` each team member carries their own
+    plate, so the plate the operator typed names the rider who
+    actually crossed. ``""`` covers every case with no such rider --
+    a ``team_relay`` ride's riders carry no plate at all (S1), and a
+    team's own plate belongs to no member -- so the caller falls back
+    to the typed plate.
+    """
+    for rider in entry.riders:
+        if rider.plate == plate:
+            return rider.full_name
+    return ""
+
+
+def _crossing_reason(entry: Entry, plate: str) -> str:
+    """Return the ``record_crossing`` reason for *entry* at *plate*.
+
+    ``"{rider} · {team|solo}"`` (scope 6d): the rider whose own plate
+    the operator typed, then the entry's own identity -- its
+    ``display_name`` for a TEAM entry, the word "solo" otherwise (the
+    same word every rider list shows, ``ui.rider_columns.
+    SOLO_TEAM_TEXT``, which this module cannot import: no ``wx`` or UI
+    dependency may land below ``rivercrossing.ui``). The kind test
+    reads ``entry.type.value`` rather than ``EntryType.TEAM`` for the
+    same reason the module never imports ``roster`` at runtime -- it
+    is duck-typed (module docstring). A plate no rider owns falls back
+    to the plate itself, so the cell is never blank.
+    """
+    rider_name = _rider_name_for(entry, plate) or plate
+    team = entry.display_name if entry.type.value == "team" else "solo"
+    return f"{rider_name} · {team}"
+
+
 def _require_reason(reason: str) -> None:
     """Refuse an empty or blank correction reason (E7.1.1, R-33).
 
@@ -758,12 +814,14 @@ class RideEngine:
     - **Crossing card.** Every accepted crossing deals one card from
       the shoe (``_deal_card``; R-40); a ``ShoeEmpty`` mid-ride
       reshuffles (seed+1) and appends an audit ``Event`` named
-      ``"shoe_reshuffle"`` with payload ``{"cycle": N}`` before the
-      crossing's own ``record_crossing`` event. The per-deal card rides
+      ``"shoe_reshuffle"`` with payload ``{"cycle": N, "jokers_added":
+      M, "reason": "M jokers added"}`` before the crossing's own
+      ``record_crossing`` event. The per-deal card rides
       on ``CrossingResult.card``; the ``record_crossing`` event payload
-      stays E4.1-pinned (no card field) -- deal auditability is the
-      seeded shoe's replay guarantee (R-40), and E5's Store persists
-      the card row with its own ``shoe_index``.
+      stays E4.1-pinned but for its ``reason`` (scope 6d: the rider who
+      crossed and the entry they crossed for) -- deal auditability is
+      the seeded shoe's replay guarantee (R-40), and E5's Store
+      persists the card row with its own ``shoe_index``.
     - **Held cards.** A lap under ``config.min_lap_s`` is flagged
       short: the lap still records, but its card is dealt into a
       *held* state (spec §4, R-34) -- tracked in ``_held``, exposed by
@@ -1247,7 +1305,15 @@ class RideEngine:
             self._stopped = False
             self._finished_at = None
             return self._append(
-                Event(action="continue", payload={"actual_start": started_at.isoformat()})
+                Event(
+                    action="continue",
+                    payload={
+                        "actual_start": started_at.isoformat(),
+                        # A continue records no new instant, so the
+                        # clock it reports is still the gun (scope 6d).
+                        "reason": _format_elapsed(0.0),
+                    },
+                )
             )
         if self._state is not RideStatus.DRAFT:
             raise IllegalStateError(f"cannot start from {self._state}")
@@ -1297,7 +1363,15 @@ class RideEngine:
         self._roster.status = RideStatus.RUNNING
         self._stopped = False
         return self._append(
-            Event(action="start", payload={"actual_start": started_at.isoformat()})
+            Event(
+                action="start",
+                payload={
+                    "actual_start": started_at.isoformat(),
+                    # The gun's own reading against itself: the ride
+                    # clock starts here (scope 6d).
+                    "reason": _format_elapsed(0.0),
+                },
+            )
         )
 
     def set_start_time(self, at: datetime) -> Event:
@@ -1322,6 +1396,11 @@ class RideEngine:
                 payload={
                     "actual_start": at.isoformat(),
                     "previous_start": previous.isoformat(),
+                    # How far the gun moved (scope 6d): a back-date
+                    # moves it earlier, so the reading is negative
+                    # ("-0:05:00" for the canonical 10:00 -> 09:55
+                    # correction).
+                    "reason": _format_elapsed((at - previous).total_seconds()),
                 },
             )
         )
@@ -1388,6 +1467,9 @@ class RideEngine:
                     "entry_id": entry.plate,
                     "lap": seq,
                     "crossed_at": crossed_at.isoformat(),
+                    # The audit trail's own "who crossed for whom"
+                    # (scope 6d), resolved from the typed plate.
+                    "reason": _crossing_reason(entry, plate),
                 },
             )
         )
@@ -2179,8 +2261,18 @@ class RideEngine:
         if self._stopped:
             raise IllegalStateError("ride is already stopped")
         self._stopped = True
+        stopped_at = self._clock()
         return self._append(
-            Event(action="stop", payload={"stopped_at": self._clock().isoformat()})
+            Event(
+                action="stop",
+                payload={
+                    "stopped_at": stopped_at.isoformat(),
+                    # The ride clock's reading at the stop (scope 6d).
+                    "reason": _format_elapsed(
+                        (stopped_at - self._require_actual_start()).total_seconds()
+                    ),
+                },
+            )
         )
 
     def finish(self) -> Event:
@@ -2218,7 +2310,17 @@ class RideEngine:
         self._finished_at = finished_at
         self._shoe.close()
         return self._append(
-            Event(action="finish", payload={"finished_at": finished_at.isoformat()})
+            Event(
+                action="finish",
+                payload={
+                    "finished_at": finished_at.isoformat(),
+                    # The recorded final elapsed (C3's own instant, not
+                    # the replay clock) -- scope 6d.
+                    "reason": _format_elapsed(
+                        (finished_at - self._require_actual_start()).total_seconds()
+                    ),
+                },
+            )
         )
 
     def reopen(self) -> Event:
@@ -2251,7 +2353,17 @@ class RideEngine:
         self._stopped = False
         self._shoe.reopen()
         return self._append(
-            Event(action="reopen", payload={"reopened_at": reopened_at.isoformat()})
+            Event(
+                action="reopen",
+                payload={
+                    "reopened_at": reopened_at.isoformat(),
+                    # Measured to the reopen, not to the frozen finish
+                    # (scope 6d).
+                    "reason": _format_elapsed(
+                        (reopened_at - self._require_actual_start()).total_seconds()
+                    ),
+                },
+            )
         )
 
     def closed_elapsed(self) -> float:
@@ -2369,13 +2481,26 @@ class RideEngine:
 
         spec §4/R-40: an empty shoe reshuffles (seed+1) and the caller
         writes the reshuffle's own audit entry -- here that entry lands
-        before the crossing's own ``record_crossing`` event.
+        before the crossing's own ``record_crossing`` event. The entry
+        carries the cycle it opened, the jokers it re-dealt
+        (``Shoe.jokers_in_cycle``, read after the reshuffle) and the
+        reason the audit trail draws from those two (scope 6d).
         """
         try:
             card, _deal_index = self._shoe.deal()
         except ShoeEmpty:
             self._shoe.reshuffle()
-            self._append(Event(action="shoe_reshuffle", payload={"cycle": self._shoe.cycle}))
+            jokers_added = self._shoe.jokers_in_cycle
+            self._append(
+                Event(
+                    action="shoe_reshuffle",
+                    payload={
+                        "cycle": self._shoe.cycle,
+                        "jokers_added": jokers_added,
+                        "reason": f"{jokers_added} jokers added",
+                    },
+                )
+            )
             card, _deal_index = self._shoe.deal()
         return card
 

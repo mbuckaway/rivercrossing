@@ -43,6 +43,7 @@ from hypothesis import given
 from hypothesis import strategies as st
 
 from conftest import _pooled_team_roster, _roster_with_entries
+from rivercrossing import ride as ride_module
 from rivercrossing.cards import Card, Shoe, ShoeClosedError
 from rivercrossing.hands import best_hand, compare
 from rivercrossing.ride import (
@@ -473,7 +474,10 @@ def test_start_from_draft_transitions_to_running_and_writes_audit_row() -> None:
     event = engine.start()
 
     assert engine.state is RideStatus.RUNNING
-    assert event == Event(action="start", payload={"actual_start": "2026-09-20T10:00:00"})
+    assert event == Event(
+        action="start",
+        payload={"actual_start": "2026-09-20T10:00:00", "reason": "0:00:00"},
+    )
     assert engine.events == (event,)
 
 
@@ -517,6 +521,7 @@ def test_engine_on_event_receives_the_exact_crossing_payload() -> None:
                 "entry_id": "12",
                 "lap": 1,
                 "crossed_at": "2026-09-20T10:01:00",
+                "reason": "Rider 12 · solo",
             },
         )
     ]
@@ -546,7 +551,10 @@ def test_start_with_explicit_at_retro_sets_actual_start() -> None:
 
     engine.start(at=_dt(9, 45))
 
-    assert engine.events[-1].payload == {"actual_start": "2026-09-20T09:45:00"}
+    assert engine.events[-1].payload == {
+        "actual_start": "2026-09-20T09:45:00",
+        "reason": "0:00:00",
+    }
 
 
 def test_start_sets_roster_status_to_running() -> None:
@@ -619,7 +627,7 @@ def test_start_from_reopened_continues_the_ride_and_keeps_actual_start() -> None
 
     assert engine.state is RideStatus.RUNNING
     assert event.action == "continue"
-    assert event.payload == {"actual_start": "2026-09-20T10:00:00"}
+    assert event.payload == {"actual_start": "2026-09-20T10:00:00", "reason": "0:00:00"}
     assert engine._roster.status is RideStatus.RUNNING
     assert engine.stopped is False
 
@@ -756,6 +764,7 @@ def test_set_start_time_recomputes_lap_one_and_writes_audit_row() -> None:
         payload={
             "actual_start": "2026-09-20T09:55:00",
             "previous_start": "2026-09-20T10:00:00",
+            "reason": "-0:05:00",
         },
     )
 
@@ -802,7 +811,7 @@ def test_start_after_stop_continues_with_unchanged_actual_start() -> None:
     assert engine.state is RideStatus.RUNNING
     assert engine.elapsed() == 600.0
     assert engine.events[-1] == Event(
-        action="continue", payload={"actual_start": "2026-09-20T10:00:00"}
+        action="continue", payload={"actual_start": "2026-09-20T10:00:00", "reason": "0:00:00"}
     )
 
 
@@ -1001,7 +1010,13 @@ def test_record_crossing_credits_one_lap_and_marks_has_data() -> None:
     assert roster.entries[0].has_data is True
     assert engine.events[-1] == Event(
         action="record_crossing",
-        payload={"plate": "12", "entry_id": "12", "lap": 1, "crossed_at": "2026-09-20T10:02:00"},
+        payload={
+            "plate": "12",
+            "entry_id": "12",
+            "lap": 1,
+            "crossed_at": "2026-09-20T10:02:00",
+            "reason": "Rider 12 · solo",
+        },
     )
 
 
@@ -1587,10 +1602,28 @@ def test_record_crossing_shoe_exhaustion_reshuffles_and_audits() -> None:
     result = engine.record_crossing("12", at=_dt(10, 53))
 
     assert result.accepted is True
-    assert engine.events[-2] == Event(action="shoe_reshuffle", payload={"cycle": 2})
+    assert engine.events[-2] == Event(
+        action="shoe_reshuffle",
+        payload={"cycle": 2, "jokers_added": 0, "reason": "0 jokers added"},
+    )
     assert engine.events[-1].action == "record_crossing"
     reshuffled = Shoe(decks=1, jokers_per_deck=0, seed=20260921)
     assert result.card == reshuffled.deal()[0]
+
+
+def test_record_crossing_shoe_exhaustion_given_jokers_reports_them_added() -> None:
+    """Scope 6d: the reshuffle reason counts the jokers re-dealt."""
+    config = _config(deck_count=1, jokers_per_deck=2, min_lap_s=1)
+    engine, _ = _make_engine(config=config)
+    engine.start()
+    _record_crossings(engine, "12", 54, start_at=_dt(10, 0), step_s=60)
+
+    engine.record_crossing("12", at=_dt(10, 55))
+
+    assert engine.events[-2] == Event(
+        action="shoe_reshuffle",
+        payload={"cycle": 2, "jokers_added": 2, "reason": "2 jokers added"},
+    )
 
 
 def test_snapshot_cards_reflect_credited_and_released_cards() -> None:
@@ -2413,7 +2446,10 @@ def test_engine_config_property_returns_the_frozen_setup_config() -> None:
 def test_apply_start_event_transitions_to_running_and_records_event() -> None:
     """apply("start") rebuilds RUNNING from the payload actual_start."""
     engine, _ = _make_engine()
-    event = Event(action="start", payload={"actual_start": "2026-09-20T10:00:00"})
+    event = Event(
+        action="start",
+        payload={"actual_start": "2026-09-20T10:00:00", "reason": "0:00:00"},
+    )
 
     engine.apply(event)
 
@@ -2431,7 +2467,10 @@ def test_apply_start_event_on_empty_roster_replays_running_state() -> None:
     """
     roster = Roster(entry_mode=EntryMode.MIXED, plate_model=PlateModel.RIDER_POOLED)
     engine, _ = _make_engine(roster=roster)
-    event = Event(action="start", payload={"actual_start": "2026-09-20T10:00:00"})
+    event = Event(
+        action="start",
+        payload={"actual_start": "2026-09-20T10:00:00", "reason": "0:00:00"},
+    )
 
     engine.apply(event)
 
@@ -2443,7 +2482,10 @@ def test_apply_continue_event_keeps_actual_start_unchanged() -> None:
     """apply("continue") resumes a RUNNING engine; start stays put."""
     engine, _ = _make_engine()
     engine.start(at=_dt(10, 0))
-    event = Event(action="continue", payload={"actual_start": "2026-09-20T10:00:00"})
+    event = Event(
+        action="continue",
+        payload={"actual_start": "2026-09-20T10:00:00", "reason": "0:00:00"},
+    )
 
     engine.apply(event)
 
@@ -2463,6 +2505,7 @@ def test_apply_record_crossing_event_credits_lap_and_deals_deterministic_card() 
             "entry_id": "12",
             "lap": 1,
             "crossed_at": "2026-09-20T10:02:00",
+            "reason": "Rider 12 · solo",
         },
     )
 
@@ -2482,6 +2525,7 @@ def test_apply_set_start_time_event_backdates_actual_start() -> None:
         payload={
             "actual_start": "2026-09-20T09:55:00",
             "previous_start": "2026-09-20T10:00:00",
+            "reason": "-0:05:00",
         },
     )
 
@@ -2674,7 +2718,10 @@ def test_apply_finish_event_re_applies_the_recorded_finish_instant() -> None:
     engine, clock = _make_engine()
     engine.start(at=_dt(10, 0))
     clock.advance(3600)  # the replay clock is nowhere near the finish instant
-    event = Event(action="finish", payload={"finished_at": "2026-09-20T10:30:00"})
+    event = Event(
+        action="finish",
+        payload={"finished_at": "2026-09-20T10:30:00", "reason": "0:30:00"},
+    )
 
     engine.apply(event)
 
@@ -2687,8 +2734,16 @@ def test_apply_reopen_event_re_applies_the_recorded_reopened_instant() -> None:
     engine, clock = _make_engine()
     engine.start(at=_dt(10, 0))
     clock.advance(3600)
-    engine.apply(Event(action="finish", payload={"finished_at": "2026-09-20T10:01:40"}))
-    event = Event(action="reopen", payload={"reopened_at": "2026-09-20T11:00:00"})
+    engine.apply(
+        Event(
+            action="finish",
+            payload={"finished_at": "2026-09-20T10:01:40", "reason": "0:01:40"},
+        )
+    )
+    event = Event(
+        action="reopen",
+        payload={"reopened_at": "2026-09-20T11:00:00", "reason": "1:00:00"},
+    )
 
     engine.apply(event)
 
@@ -2740,7 +2795,10 @@ def test_apply_shoe_reshuffle_event_is_a_noop_not_a_reshuffle() -> None:
     engine.apply(event)
 
     assert engine.events == (
-        Event(action="start", payload={"actual_start": "2026-09-20T10:00:00"}),
+        Event(
+            action="start",
+            payload={"actual_start": "2026-09-20T10:00:00", "reason": "0:00:00"},
+        ),
     )
     assert engine._shoe.cycle == 1
 
@@ -3963,3 +4021,299 @@ def test_apply_add_crossing_at_given_a_legal_event_still_replays_it() -> None:
     engine.apply(event)
 
     assert (engine.lap_times("12"), engine.events[-1]) == ((1800.0, 300.0), event)
+
+
+# ======================= scope 6d: the audit reason column
+#
+# Every audit row the trail draws carries a reason. The corrections
+# already carried the reason the operator typed; the actions that
+# recorded none -- ``record_crossing``, ``shoe_reshuffle`` and the five
+# lifecycle rows -- now fill their own. A crossing names who crossed and
+# for which entry ("{rider} · {team|solo}"), a reshuffle counts the
+# jokers it re-dealt, and each lifecycle row shows the ride clock's own
+# reading (h:mm:ss) at the instant it recorded.
+
+# The instant every lifecycle reading below is measured from.
+_ELAPSED_ORIGIN = _dt(10, 0)
+
+
+@pytest.mark.parametrize(
+    ("seconds", "expected"),
+    [
+        (-3601, "-1:00:01"),  # min - 1 past an hour: the sign survives
+        (-3600, "-1:00:00"),
+        (-59, "-0:00:59"),
+        (-1, "-0:00:01"),
+        (0, "0:00:00"),  # the origin: a start records exactly this
+        (1, "0:00:01"),
+        (59, "0:00:59"),
+        (60, "0:01:00"),
+        (3599, "0:59:59"),
+        (3600, "1:00:00"),
+        (3601, "1:00:01"),
+        (86399, "23:59:59"),
+    ],
+    ids=[
+        "min_minus_one",
+        "min",
+        "min_plus_one",
+        "minus_one",
+        "zero",
+        "one",
+        "minute_minus_one",
+        "minute",
+        "hour_minus_one",
+        "hour",
+        "hour_plus_one",
+        "max",
+    ],
+)
+def test_format_elapsed_given_boundary_seconds_is_the_h_mm_ss_reading(
+    seconds: int, expected: str
+) -> None:
+    """T-4: zero, both signs, and the second/minute/hour rollovers."""
+    assert ride_module._format_elapsed(seconds) == expected
+
+
+def test_format_elapsed_given_a_fractional_second_truncates_toward_zero() -> None:
+    """Recording instants are whole seconds; a fraction truncates."""
+    assert ride_module._format_elapsed(-300.5) == "-0:05:00"
+
+
+@given(seconds=st.integers(min_value=-(10**6), max_value=10**6))
+def test_format_elapsed_given_any_whole_second_renders_a_round_tripping_reading(
+    seconds: int,
+) -> None:
+    """T-7 invariant: the rendered reading parses back to its input."""
+    rendered = ride_module._format_elapsed(seconds)
+
+    sign = -1 if rendered.startswith("-") else 1
+    hours, minutes, secs = rendered.lstrip("-").split(":")
+    assert sign * (int(hours) * 3600 + int(minutes) * 60 + int(secs)) == seconds
+
+
+# --------------------------------------------- record_crossing (6d)
+
+
+def test_record_crossing_reason_given_a_solo_entry_names_rider_and_solo() -> None:
+    """Scope 6d: a solo entry has no team, so the cell reads "solo"."""
+    engine, _ = _make_engine()
+    engine.start(at=_ELAPSED_ORIGIN)
+
+    engine.record_crossing("12", at=_dt(10, 30))
+
+    assert engine.events[-1].payload["reason"] == "Rider 12 · solo"
+
+
+def test_record_crossing_reason_given_a_pooled_rider_plate_names_that_rider() -> None:
+    """A pooled team's row names the rider whose plate was typed."""
+    roster = _pooled_team_roster()
+    engine, _ = _make_engine(roster=roster)
+    engine.start(at=_ELAPSED_ORIGIN)
+
+    engine.record_crossing("9", at=_dt(10, 30))
+
+    assert engine.events[-1].payload["reason"] == "Priya · Dirt Dynamos"
+
+
+def test_record_crossing_reason_given_the_pooled_teams_own_plate_names_its_rider() -> None:
+    """T-3: a pooled team's plate IS its lowest member's plate."""
+    roster = _pooled_team_roster()
+    engine, _ = _make_engine(roster=roster)
+    engine.start(at=_ELAPSED_ORIGIN)
+
+    engine.record_crossing(roster.entries[0].plate, at=_dt(10, 30))
+
+    assert engine.events[-1].payload["reason"] == "Priya · Dirt Dynamos"
+
+
+def test_record_crossing_reason_given_a_relay_team_falls_back_to_the_plate() -> None:
+    """T-3: a team_relay rider carries no plate, so the plate stands."""
+    roster = Roster(entry_mode=EntryMode.MIXED, plate_model=PlateModel.TEAM_RELAY)
+    roster.create_team_entry(
+        display_name="Dirt Dynamos",
+        riders=[Rider(first_name="Sarah", last_name=""), Rider(first_name="Priya", last_name="")],
+        plate="12",
+    )
+    engine, _ = _make_engine(roster=roster, config=_config(plate_model=PlateModel.TEAM_RELAY))
+    engine.start(at=_ELAPSED_ORIGIN)
+
+    engine.record_crossing("12", at=_dt(10, 30))
+
+    assert engine.events[-1].payload["reason"] == "12 · Dirt Dynamos"
+
+
+def test_record_crossing_reason_given_a_relay_solo_entry_falls_back_to_the_plate() -> None:
+    """T-3: a relay solo's rider is plateless too (S1)."""
+    roster = Roster(entry_mode=EntryMode.SOLO, plate_model=PlateModel.TEAM_RELAY)
+    roster.create_solo_entry(first_name="Sam", last_name="", plate="12")
+    engine, _ = _make_engine(
+        roster=roster,
+        config=_config(entry_mode=EntryMode.SOLO, plate_model=PlateModel.TEAM_RELAY),
+    )
+    engine.start(at=_ELAPSED_ORIGIN)
+
+    engine.record_crossing("12", at=_dt(10, 30))
+
+    assert engine.events[-1].payload["reason"] == "12 · solo"
+
+
+# ------------------------------------------------- the lifecycle rows
+
+
+def test_start_reason_given_a_started_ride_is_the_zero_reading() -> None:
+    """Scope 6d: start's own instant IS actual_start."""
+    engine, _ = _make_engine()
+
+    event = engine.start(at=_ELAPSED_ORIGIN)
+
+    assert event.payload["reason"] == "0:00:00"
+
+
+def test_continue_reason_given_a_continued_ride_is_the_zero_reading() -> None:
+    """A continue records no new instant, so its reading is zero too."""
+    engine, clock = _make_engine()
+    engine.start(at=_ELAPSED_ORIGIN)
+    clock.advance(600)
+    engine.stop()
+
+    event = engine.start()
+
+    assert event.payload["reason"] == "0:00:00"
+
+
+def test_stop_reason_given_a_stopped_ride_is_the_elapsed_reading() -> None:
+    """T-4 boundary past an hour: stopped_at - actual_start."""
+    engine, clock = _make_engine()
+    engine.start(at=_ELAPSED_ORIGIN)
+    clock.advance(3725)
+
+    event = engine.stop()
+
+    assert event.payload["reason"] == "1:02:05"
+
+
+def test_finish_reason_given_a_finished_ride_is_the_elapsed_reading() -> None:
+    """finished_at - actual_start."""
+    engine, clock = _make_engine()
+    engine.start(at=_ELAPSED_ORIGIN)
+    clock.advance(600)
+
+    event = engine.finish()
+
+    assert event.payload["reason"] == "0:10:00"
+
+
+def test_reopen_reason_given_a_reopened_ride_is_the_elapsed_reading() -> None:
+    """reopened_at - actual_start, not the ride's frozen finish."""
+    engine, clock = _make_engine()
+    engine.start(at=_ELAPSED_ORIGIN)
+    clock.advance(600)
+    engine.finish()
+    clock.advance(300)
+
+    event = engine.reopen()
+
+    assert event.payload["reason"] == "0:15:00"
+
+
+def test_set_start_time_reason_given_a_back_dated_gun_is_the_negative_shift() -> None:
+    """T-3: the gun moving back is a negative shift of the start."""
+    engine, _ = _make_engine()
+    engine.start(at=_ELAPSED_ORIGIN)
+
+    event = engine.set_start_time(_dt(9, 55))
+
+    assert event.payload["reason"] == "-0:05:00"
+
+
+def test_set_start_time_reason_given_a_forward_shift_is_the_positive_shift() -> None:
+    """The same reading the other way: a gun moved later is positive."""
+    engine, _ = _make_engine()
+    engine.start(at=_ELAPSED_ORIGIN)
+
+    event = engine.set_start_time(_dt(10, 2))
+
+    assert event.payload["reason"] == "0:02:00"
+
+
+def test_set_start_time_reason_given_a_seconds_shift_is_the_negative_reading() -> None:
+    """T-4 boundary: a one-second back-date reads -0:00:01."""
+    engine, _ = _make_engine()
+    engine.start(at=_ELAPSED_ORIGIN)
+
+    event = engine.set_start_time(_dt(9, 59, 59))
+
+    assert event.payload["reason"] == "-0:00:01"
+
+
+# ------------------------------------------- the reason-carriers (T-3)
+# Every action that already records an operator-typed reason keeps
+# exactly that reason: the auto-fill never overwrites one.
+
+_TYPED_REASON = "typed by the operator"
+
+TYPED_REASON_ACTIONS = (
+    "undo",
+    "record_miss",
+    "deal_manual",
+    "edit_crossing",
+    "void_crossing",
+    "add_crossing_at",
+    "assign_plate_to_miss",
+    "reassign",
+    "dnf",
+    "void_card",
+)
+
+
+def _run_reason_carrying(engine: RideEngine, action: str) -> None:
+    """Run *action*'s reason-carrying path, each with its own setup."""
+    match action:
+        case "undo":
+            # The engine's own fixed reason, not an operator-typed one.
+            engine.record_crossing("12", at=_dt(10, 30))
+            engine.undo_last()
+        case "record_miss":
+            engine.record_miss(_dt(10, 30), reason=_TYPED_REASON)
+        case "deal_manual":
+            engine.deal_manual("12", reason=_TYPED_REASON)
+        case "edit_crossing":
+            engine.record_crossing("12", at=_dt(10, 30))
+            engine.edit_crossing("12", 1, _dt(10, 31), reason=_TYPED_REASON)
+        case "void_crossing":
+            engine.record_crossing("12", at=_dt(10, 30))
+            engine.void_crossing("12", 1, reason=_TYPED_REASON)
+        case "add_crossing_at":
+            engine.add_crossing_at("12", _dt(10, 30), reason=_TYPED_REASON)
+        case "assign_plate_to_miss":
+            engine.record_miss(_dt(10, 30), reason=_TYPED_REASON)
+            engine.assign_plate_to_miss(1, "34", reason=_TYPED_REASON)
+        case "reassign":
+            engine.record_crossing("12", at=_dt(10, 30))
+            engine.reassign_crossing(1, "34", reason=_TYPED_REASON)
+        case "dnf":
+            engine.mark_dnf("12", reason=_TYPED_REASON)
+        case _:  # void_card, the only case left
+            result = engine.record_crossing("12", at=_dt(10, 30))
+            engine.void_card("12", result.card, reason=_TYPED_REASON)
+
+
+@pytest.mark.parametrize(
+    ("action", "expected_reason"),
+    [
+        (action, "Undo last crossing" if action == "undo" else _TYPED_REASON)
+        for action in TYPED_REASON_ACTIONS
+    ],
+    ids=[*TYPED_REASON_ACTIONS],
+)
+def test_audit_reason_given_a_reason_carrying_action_keeps_its_own_reason(
+    action: str, expected_reason: str
+) -> None:
+    """Scope 6d: the ten reason-carriers are never auto-filled."""
+    engine, _ = _make_engine(config=_config(min_lap_s=1))
+    engine.start(at=_ELAPSED_ORIGIN)
+
+    _run_reason_carrying(engine, action)
+
+    assert engine.events[-1].payload["reason"] == expected_reason

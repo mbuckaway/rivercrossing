@@ -94,6 +94,7 @@ def test_wire_store_append_persists_the_crossing_to_the_fake_store() -> None:
                     "entry_id": "12",
                     "lap": 1,
                     "crossed_at": "2026-09-20T10:01:00",
+                    "reason": "Rider 12 · solo",
                 },
             ),
         )

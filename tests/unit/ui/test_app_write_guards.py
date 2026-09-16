@@ -1228,7 +1228,14 @@ def test_persist_rider_editor_changes_given_a_plate_change_persists_its_audit_ro
         (
             5,
             "change_solo_plate",
-            json.dumps({"display_name": "Alice", "old_plate": "12", "new_plate": "13"}),
+            json.dumps(
+                {
+                    "display_name": "Alice",
+                    "old_plate": "12",
+                    "new_plate": "13",
+                    "reason": "12 → 13",
+                }
+            ),
         )
     ]
     assert roster.audit_log == ()
@@ -1257,7 +1264,14 @@ def test_persist_team_editor_changes_given_a_rider_plate_change_persists_its_aud
         (
             5,
             "change_pooled_rider_plate",
-            json.dumps({"rider_name": "A. Roy", "old_plate": "77", "new_plate": "79"}),
+            json.dumps(
+                {
+                    "rider_name": "A. Roy",
+                    "old_plate": "77",
+                    "new_plate": "79",
+                    "reason": "77 → 79",
+                }
+            ),
         )
     ]
     assert roster.audit_log == ()
@@ -1289,7 +1303,14 @@ def test_handle_check_rider_issues_given_a_plate_change_persists_its_audit_row(
         (
             5,
             "change_solo_plate",
-            json.dumps({"display_name": "Alice", "old_plate": "12", "new_plate": "13"}),
+            json.dumps(
+                {
+                    "display_name": "Alice",
+                    "old_plate": "12",
+                    "new_plate": "13",
+                    "reason": "12 → 13",
+                }
+            ),
         )
     ]
 

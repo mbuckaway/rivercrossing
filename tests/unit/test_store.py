@@ -1006,7 +1006,12 @@ def test_store_load_engine_replays_start_and_crossing_into_running_engine(
     assert len(engine.crossings) == 1
     assert engine.crossings[0].entry_id == "12"
     assert engine.crossings[0].crossed_at == datetime(2026, 9, 20, 10, 2)  # noqa: DTZ001
-    assert engine.events == (start_event, crossing_event)
+    # Replay re-derives each event's own reason from the roster, so the
+    # persisted payloads' actions survive the round trip (scope 6d).
+    assert [(event.action, event.payload["reason"]) for event in engine.events] == [
+        ("start", "0:00:00"),
+        ("record_crossing", "Alice · solo"),
+    ]
 
 
 def test_store_load_engine_replays_single_start_event_into_running_engine(
@@ -1025,7 +1030,12 @@ def test_store_load_engine_replays_single_start_event_into_running_engine(
         store.close()
 
     assert engine.state is RideStatus.RUNNING
-    assert engine.events == (start_event,)
+    assert engine.events == (
+        Event(
+            action="start",
+            payload={"actual_start": "2026-09-20T10:00:00", "reason": "0:00:00"},
+        ),
+    )
     assert engine.crossings == ()
 
 
@@ -2701,13 +2711,12 @@ def test_store_audit_rows_projects_fields_newest_first(tmp_path: Path) -> None:
     assert rows == [
         AuditRow(
             when="10:03:00",
-            who="scorer",
             action="edit_crossing",
             entry="12",
             reason="mis-keyed time",
         ),
-        AuditRow(when="10:02:00", who="scorer", action="record_crossing", entry="12", reason=""),
-        AuditRow(when="10:00:00", who="scorer", action="start", entry="", reason=""),
+        AuditRow(when="10:02:00", action="record_crossing", entry="12", reason=""),
+        AuditRow(when="10:00:00", action="start", entry="", reason=""),
     ]
 
 

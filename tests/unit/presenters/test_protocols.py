@@ -375,11 +375,7 @@ class FakeDataSource:
 
     def audit_rows(self) -> list[AuditRow]:
         """Return one fixed audit row."""
-        return [
-            AuditRow(
-                when="14:23:02", who="scorer", action="Void crossing", entry="45", reason="mis-key"
-            )
-        ]
+        return [AuditRow(when="14:23:02", action="void_crossing", entry="45", reason="mis-key")]
 
     def results_stale(self, export_watermark: int | None) -> bool:  # noqa: ARG002 -- DataSource's signature; the fake is never stale
         """Return False: the fake publishes nothing that goes stale."""

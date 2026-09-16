@@ -881,7 +881,7 @@ def test_engine_data_source_audit_rows_maps_engine_events_newest_first() -> None
 
     assert [row.action for row in rows] == ["record_crossing", "start"]
     assert rows[0].entry == "12"
-    assert rows[0].who == "scorer"
+    assert rows[0].reason == "Rider 12 · solo"
 
 
 # ------------------------------------------------------------- riders

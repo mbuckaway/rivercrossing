@@ -3,30 +3,74 @@
 
 The audit trail dialog's two filters -- ``audit_search`` (plate OR
 entry display name, resolved through the roster) and ``action_choice``
-(§15-D action buckets) -- plus the entry-detail deep-link are wired
-through ``AuditPresenter``: a wx-free coordinator holding ``(view,
-data_source, roster)``. Each handler re-reads
+(one row per audited action) -- plus the entry-detail deep-link are
+wired through ``AuditPresenter``: a wx-free coordinator holding
+``(view, data_source, roster)``. Each handler re-reads
 ``data_source.audit_rows`` (newest first), narrows by the current
-search text and bucket, and renders through
+search text and selected action, and renders through
 ``AuditView.show_audit_rows``.
 
-These tests drive the presenter against a recording ``FakeAuditView``
-and a fixed-row source (never wx -- R-71): newest-first rendering,
-plate search, display-name search (solo and pooled team), the
-All-actions default, every §15-D bucket, the combined filters, and the
-deep-link pre-filter.
+``action_choice`` is flat: ``audit.xrc`` declares "All actions" plus one
+item per audited action (29 in all), so the filter keeps exactly the
+selected action's rows -- there is no bucket mapping any more. These
+tests pin the flat list against the ``.xrc``'s own declared order and
+against every action the app can audit, then drive the filters against
+a recording ``FakeAuditView`` and a fixed-row source (never wx -- R-71).
 """
 
+from __future__ import annotations
+
+from pathlib import Path
+
 import pytest
+from defusedxml.ElementTree import parse
 
 from rivercrossing.roster import EntryMode, PlateModel, Rider, Roster
 from rivercrossing.ui.presenters.audit import (
-    ACTION_BUCKETS,
+    ACTION_CHOICES,
     ALL_ACTIONS,
     AuditPresenter,
     AuditView,
 )
 from rivercrossing.ui.presenters.data_source import AuditRow
+
+XRC_DIR = Path(__file__).resolve().parents[3] / "src" / "rivercrossing" / "ui" / "xrc"
+
+# Every action the app can put in the audit trail: the engine's own
+# event actions (ride.py's ``apply`` dispatch) plus the roster
+# mutations Store persists as user_action rows.
+AUDITED_ACTIONS = frozenset(
+    {
+        "record_crossing",
+        "add_crossing_at",
+        "edit_crossing",
+        "void_crossing",
+        "undo",
+        "reassign",
+        "record_miss",
+        "assign_plate_to_miss",
+        "deal_manual",
+        "confirm_held",
+        "void_held",
+        "return_to_held",
+        "void_card",
+        "move_rider",
+        "add_rider_to_team",
+        "extract_rider_to_solo",
+        "change_solo_plate",
+        "change_pooled_rider_plate",
+        "change_team_plate",
+        "remove_rider",
+        "dnf",
+        "shoe_reshuffle",
+        "start",
+        "continue",
+        "set_start_time",
+        "stop",
+        "finish",
+        "reopen",
+    }
+)
 
 # ------------------------------------------------------------- fakes
 
@@ -66,8 +110,8 @@ class _AuditSource:
 def _row(  # noqa: PLR0913, PLR0917 -- (action, entry, reason, when): one fixed row
     action: str, entry: str, reason: str = "", when: str = "14:00:00"
 ) -> AuditRow:
-    """Build one fixed audit row (who is always the scorer)."""
-    return AuditRow(when=when, who="scorer", action=action, entry=entry, reason=reason)
+    """Build one fixed audit row."""
+    return AuditRow(when=when, action=action, entry=entry, reason=reason)
 
 
 def _roster() -> Roster:
@@ -85,15 +129,28 @@ def _roster() -> Roster:
 
 
 def _mixed_rows() -> list[AuditRow]:
-    """Rows spanning several buckets and the two roster entries."""
+    """Rows spanning several actions and the two roster entries."""
     return [
         _row("dnf", "45", reason="mechanical failure"),
-        _row("shoe_reshuffle", ""),
+        _row("shoe_reshuffle", "", reason="0 jokers added"),
         _row("deal_manual", "45", reason="flag confirmed"),
-        _row("record_crossing", "45"),
+        _row("record_crossing", "45", reason="J. Okafor · solo"),
         _row("edit_crossing", "77", reason="mis-keyed time"),
-        _row("start", ""),
+        _row("start", "", reason="0:00:00"),
     ]
+
+
+def _rows_for_every_action() -> list[AuditRow]:
+    """One fixed row per :data:`ACTION_CHOICES` action, list order."""
+    return [_row(action, "45") for _label, action in ACTION_CHOICES]
+
+
+def _action_choice_labels() -> list[str]:
+    """Return audit.xrc's action_choice entries, in declared order."""
+    root = parse(XRC_DIR / "audit.xrc").getroot()
+    choice = next(obj for obj in root.iter("object") if obj.get("name") == "action_choice")
+    content = next(child for child in choice if child.tag == "content")
+    return [item.text or "" for item in content.findall("item")]
 
 
 # ------------------------------------------------------ construction
@@ -122,6 +179,15 @@ def test_audit_presenter_without_a_roster_renders_all_rows() -> None:
     AuditPresenter(view, _AuditSource(_mixed_rows()))
 
     assert view.shown[-1] == _mixed_rows()
+
+
+def test_audit_presenter_given_no_rows_renders_an_empty_list() -> None:
+    """T-4 empty collection: a ride with no events renders no rows."""
+    view = FakeAuditView()
+
+    AuditPresenter(view, _AuditSource([]), roster=_roster())
+
+    assert view.shown[-1] == []
 
 
 def test_audit_search_without_a_roster_matches_no_display_names() -> None:
@@ -203,92 +269,102 @@ def test_audit_search_ignores_reason_and_action_text() -> None:
     assert view.shown[-1] == []
 
 
-# ---------------------------------------------------- action buckets
+# ---------------------------------------------------- action choices
 
 
-_BUCKET_ROWS = [
-    _row("start", ""),
-    _row("record_crossing", "45"),
-    _row("edit_crossing", "77", reason="mis-keyed"),
-    _row("undo", "77"),
-    _row("void_crossing", "77", reason="double entry"),
-    _row("add_crossing_at", "45", reason="missed"),
-    _row("reassign", "77", reason="wrong plate"),
-    _row("deal_manual", "45", reason="flag confirmed"),
-    _row("confirm_held", "45"),
-    _row("void_held", "45"),
-    _row("void_card", "45", reason="wrong card"),
-    _row("dnf", "45", reason="mechanical"),
-    _row("shoe_reshuffle", ""),
-    _row("stop", ""),
-]
+def test_action_choices_given_the_flat_canvas_order_match_audit_xrc() -> None:
+    """The filter list and the dropdown are one list, in one order."""
+    assert [label for label, _action in ACTION_CHOICES] == [
+        label for label in _action_choice_labels() if label != ALL_ACTIONS
+    ]
+
+
+def test_action_choices_given_the_canvas_include_the_all_actions_item() -> None:
+    """All actions stays the choice's first item, as declared."""
+    assert _action_choice_labels()[0] == ALL_ACTIONS
+
+
+def test_action_choices_given_every_audited_action_cover_it_exactly_once() -> None:
+    """No audited action is missing, and none appears twice."""
+    assert {action for _label, action in ACTION_CHOICES} == AUDITED_ACTIONS
+    assert len(ACTION_CHOICES) == len(AUDITED_ACTIONS)
+
+
+def test_action_choices_given_the_dropdown_labels_are_unique() -> None:
+    """Two rows cannot share a label: the choice would be ambiguous."""
+    labels = [label for label, _action in ACTION_CHOICES]
+
+    assert len(set(labels)) == len(labels)
+
+
+def test_action_choices_given_the_all_actions_item_never_carries_an_action() -> None:
+    """The All actions item is the no-filter value, never an action."""
+    assert ALL_ACTIONS not in {action for _label, action in ACTION_CHOICES}
+    assert ALL_ACTIONS not in {label for label, _action in ACTION_CHOICES}
 
 
 @pytest.mark.parametrize(
-    ("bucket", "expected_actions"),
-    [
-        (
-            "Crossing edits",
-            [
-                "record_crossing",
-                "edit_crossing",
-                "undo",
-                "void_crossing",
-                "add_crossing_at",
-                "reassign",
-            ],
-        ),
-        ("Card deals/voids", ["deal_manual", "confirm_held", "void_held", "void_card"]),
-        ("Moves", []),
-        ("DNF", ["dnf"]),
-        ("Shoe reshuffle", ["shoe_reshuffle"]),
-    ],
+    "action", [action for _label, action in ACTION_CHOICES], ids=[a for _l, a in ACTION_CHOICES]
 )
-def test_audit_action_choice_filters_by_bucket(bucket: str, expected_actions: list[str]) -> None:
-    """Selecting a §15-D bucket keeps exactly that bucket's actions."""
+def test_audit_action_choice_given_a_selected_action_keeps_only_its_rows(action: str) -> None:
+    """T-13: every one of the 28 actions filters to its own rows."""
     view = FakeAuditView()
-    presenter = AuditPresenter(view, _AuditSource(_BUCKET_ROWS), roster=_roster())
+    presenter = AuditPresenter(view, _AuditSource(_rows_for_every_action()), roster=_roster())
 
-    presenter.on_action_selected(bucket)
+    presenter.on_action_selected(action)
 
-    assert [row.action for row in view.shown[-1]] == expected_actions
+    assert [row.action for row in view.shown[-1]] == [action]
 
 
 def test_audit_action_choice_defaults_to_all_actions() -> None:
-    """The default bucket filters nothing."""
+    """The default choice filters nothing."""
+    rows = _rows_for_every_action()
     view = FakeAuditView()
 
-    AuditPresenter(view, _AuditSource(_BUCKET_ROWS), roster=_roster())
+    AuditPresenter(view, _AuditSource(rows), roster=_roster())
 
-    assert view.shown[-1] == _BUCKET_ROWS
+    assert view.shown[-1] == rows
 
 
 def test_audit_action_choice_all_actions_restores_every_row() -> None:
-    """Selecting All actions clears the bucket filter."""
+    """Selecting All actions clears the action filter."""
+    rows = _rows_for_every_action()
     view = FakeAuditView()
-    presenter = AuditPresenter(view, _AuditSource(_BUCKET_ROWS), roster=_roster())
-    presenter.on_action_selected("Crossing edits")
+    presenter = AuditPresenter(view, _AuditSource(rows), roster=_roster())
+    presenter.on_action_selected("record_crossing")
 
     presenter.on_action_selected(ALL_ACTIONS)
 
-    assert view.shown[-1] == _BUCKET_ROWS
+    assert view.shown[-1] == rows
+
+
+def test_audit_action_choice_given_an_unknown_action_keeps_nothing() -> None:
+    """T-4 negative: an action no row carries matches no row."""
+    rows = _rows_for_every_action()
+    view = FakeAuditView()
+    presenter = AuditPresenter(view, _AuditSource(rows), roster=_roster())
+
+    presenter.on_action_selected("not_an_action")
+
+    assert view.shown[-1] == []
 
 
 # ---------------------------------------------------- combined filters
 
 
-def test_audit_search_and_action_bucket_combine() -> None:
+def test_audit_search_and_action_choice_combine() -> None:
     """Both filters narrow the same query (audit.xrc's own note)."""
     rows = [
         _row("record_crossing", "45"),
-        _row("edit_crossing", "77", reason="mis-keyed"),
+        _row("record_crossing", "77"),
+        _row("edit_crossing", "45", reason="mis-keyed"),
         _row("dnf", "45", reason="mechanical"),
     ]
     view = FakeAuditView()
     presenter = AuditPresenter(view, _AuditSource(rows), roster=_roster())
 
     presenter.on_search_text("45")
-    presenter.on_action_selected("Crossing edits")
+    presenter.on_action_selected("record_crossing")
 
     assert [row.action for row in view.shown[-1]] == ["record_crossing"]
 
@@ -306,50 +382,16 @@ def test_audit_deep_link_prefills_search_and_filters_to_the_entry() -> None:
     assert [row.entry for row in view.shown[-1]] == ["45", "45", "45"]
 
 
-# ------------------------------------------------------------- mapping
-
-
-def test_action_buckets_cover_the_correction_vocabulary_without_overlap() -> None:
-    """The §15-D mapping is the task's action sets, no overlaps."""
-    union = set().union(*ACTION_BUCKETS.values())
-
-    assert union == {
-        "record_crossing",
-        "undo",
-        "edit_crossing",
-        "void_crossing",
-        "add_crossing_at",
-        "reassign",
-        "record_miss",
-        "assign_plate_to_miss",
-        "deal_manual",
-        "confirm_held",
-        "void_held",
-        "void_card",
-        "move_rider",
-        "add_rider_to_team",
-        "extract_rider_to_solo",
-        "change_solo_plate",
-        "change_pooled_rider_plate",
-        "change_team_plate",
-        "dnf",
-        "shoe_reshuffle",
-    }
-    assert sum(len(actions) for actions in ACTION_BUCKETS.values()) == len(union)
-    assert ALL_ACTIONS not in ACTION_BUCKETS
-    assert all(ACTION_BUCKETS.values())
-
-
-def test_audit_action_choice_given_crossing_edits_keeps_the_miss_actions() -> None:
-    """The two miss actions filter through the Crossing edits bucket."""
-    rows = [
-        _row("record_miss", ""),
-        _row("assign_plate_to_miss", "45", reason="rider identified"),
-        _row("dnf", "45", reason="mechanical"),
-    ]
+def test_audit_deep_link_given_an_action_filter_starts_on_it() -> None:
+    """The deep-link can start on one action (a corrections route)."""
     view = FakeAuditView()
-    presenter = AuditPresenter(view, _AuditSource(rows), roster=_roster())
 
-    presenter.on_action_selected("Crossing edits")
+    AuditPresenter(
+        view,
+        _AuditSource(_mixed_rows()),
+        roster=_roster(),
+        entry_filter="45",
+        action_filter="record_crossing",
+    )
 
-    assert [row.action for row in view.shown[-1]] == ["record_miss", "assign_plate_to_miss"]
+    assert [row.action for row in view.shown[-1]] == ["record_crossing"]

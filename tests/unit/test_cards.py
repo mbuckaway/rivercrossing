@@ -195,6 +195,62 @@ def test_shoe_cycle_starts_at_one_for_a_freshly_built_shoe() -> None:
     assert shoe.cycle == 1
 
 
+# ------------------------------------------------ jokers_in_cycle (6d)
+#
+# The reshuffle audit's own reading (ride.py's ``_deal_card``): how many
+# jokers the cycle now being built carries. Per-deck mode re-deals
+# jokers_per_deck every cycle, so the reading is that constant; total
+# mode re-deals only what the ride's budget has left, so the reading is
+# the live budget -- which is what makes "N jokers added" true.
+
+
+@pytest.mark.parametrize("jokers_per_deck", [0, 1, 4], ids=["none", "one", "four"])
+def test_shoe_jokers_in_cycle_given_per_deck_mode_is_the_configured_count(
+    jokers_per_deck: int,
+) -> None:
+    """T-4 bounds: per-deck mode never spends the count down."""
+    shoe = Shoe(decks=1, jokers_per_deck=jokers_per_deck, seed=_SEED)
+
+    assert shoe.jokers_in_cycle == jokers_per_deck
+
+
+def test_shoe_jokers_in_cycle_given_per_deck_mode_holds_after_a_reshuffle() -> None:
+    """Per-deck mode re-deals the same joker count every cycle."""
+    shoe = Shoe(decks=1, jokers_per_deck=2, seed=_SEED)
+    _deal_all(shoe)
+
+    shoe.reshuffle()
+
+    assert shoe.jokers_in_cycle == 2
+
+
+def test_shoe_jokers_in_cycle_given_total_mode_starts_at_the_configured_count() -> None:
+    """Total mode's first cycle carries the whole ride budget."""
+    shoe = Shoe(decks=1, jokers_per_deck=2, seed=_SEED, jokers_total=True)
+
+    assert shoe.jokers_in_cycle == 2
+
+
+def test_shoe_jokers_in_cycle_given_total_mode_follows_the_spent_budget() -> None:
+    """T-3: a dealt joker reduces what the next cycle carries."""
+    shoe = Shoe(decks=1, jokers_per_deck=2, seed=_SEED, jokers_total=True)
+    _deal_until_joker(shoe)
+
+    shoe.reshuffle()
+
+    assert shoe.jokers_in_cycle == 1
+
+
+def test_shoe_jokers_in_cycle_given_total_mode_is_zero_once_the_budget_is_spent() -> None:
+    """T-4 boundary at 0: a spent budget adds no jokers to a cycle."""
+    shoe = Shoe(decks=1, jokers_per_deck=1, seed=_SEED, jokers_total=True)
+    _deal_all(shoe)
+
+    shoe.reshuffle()
+
+    assert shoe.jokers_in_cycle == 0
+
+
 # ---------------------------------------------- exhaustion + reshuffle
 
 

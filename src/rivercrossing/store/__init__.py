@@ -1344,8 +1344,7 @@ class Store:
         The audit viewer's read accessor: every ``audit`` row the
         ride recorded, projected to the display
         :class:`~rivercrossing.ui.presenters.data_source.AuditRow`
-        shape the viewer's list draws -- ``who="scorer"`` (the engine
-        never records another actor), ``entry`` = the payload's
+        shape the viewer's list draws -- ``entry`` = the payload's
         ``entry_id``, falling back to ``plate``, then (for a roster
         plate change, whose payload carries neither) ``old_plate``,
         ``new_plate`` and ``display_name``, then ``""``, ``reason`` =
@@ -1379,7 +1378,6 @@ class Store:
             rows.append(
                 AuditRow(
                     when=_audit_when(audit_row["at"]),
-                    who="scorer",
                     action=audit_row["action"],
                     entry=str(
                         payload.get("entry_id")
