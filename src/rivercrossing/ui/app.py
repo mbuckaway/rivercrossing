@@ -55,7 +55,7 @@ import sys
 import threading
 import webbrowser
 from dataclasses import dataclass, field, replace
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, time
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
@@ -110,6 +110,7 @@ from rivercrossing.ui.presenters.data_source import (
     RideSummary,
     format_duration,
 )
+from rivercrossing.ui.presenters.ride_defaults import build_test_ride_config, next_test_ride_name
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
@@ -1214,6 +1215,14 @@ def _apply_edited_ride(context: _RouteContext, config: RideConfig) -> None:
     rewinds it. With a store-backed ride open the ride row is
     rewritten too, so the edit survives a relaunch.
 
+    The ride's three structural settings go onto the open roster as
+    well (``Roster.update_shape``): every roster consumer reads the
+    ride's own entry mode / team size / plate model -- the setup
+    dialog's team controls, the rider editor's rail, and the
+    ``Store.save_roster`` a later roster edit writes back -- so an
+    edit that left the roster on its old shape would be silently
+    reverted by the next save.
+
     A refused store write (a locked or unwritable database) surfaces
     as a status notice -- recorded in the launch's log too
     (:func:`_log_warn`) -- and leaves both the row and the live engine
@@ -1237,6 +1246,11 @@ def _apply_edited_ride(context: _RouteContext, config: RideConfig) -> None:
             context.frame.SetStatusText(f"Could not save ride: {exc}")
             return
     presenter.engine.update_config(config)
+    context.roster.update_shape(
+        entry_mode=config.entry_mode,
+        max_team_size=config.max_team_size,
+        plate_model=config.plate_model,
+    )
     _show_ride_header(context, config)
     context.frame.SetStatusText("Ride settings saved")
 
@@ -1558,9 +1572,13 @@ def _decorate_simulation(context: _RouteContext, window: Any) -> Any:  # noqa: A
     The simulator generates its placeholder field through the live
     roster and replays the race through the console's own engine, so
     it needs the threaded presenter. A route-level context with none
-    opens the plain XRC dialog (its Generate and GO buttons inert);
-    :func:`_open_target` then has no view to persist, and the roster
-    is untouched anyway.
+    opens the dialog in its own no-ride form
+    (``SimulatorDialog._open_without_ride``): ``engine=None``,
+    ``roster=None``, every generator and race control disabled, and
+    ``new_ride_btn`` wired to the app's New Ride flow
+    (:func:`_create_simulator_test_ride`) -- the operator's one way
+    forward from a console with no ride on it. No spins are threaded
+    for that open; the dialog reads its own authored defaults.
 
     Plan §1/§3: the spins are seeded from the live settings, so the
     dialog opens on the operator's last-used counts -- and the average
@@ -1573,7 +1591,12 @@ def _decorate_simulation(context: _RouteContext, window: Any) -> Any:  # noqa: A
 
     presenter = context.presenter
     if presenter is None:
-        return None
+        return SimulatorDialog(
+            window,
+            engine=None,
+            roster=None,
+            on_new_ride=lambda: _create_simulator_test_ride(context),
+        )
     return SimulatorDialog(
         window,
         engine=presenter.engine,
@@ -1588,6 +1611,35 @@ def _decorate_simulation(context: _RouteContext, window: Any) -> Any:  # noqa: A
         sim_team_stop=context.settings.sim_team_stop,
         avg_speed_kmh=context.settings.avg_speed_kmh,
     )
+
+
+def _create_simulator_test_ride(context: _RouteContext) -> None:
+    """Create the simulator's New Ride: a "GORBA Test Ride #N" (G9).
+
+    ``new_ride_btn``'s route on the dialog's no-ride form: with no ride
+    open there is nothing for the simulator to generate into, so the
+    button opens a fresh ride instead. The config is
+    :func:`~rivercrossing.ui.presenters.ride_defaults.build_test_ride_config`
+    under the next free test-ride name -- the library's own rows decide
+    the number, so a deleted test ride's number is reused -- dated
+    today with a 10:00 gun time, and it persists through the same
+    :func:`_persist_created_ride` the New Ride dialog submits to.
+
+    With no store open there is no database to create the ride in, so
+    the flow posts the same no-store notice the other ride-less routes
+    do (:func:`_handle_backup_database`).
+    """
+    store = context.store
+    if store is None:
+        context.frame.SetStatusText("New Ride — no store is open")
+        return
+    today = date.today()  # noqa: DTZ011 -- the operator's own local day
+    config = build_test_ride_config(
+        name=next_test_ride_name([ride.name for ride in store.rides()]),
+        event_date=today,
+        planned_start=datetime.combine(today, time(10, 0)),
+    )
+    _persist_created_ride(context, config)
 
 
 def _decorate_results(context: _RouteContext, window: Any) -> None:  # noqa: ANN401 -- wx ships no stubs
@@ -2983,8 +3035,14 @@ def _persist_simulator_changes(context: _RouteContext, view: Any) -> None:  # no
     engine's own status, the same read
     :func:`_record_export_completion` refreshes with, enables them on
     the spot; a GO the engine refused leaves it DRAFT, so the menu
-    never claims a ride that never started. A route-level context with
-    no presenter has no live ride to re-apply.
+    never claims a ride that never started.
+
+    A view with no presenter is the dialog's own no-ride open
+    (:func:`_decorate_simulation`): it generated nothing into a roster
+    and raced nothing, and its spins were never seeded from the
+    settings (every field is disabled and stands as authored), so the
+    whole close-persist is skipped -- writing those authored defaults
+    back would overwrite the operator's saved counts.
 
     Args:
         context: The route context whose store, roster and settings
@@ -2993,9 +3051,13 @@ def _persist_simulator_changes(context: _RouteContext, view: Any) -> None:  # no
             stand-in) whose ``presenter.roster_changed`` says whether
             this session generated anything and whose ``sim_values``
             and ``sim_behaviors`` carry the spins and the three
-            behaviour counts to persist.
+            behaviour counts to persist; its ``presenter`` is ``None``
+            for the no-ride open.
     """
-    if view.presenter.roster_changed:
+    presenter = view.presenter
+    if presenter is None:
+        return
+    if presenter.roster_changed:
         store = context.store
         if store is not None and context.active_ride_id is not None:
             try:
@@ -3374,7 +3436,10 @@ def _show_crossing_detail_dialog(
     try:
         zoom.apply_to(window)
         if isinstance(target, PendingMiss):
-            MissDetailView(window, miss=target, engine=engine)
+            # Both modes take the roster: the miss's plate prompt
+            # resolves the typed number to its entry before OK assigns
+            # it, exactly like the crossing mode's.
+            MissDetailView(window, miss=target, roster=context.roster, engine=engine)
         else:
             CrossingDetailView(window, crossing=target, roster=context.roster, engine=engine)
         dialogs.run_dialog(window, opener=context.frame)

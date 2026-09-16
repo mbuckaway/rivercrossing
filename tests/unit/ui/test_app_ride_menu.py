@@ -653,13 +653,27 @@ def test_apply_edited_ride_rewrites_the_stored_ride_and_the_live_engine(
         context.active_ride_id = ride_id
         engine = store.load_engine(ride_id, context.roster)
         _live_console(context, engine, view)
-        edited = replace(gorba_config(), name="Renamed", venue="New Venue")
+        edited = replace(
+            gorba_config(),
+            name="Renamed",
+            venue="New Venue",
+            entry_mode=EntryMode.SOLO,
+            plate_model=PlateModel.TEAM_RELAY,
+            max_team_size=6,
+        )
         view.calls.clear()
 
         app_module._apply_edited_ride(context, edited)
 
         assert context.presenter is not None
         assert context.presenter.engine.config.name == "Renamed"
+        # The ride's three structural settings reach the roster too: a
+        # later route and Store.save_roster must see the same shape.
+        assert (
+            context.roster.entry_mode,
+            context.roster.max_team_size,
+            context.roster.plate_model,
+        ) == (EntryMode.SOLO, 6, PlateModel.TEAM_RELAY)
         assert store.load_engine(ride_id, context.roster).config.venue == "New Venue"
         assert (
             "show_ride_header",
@@ -678,6 +692,28 @@ def test_apply_edited_ride_rewrites_the_stored_ride_and_the_live_engine(
     finally:
         store.close()
     assert context.frame.notices == ["Ride settings saved"]
+
+
+def test_apply_edited_ride_given_a_pooled_team_size_edit_updates_the_open_roster() -> None:
+    """D2: a rider-pooled ride's team-size edit reaches the live roster.
+
+    The roster is built for the bootstrap config's MIXED/rider-pooled
+    shape, so this pins the one-field case too: an edit that changes
+    nothing but ``max_team_size`` still reshapes the roster a later
+    ``Store.save_roster`` writes back.
+    """
+    view = _FakeConsoleView()
+    context = _context(store=None, view=view)
+    engine, source = app_module._build_console_engine(context.roster)
+    context.presenter = ConsolePresenter(view, engine=engine, source=source)
+
+    app_module._apply_edited_ride(context, replace(engine.config, max_team_size=6))
+
+    assert (
+        context.roster.max_team_size,
+        context.roster.entry_mode,
+        context.roster.plate_model,
+    ) == (6, EntryMode.MIXED, PlateModel.RIDER_POOLED)
 
 
 def test_apply_edited_ride_given_no_store_keeps_the_edit_in_memory() -> None:
