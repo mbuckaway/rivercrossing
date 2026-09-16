@@ -22,22 +22,20 @@ adjacency, so "BNBA1" and "BNBA 1" are two teams while "Full Send" and
 from :meth:`Roster.next_free_plate` when blank; under
 ``rider_pooled`` each rider owns their row's plate, under
 ``team_relay`` a team's member rows share the team's single plate
-(solo rows get their own). An explicit ``rider_pooled`` NUMBER cell
-must be a whole number -- a non-digit "77A"-style cell is a per-row
-conflict, never a crash (a ``team_relay`` plate stays any non-empty
-string -- W7's resolution of the csvio-vs-roster docstring
-contradiction, recorded here and in roster.py: blank plates are
-refused by the roster, and this module auto-assigns a blank NUMBER
-cell before the roster ever sees it; the roster only derives from
-numbers under ``rider_pooled``). SEX is the rider's sex: the
-registration forms' ``Male``/``Female`` and this app's own ``M``/``F``
-both normalize to the one canonical letter, blank (or an absent SEX
-column) means unknown, and any other non-blank cell is a per-row
-conflict -- never a silent guess at someone's sex. The one exception
-is :func:`preview`'s explicit ``map_unknown_sex_to_male`` opt-in: when
-the operator checks it, both a blank cell and an unrecognized
-non-blank one import as ``M``, so it is a deliberate operator choice
-rather than a guess.
+(solo rows get their own). An explicit NUMBER cell must be a whole
+number under every plate model -- a non-digit "77A"-style cell is
+a per-row conflict, never a crash, for a pooled rider and a relay
+solo or team row alike. Blank plates are still refused by the
+roster, and this module auto-assigns a blank NUMBER cell before the
+roster ever sees it, so a blank cell never reaches that refusal.
+SEX is the rider's sex: the registration forms' ``Male``/``Female``
+and this app's own ``M``/``F`` both normalize to the one canonical
+letter, blank (or an absent SEX column) means unknown, and any other
+non-blank cell is a per-row conflict -- never a silent guess at
+someone's sex. The one exception is :func:`preview`'s explicit
+``map_unknown_sex_to_male`` opt-in: when the operator checks it,
+both a blank cell and an unrecognized non-blank one import as
+``M``, so it is a deliberate operator choice rather than a guess.
 
 **Convert teams of one to solo (Phase E).** :func:`preview`'s second
 opt-in, ``convert_teams_of_one_to_solo``, reshapes a team group of
@@ -870,6 +868,16 @@ def _non_digit_plate_problem(number: str) -> str:
     return f"plate {number!r} must be a whole number"
 
 
+def _explicit_non_digit_plate(number: str) -> bool:
+    """Return True when *number* is a non-blank, non-whole-number cell.
+
+    An explicit NUMBER cell must be a whole number under every plate
+    model (module docstring); a blank one is not explicit -- it
+    auto-assigns instead.
+    """
+    return bool(number) and not number.isdigit()
+
+
 def _team_size_problem(size: int, max_team_size: int) -> str | None:
     """Return the team size conflict text, or None in 2..max (R-12)."""
     if size < MIN_TEAM_SIZE:
@@ -1015,6 +1023,25 @@ def _plate_disagreement_problem(numbers: set[str]) -> str:
     return f"team rows carry different plates ({ordered})"
 
 
+def _relay_group_plate(
+    group_rows: Sequence[_DataRow], allocator: _PlateAllocator
+) -> tuple[str, str | None]:
+    """Return a relay team group's one shared plate and any conflict.
+
+    The member rows must name one plate between them (or none, which
+    auto-assigns); an explicit NUMBER cell must also be a whole number
+    under every plate model (module docstring). A plate of ``""``
+    always comes with the blocking conflict text barring the group.
+    """
+    numbers = {row.number for row in group_rows if row.number}
+    if len(numbers) > 1:
+        return "", _plate_disagreement_problem(numbers)
+    plate = next(iter(numbers), "")
+    if _explicit_non_digit_plate(plate):
+        return "", _non_digit_plate_problem(plate)
+    return plate or allocator.allocate(), None
+
+
 def _assemble_relay(
     rows: Sequence[_DataRow], ride: Roster, *, convert_teams_of_one_to_solo: bool = False
 ) -> tuple[list[ParsedEntry], list[ImportConflict], list[ImportConflict]]:
@@ -1070,8 +1097,17 @@ def _assemble_relay(
 
 def _relay_solo_entry(
     row: _DataRow, allocator: _PlateAllocator, ride: Roster
-) -> tuple[ParsedEntry, str | None]:
-    """Build one relay solo ParsedEntry from *row*."""
+) -> tuple[ParsedEntry | None, str | None]:
+    """Build one relay solo ParsedEntry from *row*.
+
+    An explicit non-whole-number NUMBER cell contributes no entry --
+    the same per-row conflict a ``rider_pooled`` row reports, since an
+    explicit NUMBER cell must be a whole number under every plate
+    model (module docstring) -- never a non-numeric plate reaching
+    the roster through :func:`commit`.
+    """
+    if _explicit_non_digit_plate(row.number):
+        return None, _non_digit_plate_problem(row.number)
     plate = row.number or allocator.allocate()
     parsed_rider = ParsedRider(first_name=row.first_name, last_name=row.last_name, sex=row.sex)
     parsed = ParsedEntry(
@@ -1096,10 +1132,16 @@ def _relay_team_entry(  # noqa: PLR0913 -- (group_rows, allocator, ride, convert
     """Build one relay team ParsedEntry from *group_rows* (S7).
 
     Returns the parsed entry plus two problem lists: the team's
-    blocking conflicts (a plate disagreement, an over-max size, a
-    non-DRAFT under-min size, or a structural reshape the ride's lock
-    matrix forbids) and its non-blocking warnings (a DRAFT under-min
-    size). The under-min case never skips the structural check.
+    blocking conflicts (a plate disagreement, an explicit non-digit
+    plate, an over-max size, a non-DRAFT under-min size, or a
+    structural reshape the ride's lock matrix forbids) and its
+    non-blocking warnings (a DRAFT under-min size). The under-min
+    case never skips the structural check.
+
+    An explicit NUMBER cell must be a whole number under every plate
+    model (module docstring), so a group naming a "77A"-style shared
+    plate contributes no entry -- one blocking conflict instead,
+    before anything is built.
 
     With *convert_teams_of_one_to_solo* a one-row group becomes a
     SOLO entry instead -- but only while DRAFT and only when
@@ -1110,12 +1152,9 @@ def _relay_team_entry(  # noqa: PLR0913 -- (group_rows, allocator, ride, convert
     as an uncaught error at commit. A started ride with no match keeps
     the group's usual team entry and its size conflict.
     """
-    numbers = {row.number for row in group_rows if row.number}
-    if len(numbers) > 1:
-        return None, [_plate_disagreement_problem(numbers)], []
-    plate = next(iter(numbers), "")
-    if not plate:
-        plate = allocator.allocate()
+    plate, plate_problem = _relay_group_plate(group_rows, allocator)
+    if plate_problem is not None:
+        return None, [plate_problem], []
     riders = tuple(
         ParsedRider(first_name=row.first_name, last_name=row.last_name, sex=row.sex)
         for row in group_rows
@@ -1205,7 +1244,7 @@ def _assemble_pooled(
     conflicts: list[ImportConflict] = []
     seen_plates: set[str] = set()
     for row in rows:
-        if row.number and not row.number.isdigit():
+        if _explicit_non_digit_plate(row.number):
             # A pooled rider's plate is the NUMBER column's domain:
             # roster derivation ("lowest-numbered") needs digits, so a
             # "77A"-style cell is a per-row conflict, not a crash.
