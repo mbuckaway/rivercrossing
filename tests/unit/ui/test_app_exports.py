@@ -21,8 +21,6 @@ from pypdf import PdfReader
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-import inspect
-
 from rivercrossing.cards import Card
 from rivercrossing.hands import best_hand
 from rivercrossing.htmlexport import ExportOptions
@@ -33,7 +31,6 @@ from rivercrossing.ui import app as app_module
 from rivercrossing.ui import std_dialogs
 from rivercrossing.ui.cards_imagelist import SCALE_2X, asset_filename, asset_key, cards_dir
 from rivercrossing.ui.presenters.settings import default_settings
-from rivercrossing.ui.views.results_win import _EXPORT_BUTTONS, ResultsWindow
 
 
 class _StubConfig:
@@ -638,57 +635,6 @@ def test_team_logo_srcs_omits_a_card_code_with_no_asset_behind_it() -> None:
     srcs = app_module._team_logo_srcs(roster)
 
     assert srcs == {}
-
-
-# ============================================================ W11
-# F1 (dead-control wiring): the results-frame export buttons were
-# bound through a synthetic EVT_MENU ProcessEvent that never reached
-# the main frame's handlers (the results frame opens parentless), so
-# the buttons silently did nothing. The window now threads an
-# ``on_export(target)`` callback and the app wires it to the same
-# ``_handle_export_command`` routes the menu rows run. These pins keep
-# the view's button table and the app's dispatch table in lockstep
-# headless; the real-button behaviour needs a live window and is not
-# pinned here.
-
-
-def test_results_window_export_buttons_map_each_button_to_its_route_target() -> None:
-    """W11: the four buttons name the four menu export targets."""
-    assert dict(_EXPORT_BUTTONS) == {
-        "export_html_btn": "export_html",
-        "export_pdf_btn": "export_pdf",
-        "poster_btn": "export_poster",
-        "export_csv_btn": "export_results_csv",
-    }
-
-
-def test_results_window_export_button_targets_all_dispatch_like_the_menu_rows() -> None:
-    """W11: every button target has a real ``_TARGET_ACTIONS`` handler.
-
-    ``_TARGET_ACTIONS`` is the dispatch table ``_make_route_handler``
-    consults for the Results menu rows, so a button target missing
-    here would fire a callback with no route behind it.
-    """
-    for _button_name, target in _EXPORT_BUTTONS:
-        assert target in app_module._EXPORT_SUGGESTED_NAMES
-        assert target in app_module._TARGET_ACTIONS
-
-
-def test_results_window_accepts_an_on_export_callback_seam() -> None:
-    """W11: the decoration-time ``on_export`` seam exists.
-
-    The callback replaces the dead synthetic-menu-event mechanism:
-    each export button fires it with the button's route target, and
-    the app wires it to ``_handle_export_command`` at decoration time.
-    """
-    # Source pin, not inspect.signature: the view's DataSource
-    # annotation is TYPE_CHECKING-only and lazily evaluated (PEP 649
-    # on 3.14), so resolving the signature raises NameError. The
-    # repo's own wiring pins (test_app_wiring.py) use the same
-    # inspect.getsource form.
-    source = inspect.getsource(ResultsWindow.__init__)
-
-    assert "on_export: Callable[[str], None] | None = None" in source
 
 
 # ============================================================ E2/F

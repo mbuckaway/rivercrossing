@@ -89,7 +89,7 @@ SPEC_KNOWN_SUFFIXES: tuple[str, ...] = (
 )
 
 # In active use on a window's own XRC canvas (main_menubar,
-# main_statusbar, audit_search, about_logo_bmp, gorba_link,
+# main_statusbar, audit_search, ride_logo_bmp, gorba_link,
 # selftest_output, main_splitter) but never named in section 15b's
 # own suffix sentence -- extension, not part of the frozen text.
 # _preview joined when Phase 4 registered logo_preview (team_editor_dlg)

@@ -59,15 +59,11 @@ Phase 5 adds two display facts the canvas cannot carry:
   at 210, and the Team list at 260 when the Plate column it drops has
   freed 50 more.
 
-W11 wires the four export buttons: the app threads an
-``on_export(target)`` callback (its own ``_handle_export_command``
-route, the same one each ``mi_export_*`` menu row runs) into the
-dialog at decoration time. This replaces the dead synthetic-event
-mechanism -- forwarding a synthetic ``EVT_MENU`` through the results
-window's own handler chain never reached the main frame where the
-``mi_export_*`` handlers are bound. The buttons are enabled only for
-a FINISHED ride, the same state gate the export menu rows carry. One
-handler implementation serves the menu row and the button.
+The UI-removals batch retired W11's export-button row: the four
+buttons left ``results.xrc`` for the Results menu's own ``mi_export_*``
+rows, so this window carries no export surface at all and the
+``on_export(target)`` seam (with its ``_bind_export_buttons`` wiring)
+went with them.
 
 ``_find`` is now inherited from ``ui.views._support.DialogFindMixin``
 -- see that module's docstring for why it used to be duplicated here.
@@ -78,7 +74,7 @@ from typing import TYPE_CHECKING, Any
 import wx
 import wx.dataview
 
-from rivercrossing.ride import DEFAULT_TIEBREAK_ORDER, RideStatus
+from rivercrossing.ride import DEFAULT_TIEBREAK_ORDER
 from rivercrossing.roster import EntryMode, PlateModel
 from rivercrossing.standings import DRAW_TIE_NOTE
 from rivercrossing.ui import ids
@@ -207,16 +203,9 @@ STALE_INFOBAR = "stale_infobar"
 STANDINGS_COLUMN_FLAGS = wx.dataview.DATAVIEW_COL_SORTABLE | wx.dataview.DATAVIEW_COL_RESIZABLE
 
 
-# E6.4.2: the export buttons and the route targets they fire, so one
-# handler implementation serves both surfaces (W11: the values are the
-# ``_handle_export_command`` route targets, matching the Results menu
-# rows' dispatch).
-_EXPORT_BUTTONS: tuple[tuple[str, str], ...] = (
-    ("export_html_btn", "export_html"),
-    ("export_pdf_btn", "export_pdf"),
-    ("poster_btn", "export_poster"),
-    ("export_csv_btn", "export_results_csv"),
-)
+# E6.4.2's export actions now live only on the Results menu rows
+# (``mi_export_html`` and friends): the dialog's four export buttons
+# retired with the UI-removals batch, so one surface owns every export.
 
 
 def format_best5(cards: Sequence[str]) -> str:
@@ -357,7 +346,7 @@ class ResultsWindow(DialogFindMixin):  # _find: ui.views._support
     ``RideSetup`` precedent.
     """
 
-    def __init__(  # noqa: PLR0913 -- (dialog, data_source) + the tie-break order, export-watermark, entry-mode, plate-model and export seams
+    def __init__(  # noqa: PLR0913 -- (dialog, data_source) + the tie-break order, export-watermark, entry-mode and plate-model seams
         self,
         dialog: wx.Dialog,
         *,
@@ -366,7 +355,6 @@ class ResultsWindow(DialogFindMixin):  # _find: ui.views._support
         export_watermark: int | None = None,
         entry_mode: EntryMode = EntryMode.SOLO,
         plate_model: PlateModel = PlateModel.RIDER_POOLED,
-        on_export: Callable[[str], None] | None = None,
     ) -> None:
         """Decorate an already-loaded ``results_dlg`` window.
 
@@ -394,17 +382,11 @@ class ResultsWindow(DialogFindMixin):  # _find: ui.views._support
                 member's plate and the Entry column is the team's
                 identity. Under ``TEAM_RELAY`` the entry's own plate is
                 the identity, so the column stays.
-            on_export: The app's export flow (W11) -- the same
-                ``_handle_export_command`` route each ``mi_export_*``
-                menu row runs. Each export button fires it with the
-                button's route target; ``None`` leaves the buttons
-                inert (a results window with no live ride).
         """
         self.dialog = dialog
         self.data_source = data_source
         self.entry_mode = entry_mode
         self.plate_model = plate_model
-        self.on_export = on_export
 
         self.standings_list = self._find(ids.STANDINGS_LIST, wx.dataview.DataViewCtrl)
         self.teams_standings_list = self._find(ids.TEAMS_STANDINGS_LIST, wx.dataview.DataViewCtrl)
@@ -434,27 +416,7 @@ class ResultsWindow(DialogFindMixin):  # _find: ui.views._support
         self.dialog.presenter = self.presenter
 
         self._bind_events()
-        self._bind_export_buttons()
         self._apply_min_size()
-
-    def _bind_export_buttons(self) -> None:
-        """Wire the four export buttons to the app's export flow (W11).
-
-        ``on_export`` is the app's own ``_handle_export_command``
-        (the flow each ``mi_export_*`` menu row runs), threaded at
-        decoration time. Each button fires it with its route target.
-        A results window with no live ride (``None``) leaves the
-        buttons inert. Every button is enabled only while the ride is
-        FINISHED, matching the export menu rows' own state gate (Part
-        D: exports are gated on FINISHED).
-        """
-        finished = self.data_source.ride_status() is RideStatus.FINISHED
-        on_export = self.on_export
-        for button_name, target in _EXPORT_BUTTONS:
-            button = self._find(button_name, wx.Button)
-            button.Enable(finished)
-            if on_export is not None:
-                button.Bind(wx.EVT_BUTTON, lambda _event, t=target: on_export(t))
 
     def _build_columns(self) -> None:
         """Build every standings list's six columns (Part 2 + G6).

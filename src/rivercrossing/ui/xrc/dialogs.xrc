@@ -650,14 +650,6 @@
     <object class="wxBoxSizer">
       <orient>wxVERTICAL</orient>
 
-      <!-- The ride logo, falling back to the embedded RiverCrossing
-           logo - both supplied in code, so no <bitmap> is declared. -->
-      <object class="sizeritem">
-        <flag>wxALIGN_CENTRE_HORIZONTAL|wxLEFT|wxRIGHT|wxTOP</flag>
-        <border>10</border>
-        <object class="wxStaticBitmap" name="about_logo_bmp"/>
-      </object>
-
       <!-- "RiverCrossing 1.0.9" - the product name plus the package
            version, written by AboutDialog. -->
       <object class="sizeritem">

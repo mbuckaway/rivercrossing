@@ -2,9 +2,9 @@
 """The menu route map and its state-enablement rules (E1.4.1, E1.4.2).
 
 spec.md section 15 is one table with two jobs: which target each of
-the 38 menu rows reaches ("Opens / does"), and when it is allowed to
+the 37 menu rows reaches ("Opens / does"), and when it is allowed to
 fire ("Enabled when"). :data:`ROUTE_TABLE` is that table transcribed
-once, so both jobs read off the same 38 :class:`MenuRoute` rows
+once, so both jobs read off the same 37 :class:`MenuRoute` rows
 instead of two tables that could drift apart. (Results lost its
 mi_tiebreak_order row: the tie-break order now comes only from the
 ride's stored config, set in Ride Setup; its single Preview row
@@ -13,7 +13,9 @@ results publish options out of the results dialog onto a checkable
 Results row.) Phase 2 retired the dead Entry Detail… row and the
 duplicate Reassign Plate… / Void Card… rows -- Crossing Detail now
 owns both corrections -- and G7 retired Edit Crossing…, whose ground
-Crossing Detail's Edit Time and the F2 accelerator already cover.)
+Crossing Detail's Edit Time and the F2 accelerator already cover. The
+UI-removals batch retired the Cards ▸ Review Held Cards row with its
+console review panel shortcut and its "held cards > 0" rule.)
 
 No wx import lands here (R-71 does not require it, since nothing
 below touches a window, but the presenter-protocol pattern --
@@ -75,11 +77,11 @@ class Enablement:
     """One §15 "Enabled when" cell, decomposed into named conditions.
 
     ``allowed_states=None`` means the rule is not gated by
-    ``RideStatus`` membership at all -- either the row says "always",
-    or it is a condition-only rule such as Review Held Cards' "held
-    cards > 0", which §15 never ties to a particular state. Every
-    other field defaults to "no extra requirement", so a bare
-    ``Enablement()`` -- :data:`ALWAYS` -- reads as exactly that.
+    ``RideStatus`` membership at all -- the row says "always", or it is
+    a condition-only rule such as Audit Trail's "≥1 audit row", which
+    §15 never ties to a particular state. Every other field defaults to
+    "no extra requirement", so a bare ``Enablement()`` --
+    :data:`ALWAYS` -- reads as exactly that.
 
     Attributes:
         allowed_states: The ``RideStatus`` values the row lists, or
@@ -96,7 +98,6 @@ class Enablement:
             records exist to edit (Phase 4's Teams Editor gate).
         min_crossings: The row's "≥1 crossing" condition, as a
             threshold so boundary tests can vary it.
-        min_held_cards: Review Held Cards' "held cards > 0".
         min_audit_rows: Audit Trail's "≥1 audit row".
         requires_entry_has_cards: An "entry has cards" condition. No
             live row declares one since Phase 2 retired the Void Card…
@@ -115,7 +116,6 @@ class Enablement:
     requires_ride_stopped: bool = False
     teams_allowed: bool = False
     min_crossings: int = 0
-    min_held_cards: int = 0
     min_audit_rows: int = 0
     requires_entry_has_cards: bool = False
     requires_html_export: bool = False
@@ -410,7 +410,7 @@ ROUTE_TABLE: tuple[MenuRoute, ...] = (
         target=ids.DNF_CONFIRM_DLG,
         enabled_when=Enablement(allowed_states=_RUNNING_REOPENED),  # "RUNNING · REOPENED"
     ),
-    # --- Cards: 4 rows ---
+    # --- Cards: 3 rows ---
     MenuRoute(
         menu="Cards",
         label="Undo Last Crossing",
@@ -433,7 +433,9 @@ ROUTE_TABLE: tuple[MenuRoute, ...] = (
     # Crossing Detail owns both corrections now -- and G7 retired Edit
     # Crossing…, whose ground Crossing Detail's Edit Time and the F2
     # accelerator already cover. mi_deal_manual is the bonus-card deal
-    # (the manual correction's remaining row).
+    # (the manual correction's remaining row). The UI-removals batch
+    # retired mi_review_held with it, along with its "held cards > 0"
+    # rule: the console's own review panel is the single surface.
     MenuRoute(
         menu="Cards",
         label="Deal Bonus Card…",
@@ -441,15 +443,6 @@ ROUTE_TABLE: tuple[MenuRoute, ...] = (
         kind=TargetKind.DIALOG,
         target=ids.MANUAL_DEAL_DLG,
         enabled_when=Enablement(allowed_states=_RUNNING_REOPENED),  # "RUNNING · REOPENED"
-    ),
-    MenuRoute(
-        menu="Cards",
-        label="Review Held Cards",
-        ids=("mi_review_held",),
-        # "Focuses console review panel" -- no window/dialog opens.
-        kind=TargetKind.COMMAND,
-        target="focus_review_panel",
-        enabled_when=Enablement(min_held_cards=1),  # "held cards > 0 (shows count)"
     ),
     # --- Results: 8 rows (G6 adds the publish options) ---
     MenuRoute(
@@ -627,7 +620,6 @@ class RideState:
             console Stop button's confirm has locked entry without
             finishing the ride.
         crossings: How many crossings the open ride has recorded.
-        held_cards: How many cards are held (short-lap, unconfirmed).
         audit_rows: How many audit rows the open ride has.
         entry_has_cards: Whether a targeted entry holds any cards (the
             generic "entry has cards" rule input).
@@ -643,7 +635,6 @@ class RideState:
     ride_open: bool = True
     ride_stopped: bool = False
     crossings: int = 0
-    held_cards: int = 0
     audit_rows: int = 0
     entry_has_cards: bool = False
     html_exported: bool = False
@@ -670,6 +661,5 @@ def is_route_enabled(route: MenuRoute, state: RideState) -> bool:
         and (not rule.requires_html_export or state.html_exported)
         and (not rule.requires_pdf_export or state.pdf_exported)
         and state.crossings >= rule.min_crossings
-        and state.held_cards >= rule.min_held_cards
         and state.audit_rows >= rule.min_audit_rows
     )

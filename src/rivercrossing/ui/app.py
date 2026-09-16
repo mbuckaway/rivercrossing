@@ -1597,8 +1597,8 @@ def _decorate_results(context: _RouteContext, window: Any) -> None:  # noqa: ANN
     ``entry_mode`` decides the MIXED notebook or the SOLO standalone
     list; ``plate_model`` decides whether the Team list carries its
     Plate column (Phase 5, Part 2). The E5.4.2 empty state stays for
-    the no-presenter path (route-level tests), where the export
-    buttons stay disabled (DRAFT) and inert (no callback).
+    the no-presenter path (route-level tests), where the dialog's one
+    action is the Results menu's own exports.
     """
     from rivercrossing.ui.views.results_win import ResultsWindow  # noqa: PLC0415 -- deferred
 
@@ -1613,12 +1613,6 @@ def _decorate_results(context: _RouteContext, window: Any) -> None:  # noqa: ANN
         export_watermark=context.export_watermark,
         entry_mode=presenter.engine.config.entry_mode,
         plate_model=presenter.engine.config.plate_model,
-        # W11: the four export buttons fire the same
-        # _handle_export_command route the matching mi_export_* menu
-        # row runs -- the dead synthetic-EVT_MENU forwarding is gone
-        # (the parentless results window never reached the main
-        # frame's handlers).
-        on_export=lambda target: _handle_export_command(context, target),
     )
 
 
@@ -1659,18 +1653,16 @@ def _decorate_shortcuts(_context: _RouteContext, window: Any) -> None:  # noqa: 
     ShortcutsDialog(window)
 
 
-def _decorate_about(context: _RouteContext, window: Any) -> None:  # noqa: ANN401 -- wx ships no stubs
-    """Bind ``about_dlg`` to the version and the ride logo (E8.2.3).
+def _decorate_about(_context: _RouteContext, window: Any) -> None:  # noqa: ANN401 -- wx ships no stubs
+    """Bind ``about_dlg`` to the version (E8.2.3).
 
-    The About box renders the package version and the ride logo -- the
-    live config's ``logo_path`` when a ride is threaded, the app-icon
-    fallback otherwise (about.py's own contract).
+    The About box renders the package version; ``gorba_link`` opens its
+    own XRC ``<url>`` and ``wxID_CLOSE`` comes from
+    ``dialogs.run_dialog`` (about.py's own contract).
     """
     from rivercrossing.ui.views.about import AboutDialog  # noqa: PLC0415 -- deferred
 
-    presenter = context.presenter
-    logo_path = presenter.engine.config.logo_path if presenter is not None else None
-    AboutDialog(window, logo_path=logo_path)
+    AboutDialog(window)
 
 
 def _decorate_audit(context: _RouteContext, window: Any) -> None:  # noqa: ANN401 -- wx ships no stubs
@@ -1779,7 +1771,6 @@ def _menu_ride_state(context: _RouteContext, status: RideStatus) -> commands.Rid
         ride_open=True,
         ride_stopped=engine.stopped,
         crossings=len(engine.crossings),
-        held_cards=len(engine.held_crossings()),
         audit_rows=len(engine.events),
         entry_has_cards=any(result.cards for result in engine.snapshot()),
         html_exported=context.html_export_path is not None,

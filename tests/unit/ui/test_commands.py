@@ -2,7 +2,7 @@
 """Headless tests for the menu route map and its rules (E1.4.1, E1.4.2).
 
 Everything here runs without ``wx`` and without a display:
-``commands.py`` imports no ``wx`` at all, so its 38-row route table,
+``commands.py`` imports no ``wx`` at all, so its 37-row route table,
 its ``route_for_id`` dispatch and its ``is_route_enabled`` rule are
 pure Python -- exactly the kind
 of logic R-71's >=90% branch-coverage gate is meant to cover, and
@@ -45,7 +45,7 @@ ROUTE_COUNTS_BY_MENU = (
     ("File", 8),  # D1: New Ride… moved to the Ride menu; +mi_simulation
     ("Ride", 9),  # D1: +mi_new_ride, +mi_edit_ride, +mi_clear_ride
     ("Riders", 4),  # Phase 2: mi_entry_detail retired
-    ("Cards", 4),  # Phase 2: mi_reassign_plate + mi_void_card retired (G7: mi_edit_crossing)
+    ("Cards", 3),  # Phase 2: mi_reassign_plate + mi_void_card retired (G7: mi_edit_crossing)
     ("Results", 8),  # C6: mi_tiebreak_order retired; G6: +the publish row
     ("View", 1),
     ("Help", 4),
@@ -84,7 +84,6 @@ ROUTE_TARGETS = (
     (commands.TargetKind.COMMAND, None),  # Undo Last Crossing: "no dialog"
     (commands.TargetKind.DIALOG, ids.EDIT_CROSSING_DLG),  # Add Crossing at Time...
     (commands.TargetKind.DIALOG, ids.MANUAL_DEAL_DLG),  # Deal Bonus Card...
-    (commands.TargetKind.COMMAND, None),  # Review Held Cards: focuses an existing panel
     (commands.TargetKind.DIALOG, ids.RESULTS_DLG),  # Standings (Part C: modal dialog)
     (commands.TargetKind.COMMAND, None),  # Export HTML...: OS-native save dialog
     (commands.TargetKind.COMMAND, None),  # Export PDF...: OS-native save dialog
@@ -110,25 +109,25 @@ TARGET_CASE_IDS = [f"{route.menu}:{route.label}" for route, _target in TARGET_CA
 ALL_ROUTE_IDS = tuple(item_id for route in commands.ROUTE_TABLE for item_id in route.ids)
 
 
-def test_route_table_declares_exactly_the_thirty_eight_spec_15_rows() -> None:
+def test_route_table_declares_exactly_the_thirty_seven_spec_15_rows() -> None:
     """A lost route shrinks this count, not the suite (spec.md §15)."""
-    assert len(commands.ROUTE_TABLE) == 38
+    assert len(commands.ROUTE_TABLE) == 37
 
 
 @pytest.mark.parametrize(("menu", "expected_rows"), ROUTE_COUNTS_BY_MENU)
 def test_route_table_menu_breakdown_matches_spec_15(menu: str, expected_rows: int) -> None:
-    """File 8, Ride 9, Riders 4, Cards 4, Results 8, View 1, Help 4."""
+    """File 8, Ride 9, Riders 4, Cards 3, Results 8, View 1, Help 4."""
     rows = [route for route in commands.ROUTE_TABLE if route.menu == menu]
 
     assert len(rows) == expected_rows
 
 
-def test_route_table_covers_all_fifty_real_menu_item_ids_once_each() -> None:
-    """47 mi_* + 3 stock ids (main.xrc's own header), none repeated."""
+def test_route_table_covers_all_forty_nine_real_menu_item_ids_once_each() -> None:
+    """46 mi_* + 3 stock ids (main.xrc's own header), none repeated."""
     flat_ids = [item_id for route in commands.ROUTE_TABLE for item_id in route.ids]
 
-    assert len(flat_ids) == 50
-    assert len(set(flat_ids)) == 50
+    assert len(flat_ids) == 49
+    assert len(set(flat_ids)) == 49
 
 
 @pytest.mark.parametrize(("route", "expected_kind"), KIND_CASES, ids=KIND_CASE_IDS)
@@ -333,7 +332,7 @@ STATUS_STRATEGY = st.sampled_from(STATUSES)
 # row's "Enabled when" cell, transcribed independently of
 # commands.Enablement so the two can disagree if either is wrong.
 # None means the row does not gate on RideStatus at all (either
-# "always", or a condition-only rule such as Review Held Cards').
+# "always", or a condition-only rule such as Audit Trail's).
 ALLOWED_STATES = (
     None,  # File > Ride Library: "always"
     None,  # File > Duplicate Ride...: "a ride is open"
@@ -365,7 +364,6 @@ ALLOWED_STATES = (
     frozenset({RideStatus.RUNNING}),  # Cards > Undo Last Crossing: "RUNNING, >=1 crossing"
     frozenset({RideStatus.RUNNING, RideStatus.REOPENED}),  # Cards > Add Crossing at Time...
     frozenset({RideStatus.RUNNING, RideStatus.REOPENED}),  # Cards > Deal Bonus Card...
-    None,  # Cards > Review Held Cards: "held cards > 0"
     None,  # Results > Standings: "always" -- the dialog shows the empty state
     frozenset({RideStatus.FINISHED}),  # Results > Export HTML…
     frozenset({RideStatus.FINISHED}),  # Results > Export PDF...
@@ -397,7 +395,6 @@ def _baseline_state(status: RideStatus) -> commands.RideState:
         ride_open=BASELINE_RIDE_OPEN,
         ride_stopped=True,
         crossings=1,
-        held_cards=1,
         audit_rows=1,
         entry_has_cards=True,
         html_exported=True,
@@ -440,7 +437,6 @@ CROSSINGS_GATED_ROUTES = tuple(
     route for route in commands.ROUTE_TABLE if route.enabled_when.min_crossings > 0
 )
 _ROUTES_BY_LABEL = {route.label: route for route in commands.ROUTE_TABLE}
-REVIEW_HELD_CARDS_ROUTE = _ROUTES_BY_LABEL["Review Held Cards"]
 AUDIT_TRAIL_ROUTE = _ROUTES_BY_LABEL["Audit Trail…"]
 PREVIEW_HTML_ROUTE = _ROUTES_BY_LABEL["Preview HTML in Browser"]
 PREVIEW_PDF_ROUTE = _ROUTES_BY_LABEL["Preview PDF in Browser"]
@@ -453,7 +449,6 @@ RIDE_OPEN_CASES = (True, False)
 RIDE_OPEN_CASE_IDS = ("ride_open", "no_ride_open")
 TEAMS_ALLOWED_CASES = (False, True)
 CROSSINGS_BOUNDARY_CASES = (0, 1, 2)
-HELD_CARDS_BOUNDARY_CASES = (0, 1, 2)
 AUDIT_ROWS_BOUNDARY_CASES = (0, 1, 2)
 ENTRY_HAS_CARDS_CASES = ((False, False), (True, True))
 # C2: Start Ride enables in DRAFT, in REOPENED (continue riding) and in
@@ -529,18 +524,6 @@ def test_is_route_enabled_given_crossings_boundary_matches_minimum(
     result = commands.is_route_enabled(route, state)
 
     assert result is (crossings >= route.enabled_when.min_crossings)
-
-
-@pytest.mark.parametrize("held_cards", HELD_CARDS_BOUNDARY_CASES)
-def test_is_route_enabled_given_held_cards_boundary_matches_review_held_cards(
-    held_cards: int,
-) -> None:
-    """T-4 boundary for Review Held Cards' "held cards > 0"."""
-    state = dataclasses.replace(_baseline_state(RideStatus.DRAFT), held_cards=held_cards)
-
-    result = commands.is_route_enabled(REVIEW_HELD_CARDS_ROUTE, state)
-
-    assert result is (held_cards >= 1)
 
 
 @pytest.mark.parametrize("audit_rows", AUDIT_ROWS_BOUNDARY_CASES)
@@ -813,7 +796,6 @@ def _ride_states_with(*, ride_open: bool) -> st.SearchStrategy[commands.RideStat
         ride_open=st.just(ride_open),
         ride_stopped=st.booleans(),
         crossings=st.integers(min_value=0, max_value=5),
-        held_cards=st.integers(min_value=0, max_value=5),
         audit_rows=st.integers(min_value=0, max_value=5),
         entry_has_cards=st.booleans(),
         html_exported=st.booleans(),

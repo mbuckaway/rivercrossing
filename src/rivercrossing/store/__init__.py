@@ -354,10 +354,11 @@ def _materialize_ride_logo(ride_id: int, logo_png: bytes | None) -> Path | None:
     """Write a stored ride-logo BLOB out and return its path (C1).
 
     The ``ride`` table keeps the logo as a BLOB (spec §2) but every
-    logo surface renders from a file (``views.about``'s ride logo, the
-    console header's ``ride_logo_bmp``), so loading a ride re-writes
-    the bytes to a fresh file in the process temp directory and hands
-    back its path. The file comes from :func:`tempfile.mkstemp` --
+    logo surface renders from a file (the console header's
+    ``ride_logo_bmp`` and ``ride_setup_dlg``'s ``logo_preview_bmp``),
+    so loading a ride re-writes the bytes to a fresh file in the
+    process temp directory and hands back its path. The file comes
+    from :func:`tempfile.mkstemp` --
     created ``O_CREAT``/``O_EXCL`` under a random name -- so no
     data-derived path exists for a pre-planted symlink to sit at
     (CWE-377), and the bytes are written through the handle it

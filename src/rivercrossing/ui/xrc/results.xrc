@@ -119,33 +119,9 @@
         <border>10</border>
         <object class="wxBoxSizer">
           <orient>wxHORIZONTAL</orient>
-          <object class="sizeritem">
-            <flag>wxRIGHT</flag>
-            <border>6</border>
-            <object class="wxButton" name="export_html_btn">
-              <label>Export HTML…</label>
-            </object>
-          </object>
-          <object class="sizeritem">
-            <flag>wxRIGHT</flag>
-            <border>6</border>
-            <object class="wxButton" name="export_pdf_btn">
-              <label>Export PDF…</label>
-            </object>
-          </object>
-          <object class="sizeritem">
-            <flag>wxRIGHT</flag>
-            <border>6</border>
-            <object class="wxButton" name="poster_btn">
-              <label>Podium poster…</label>
-            </object>
-          </object>
-          <object class="sizeritem">
-            <flag>wxRIGHT</flag>
-            <border>6</border>
-            <object class="wxButton" name="export_csv_btn">
-              <label>Export CSV…</label>
-            </object>
+          <object class="spacer">
+            <option>1</option>
+            <size>0,0</size>
           </object>
           <object class="sizeritem">
             <object class="wxButton" name="wxID_CLOSE"/>

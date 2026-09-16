@@ -1294,9 +1294,8 @@ class MainFrame(DialogFindMixin):  # _find: ui.views._support, over self.frame
         Shows and focuses the Needs Review tab (WS-H) and then acts on
         the row the operator has selected -- the same routing a
         double-click fires (plan §6). With nothing selected the button
-        keeps its original focus-only behavior, which is also the
-        ``Cards ▸ Review Held Cards`` menu route's
-        :meth:`focus_review_panel` target.
+        keeps its original focus-only behavior -- the bare
+        :meth:`focus_review_panel` jump.
 
         ``flagged_list`` is a plain ``DataViewCtrl``, so its selection
         arrives as a ``DataViewItem`` that the model resolves to a row;
@@ -1795,9 +1794,9 @@ class MainFrame(DialogFindMixin):  # _find: ui.views._support, over self.frame
         """Render the ride logo into its slot, or hide the slot (C1).
 
         A logo that is absent, missing on disk or undecodable hides the
-        slot (the same "never blank the canvas" rule ``views.about``
-        follows) -- the six value rows above carry the identity on their
-        own now, so there is no fallback line to fall back to.
+        slot rather than ever showing a blank canvas -- the six value
+        rows above carry the identity on their own now, so there is no
+        fallback line to fall back to.
         """
         bitmap = _ride_logo_bitmap(logo)
         if bitmap is None:

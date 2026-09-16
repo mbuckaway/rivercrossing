@@ -560,7 +560,12 @@ def test_on_review_clicked_given_a_stale_selection_only_focuses() -> None:
 
 
 def test_focus_review_panel_given_a_selected_row_fires_no_seam() -> None:
-    """The menu route stays focus-only: Cards ▸ Review Held Cards."""
+    """The focus-only panel jump fires no row-activation seam.
+
+    The console's Review… button and ``focus_review_panel`` both land
+    on the same page and stop there: focusing never activates a row,
+    so the card-review seam stays untouched.
+    """
     recorder = _Recorder()
     shell = _Shell(
         model=_FlaggedModel([_row()]),

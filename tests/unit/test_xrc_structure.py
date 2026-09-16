@@ -115,23 +115,28 @@ RIDERS_MENU_ITEMS = (
 # Phase 2 retired mi_reassign_plate and mi_void_card: Crossing Detail
 # now owns both corrections, not the Cards menu. G7 retired
 # mi_edit_crossing: Crossing Detail's Edit Time and the F2 accelerator
-# cover the same ground.
+# cover the same ground. The UI-removals batch retired mi_review_held
+# with its row: the console's own review panel is the single surface.
 CARDS_MENU_ITEMS = (
     "mi_undo_crossing",
     "mi_add_crossing_at",
     "mi_deal_manual",
-    "mi_review_held",
 )
 # Part D: the single Preview in Browser row split per format -- each
 # new item gates on its own export existing (HTML / PDF). G6: the five
 # checkable publish options follow a separator, after the Preview rows.
+# The UI-removals batch authored the two Podium-Poster-HTML rows
+# (mi_export_poster_html, mi_preview_poster_html_browser); they are
+# routed by the poster-HTML export task (see _PENDING_ROUTE_IDS below).
 RESULTS_MENU_ITEMS = (
     "mi_standings",
     "mi_export_html",
     "mi_export_pdf",
     "mi_export_poster",
+    "mi_export_poster_html",
     "mi_export_results_csv",
     "mi_preview_html_browser",
+    "mi_preview_poster_html_browser",
     "mi_preview_pdf_browser",
     "mi_show_times",
     "mi_laps_board",
@@ -218,12 +223,14 @@ NAME_CASES = tuple(
 
 MENU_LABELS = ("&File", "&Ride", "Ri&ders", "&Cards", "Re&sults", "&View", "&Help")
 
-# spec.md section 15's rows after D1/D4, Phase 2, G6 and G7 (Results
-# lost its tie-break row in Part C and split its Preview row per
-# format, then gained G6's five publish items; Phase 2 retired
-# mi_entry_detail, mi_reassign_plate and mi_void_card, G7 retired
-# mi_edit_crossing): File 8 (mi_simulation added), Ride 9, Riders 4,
-# Cards 4, Results 12, View 1, Help 4. The single
+# spec.md section 15's rows after D1/D4, Phase 2, G6, G7 and the
+# UI-removals batch (Results lost its tie-break row in Part C and
+# split its Preview row per format, then gained G6's five publish
+# items; Phase 2 retired mi_entry_detail, mi_reassign_plate and
+# mi_void_card, G7 retired mi_edit_crossing, and the removals batch
+# retired mi_review_held and authored the two Podium-Poster-HTML
+# rows): File 8 (mi_simulation added), Ride 9, Riders 4, Cards 3,
+# Results 14, View 1, Help 4. The single
 # View row expands into the 9 items section 15b names for it (W13: the
 # two time-column check items + the seven zoom radios; the theme trio
 # left the View menu).
@@ -231,8 +238,8 @@ MENU_ITEM_COUNTS = (
     ("&File", 8),
     ("&Ride", 9),
     ("Ri&ders", 4),
-    ("&Cards", 4),
-    ("Re&sults", 12),
+    ("&Cards", 3),
+    ("Re&sults", 14),
     ("&View", 9),
     ("&Help", 4),
 )
@@ -519,28 +526,40 @@ def test_menu_declares_the_expected_item_count(menu_label: str, expected_items: 
     assert len(items) == expected_items
 
 
-def test_main_menubar_declares_forty_seven_menu_item_names() -> None:
-    """D1/D4/C6/Part D + Phase 2 + G6 + G7: 47 ``mi_*`` names."""
+def test_main_menubar_declares_forty_eight_menu_item_names() -> None:
+    """The removals batch leaves 48 ``mi_*`` names in main.xrc."""
     names = _control_names_in(_window("main_menubar"))
 
     menu_item_names = [name for name in names if name.startswith("mi_")]
 
-    assert len(menu_item_names) == 47
+    assert len(menu_item_names) == 48
+
+
+# The UI-removals batch authors two Podium-Poster-HTML rows in
+# ``main.xrc`` but deliberately does NOT route them: the poster-HTML
+# export is a later task, and ``commands.ROUTE_TABLE`` is where its
+# "Opens / does" and "Enabled when" cells belong. Until then these ids
+# have no route, so they are excluded from the "no orphans" equality
+# below -- named here, rather than silently dropped, so the poster-HTML
+# task must remove this constant when it registers the routes.
+_PENDING_ROUTE_IDS = ("mi_export_poster_html", "mi_preview_poster_html_browser")
 
 
 def test_main_menubar_item_names_are_exactly_the_routed_item_set() -> None:
     """No orphaned menu item: every authored name is routed, and back.
 
     ``commands.ROUTE_TABLE`` is the section 15 route map the menubar
-    is driven from, so its 50 ids and the authored item names must be
-    one set. A row that outlives its route, or a route with no item,
-    would leave an item the enablement walk can never reach.
+    is driven from, so its 49 ids and the authored item names must be
+    one set, plus :data:`_PENDING_ROUTE_IDS`' two not-yet-routed
+    poster-HTML rows. A row that outlives its route, or a route with no
+    item, would leave an item the enablement walk can never reach.
     """
     routed = {item_id for route in commands.ROUTE_TABLE for item_id in route.ids}
 
     authored = set(_control_names_in(_window("main_menubar")))
 
-    assert routed == authored
+    assert routed == authored - set(_PENDING_ROUTE_IDS)
+    assert set(_PENDING_ROUTE_IDS) <= authored
 
 
 def test_file_menu_declares_the_spec_15_row_order_after_d1() -> None:
@@ -582,11 +601,16 @@ def test_results_menu_given_the_publish_group_leaves_one_radio_free_run() -> Non
 
 
 def test_results_menu_given_the_publish_group_separates_it_from_the_previews() -> None:
-    """G6: a separator opens the publish group."""
+    """G6: a separator opens the publish group.
+
+    The separator sits directly after the nine export/preview rows
+    (the removals batch authored the two Podium-Poster-HTML rows among
+    them), so its child index moved with them.
+    """
     results_menu = _menus()[4]
     children = [child for child in results_menu if child.tag == "object"]
 
-    assert children[7].attrib["class"] == "separator"
+    assert children[9].attrib["class"] == "separator"
 
 
 @pytest.mark.parametrize(

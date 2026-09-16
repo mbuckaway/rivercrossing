@@ -660,9 +660,12 @@
                                 <label>Show Held Cards Only</label>
                               </object>
                             </object>
-                            <object class="sizeritem">
+                            <object class="spacer">
                               <option>1</option>
-                              <flag>wxALIGN_CENTRE_VERTICAL|wxALIGN_RIGHT</flag>
+                              <size>0,0</size>
+                            </object>
+                            <object class="sizeritem">
+                              <flag>wxALIGN_CENTRE_VERTICAL</flag>
                               <object class="wxButton" name="review_btn">
                                 <label>Review…</label>
                               </object>
@@ -821,9 +824,6 @@
       <object class="wxMenuItem" name="mi_deal_manual">
         <label>&amp;Deal Bonus Card…</label>
       </object>
-      <object class="wxMenuItem" name="mi_review_held">
-        <label>Review &amp;Held Cards</label>
-      </object>
     </object>
 
     <object class="wxMenu">
@@ -841,11 +841,17 @@
       <object class="wxMenuItem" name="mi_export_poster">
         <label>Podium P&amp;oster PDF…</label>
       </object>
+      <object class="wxMenuItem" name="mi_export_poster_html">
+        <label>Podium Poster &amp;HTML…</label>
+      </object>
       <object class="wxMenuItem" name="mi_export_results_csv">
         <label>Export Standings &amp;CSV…</label>
       </object>
       <object class="wxMenuItem" name="mi_preview_html_browser">
         <label>Preview HTML in &amp;Browser</label>
+      </object>
+      <object class="wxMenuItem" name="mi_preview_poster_html_browser">
+        <label>Preview Podium Poster HTML in Browser</label>
       </object>
       <object class="wxMenuItem" name="mi_preview_pdf_browser">
         <label>Preview P&amp;DF in Browser</label>

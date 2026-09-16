@@ -86,11 +86,34 @@
             <object class="wxChoice" name="action_choice">
               <content>
                 <item>All actions</item>
-                <item>Crossing edits</item>
-                <item>Card deals/voids</item>
-                <item>Moves</item>
-                <item>DNF</item>
-                <item>Shoe reshuffle</item>
+                <item>Record Crossing</item>
+                <item>Add Crossing at Time</item>
+                <item>Edit Crossing</item>
+                <item>Void Crossing</item>
+                <item>Undo Last Crossing</item>
+                <item>Reassign Crossing</item>
+                <item>Record Miss</item>
+                <item>Assign Plate to Miss</item>
+                <item>Deal Bonus Card</item>
+                <item>Confirm Held Card</item>
+                <item>Void Held Card</item>
+                <item>Return to Held</item>
+                <item>Void Card</item>
+                <item>Move Rider</item>
+                <item>Add Rider to Team</item>
+                <item>Extract Rider to Solo</item>
+                <item>Change Solo Plate</item>
+                <item>Change Pooled Rider Plate</item>
+                <item>Change Team Plate</item>
+                <item>Remove Rider</item>
+                <item>Mark DNF</item>
+                <item>Shoe Reshuffle</item>
+                <item>Start Ride</item>
+                <item>Continue Ride</item>
+                <item>Set Start Time</item>
+                <item>Stop Ride</item>
+                <item>Finish Ride</item>
+                <item>Reopen Ride</item>
               </content>
             </object>
           </object>

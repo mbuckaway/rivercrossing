@@ -22,8 +22,6 @@ style:
   and a recording ``wx.MessageDialog`` double (the ``test_std_dialogs``
   pattern: importing wx is safe without a display, opening a modal is
   not);
-- the Part D export-button gate, driven against a fake ride status and
-  fake buttons (no real button is created);
 - :meth:`ResultsWindow._apply_min_size`'s ten-row floor on the three
   standings lists (D16) -- the ``STANDINGS_*`` constants pinned, and
   the ``SetMinSize`` argument captured by a recording control double
@@ -42,7 +40,6 @@ import wx
 from hypothesis import given
 from hypothesis import strategies as st
 
-from rivercrossing.ride import RideStatus
 from rivercrossing.roster import EntryMode, PlateModel
 from rivercrossing.ui import std_dialogs
 from rivercrossing.ui.presenters.data_source import StandingsRow
@@ -624,106 +621,6 @@ def test_show_standings_given_empty_sections_renders_empty_models() -> None:
 
     assert shell.teams_standings_list.model.GetCount() == 0
     assert shell.solo_standings_list.model.GetCount() == 0
-
-
-# ------------------------------------------------- export-button gate
-
-
-class _Button:
-    """A wx.Button double recording enablement and its bound handler."""
-
-    def __init__(self) -> None:
-        """Start with no enablement and no handler."""
-        self.enabled: bool | None = None
-        self.handler: object | None = None
-
-    def Enable(self, enabled: bool) -> None:  # noqa: N802, FBT001 -- wx API name and bool
-        """Record the enablement."""
-        self.enabled = enabled
-
-    def Bind(self, _event: object, handler: object) -> None:  # noqa: N802 -- wx API name
-        """Record the bound handler."""
-        self.handler = handler
-
-
-class _StatusSource:
-    """A ``DataSource`` double exposing only ``ride_status``."""
-
-    def __init__(self, status: RideStatus) -> None:
-        """Store the status the gate reads."""
-        self._status = status
-
-    def ride_status(self) -> RideStatus:
-        """Return the stored status."""
-        return self._status
-
-
-class _ExportShell:
-    """A ResultsWindow shell owning only what the export gate reads."""
-
-    def __init__(self, *, status: RideStatus, on_export: object = None) -> None:
-        """Build one button double per export button."""
-        self.data_source = _StatusSource(status)
-        self.on_export = on_export
-        self.buttons = {
-            button_name: _Button() for button_name, _target in results_win._EXPORT_BUTTONS
-        }
-
-    def _find(self, name: str, _expected_type: type = object) -> _Button:
-        """Return the button double named *name*."""
-        return self.buttons[name]
-
-
-STATUS_GATE_CASES = (
-    (RideStatus.DRAFT, False),
-    (RideStatus.RUNNING, False),
-    (RideStatus.FINISHED, True),
-    (RideStatus.REOPENED, False),
-)
-STATUS_GATE_IDS = [status.value for status, _expected in STATUS_GATE_CASES]
-
-
-@pytest.mark.parametrize(("status", "expected"), STATUS_GATE_CASES, ids=STATUS_GATE_IDS)
-def test_bind_export_buttons_given_ride_status_enables_only_when_finished(
-    status: RideStatus, *, expected: bool
-) -> None:
-    """Part D: every export button is FINISHED-gated."""
-    shell = _ExportShell(status=status)
-
-    ResultsWindow._bind_export_buttons(shell)
-
-    assert [shell.buttons[name].enabled for name, _target in results_win._EXPORT_BUTTONS] == (
-        [expected] * len(results_win._EXPORT_BUTTONS)
-    )
-
-
-@pytest.mark.parametrize(
-    ("button_name", "target"),
-    results_win._EXPORT_BUTTONS,
-    ids=[name for name, _target in results_win._EXPORT_BUTTONS],
-)
-def test_bind_export_buttons_given_a_callback_binds_each_button_to_its_target(
-    button_name: str, target: str
-) -> None:
-    """W11/Part D: a callback fires with the button's route target."""
-    calls: list[str] = []
-    shell = _ExportShell(status=RideStatus.FINISHED, on_export=calls.append)
-
-    ResultsWindow._bind_export_buttons(shell)
-    shell.buttons[button_name].handler(object())
-
-    assert calls == [target]
-
-
-def test_bind_export_buttons_given_no_callback_leaves_every_button_unbound() -> None:
-    """T-3: no live ride leaves the buttons inert, still gated."""
-    shell = _ExportShell(status=RideStatus.FINISHED)
-
-    ResultsWindow._bind_export_buttons(shell)
-
-    assert [shell.buttons[name].handler for name, _target in results_win._EXPORT_BUTTONS] == (
-        [None] * len(results_win._EXPORT_BUTTONS)
-    )
 
 
 # ------------------------------------------- the ⚠ explanation (Part 1)
