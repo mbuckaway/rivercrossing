@@ -202,7 +202,7 @@ class _Shell:
         control: _CrossingsListControl | None = None,
         search: _SearchCtrl | None = None,
         sort_column: int = feed_model.COL_TIME,
-        sort_ascending: bool = True,
+        sort_ascending: bool = False,
     ) -> None:
         """Store the state the methods under test read."""
         self.crossings_list = control if control is not None else _CrossingsListControl()
@@ -365,9 +365,9 @@ def test_set_time_columns_given_each_pair_of_flags_hides_each_column_independent
 # ----------------------------------------------------- the default sort
 
 
-def test_default_feed_sort_is_the_time_column_ascending() -> None:
-    """Oldest crossing first: elapsed 0 at the top (Phase 4)."""
-    assert main_frame.DEFAULT_FEED_SORT == (feed_model.COL_TIME, True)
+def test_default_feed_sort_is_the_time_column_descending() -> None:
+    """Newest crossing first: the largest elapsed reading on top."""
+    assert main_frame.DEFAULT_FEED_SORT == (feed_model.COL_TIME, False)
 
 
 def test_show_feed_given_rows_applies_the_default_sort_after_the_rebuild() -> None:
@@ -384,7 +384,7 @@ def test_show_feed_given_rows_applies_the_default_sort_after_the_rebuild() -> No
 
     main_frame.MainFrame.show_feed(shell, [_feed_row()])
 
-    assert (column.operations, column.sort_orders) == (["set"], [True])
+    assert (column.operations, column.sort_orders) == (["set"], [False])
 
 
 def test_show_feed_given_a_remembered_column_re_applies_that_column() -> None:
@@ -475,7 +475,7 @@ def test_apply_feed_sort_given_a_never_sorted_column_leaves_the_sort_key_alone()
 
     main_frame.MainFrame._apply_feed_sort(shell)
 
-    assert (column.operations, column.sort_orders, model.resorts) == (["set"], [True], 1)
+    assert (column.operations, column.sort_orders, model.resorts) == (["set"], [False], 1)
 
 
 def test_apply_feed_sort_given_a_remembered_column_unset_then_sets_then_resorts() -> None:
