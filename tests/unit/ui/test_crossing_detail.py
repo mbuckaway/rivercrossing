@@ -50,7 +50,7 @@ from xrc_fixtures import pin_no_authored_window
 
 from conftest import _pooled_team_roster, gorba_config
 from rivercrossing.cards import Card, Shoe
-from rivercrossing.ride import Crossing, PendingMiss, RideEngine, RideStatus
+from rivercrossing.ride import Crossing, Event, PendingMiss, RideEngine, RideStatus
 from rivercrossing.roster import EntryMode, PlateModel, Rider, Roster
 from rivercrossing.ui import app as app_module
 from rivercrossing.ui import ids, std_dialogs
@@ -85,15 +85,73 @@ def _frozen_clock() -> datetime:
     return _dt(10, 0)
 
 
-def _running_engine(
-    roster: Roster, *, min_lap_s: int = 1, hold_short_laps: bool = False
+def _running_engine(  # noqa: PLR0913 -- (roster, min_lap_s, hold_short_laps, engine_class)
+    roster: Roster,
+    *,
+    min_lap_s: int = 1,
+    hold_short_laps: bool = False,
+    engine_class: type[RideEngine] = RideEngine,
 ) -> RideEngine:
-    """Build a RUNNING engine over *roster* on the GORBA config."""
+    """Build a RUNNING engine over *roster* on the GORBA config.
+
+    *engine_class* builds the instance: ``RideEngine`` itself
+    everywhere but the void-card identity case, which needs its
+    recording double.
+    """
     config = gorba_config(min_lap_s=min_lap_s, hold_short_laps=hold_short_laps)
     shoe = Shoe(decks=config.deck_count, jokers_per_deck=config.jokers_per_deck, seed=20260920)
+    engine = engine_class(config=config, shoe=shoe, clock=_frozen_clock, roster=roster)
+    engine.start()
+    return engine
+
+
+# The same-code pair the identity cases below need: two physically
+# different cards sharing one code, both credited to one entry. The
+# GORBA shoe's eight decks repeat no code early enough to be worth
+# dealing; a two-deck shoe under this seed deals one code on two
+# consecutive deals (the seed test_ride.py's own identity cases use).
+_IDENTITY_SEED = 20260901
+
+
+def _identity_engine(roster: Roster) -> RideEngine:
+    """Build a RUNNING two-deck engine that repeats a code."""
+    config = replace(
+        gorba_config(min_lap_s=1, hold_short_laps=False),
+        deck_count=2,
+        jokers_per_deck=1,
+    )
+    shoe = Shoe(
+        decks=config.deck_count, jokers_per_deck=config.jokers_per_deck, seed=_IDENTITY_SEED
+    )
     engine = RideEngine(config=config, shoe=shoe, clock=_frozen_clock, roster=roster)
     engine.start()
     return engine
+
+
+def _record_alias_pair(engine: RideEngine) -> tuple[Crossing, Crossing]:
+    """Record seven laps for "12"; laps six and seven repeat a code.
+
+    Returns:
+        The aliased pair, earlier lap first -- the engine's own
+        ``Crossing`` objects.
+    """
+    for index in range(6):
+        engine.record_crossing("12", at=_dt(10, 0, 2 + index * 2))
+    engine.record_crossing("12", at=_dt(10, 0, 14))
+    return engine.crossings[5], engine.crossings[6]
+
+
+def _voided_alias_ride(roster: Roster) -> tuple[RideEngine, Crossing, Crossing]:
+    """Build a ride whose sixth lap's card is voided off the hand.
+
+    Returns:
+        The engine and the two aliased crossings -- the voided one and
+        its still-credited sibling, in that order.
+    """
+    engine = _identity_engine(roster)
+    voided, sibling = _record_alias_pair(engine)
+    engine.void_card("12", engine.card_for(voided), reason="wrong card off the line")
+    return engine, voided, sibling
 
 
 def _solo_roster(name: str = "Amy", plate: str = "12") -> Roster:
@@ -291,6 +349,50 @@ def test_build_fields_given_a_second_duplicate_pair_reports_it_duplicate() -> No
     assert fields.held == "Duplicate"
 
 
+def test_build_fields_given_a_voided_card_beside_its_credited_code_alias_is_void() -> None:
+    """T-3: a credited same-code sibling cannot mask the void.
+
+    Voiding the sixth lap leaves the seventh's value-equal card in the
+    entry's hand, so a credited-membership read would call a card the
+    engine has retired "Credited" (an eight-deck alias in one hand).
+    """
+    roster = _solo_roster()
+    engine, voided, _sibling = _voided_alias_ride(roster)
+
+    fields = crossing_detail.build_fields(voided, roster, engine)
+
+    assert (fields.held, fields.card) == ("Void", "Void")
+
+
+def test_build_fields_given_the_credited_half_of_a_code_alias_stays_credited() -> None:
+    """T-3 negative: the voided object does not taint its code alias."""
+    roster = _solo_roster()
+    engine, _voided, sibling = _voided_alias_ride(roster)
+
+    fields = crossing_detail.build_fields(sibling, roster, engine)
+
+    assert fields.held == "Credited"
+
+
+def test_build_fields_given_a_voided_duplicate_reports_duplicate_not_void() -> None:
+    """T-13: the pair membership outranks even a voided card.
+
+    ``_held_status`` reads the duplicate pair before any card
+    disposition, so the voided arm cannot take a twin's row away from
+    the correction it needs.
+    """
+    roster = _solo_roster()
+    engine = _running_engine(roster)
+    engine.record_crossing("12", at=_dt(10, 2))
+    engine.record_crossing("12", at=_dt(10, 2))
+    crossing = engine.crossings[1]
+    engine.void_card("12", engine.card_for(crossing), reason="wrong card off the line")
+
+    fields = crossing_detail.build_fields(crossing, roster, engine)
+
+    assert fields.held == "Duplicate"
+
+
 class _StubEngine:
     """A ``RideEngine`` double for the field builder's read surface."""
 
@@ -325,6 +427,15 @@ class _StubEngine:
     def credited_cards(self, plate: str) -> tuple[Card, ...]:  # noqa: ARG002
         """Return the scripted credited hand."""
         return self._credited
+
+    def is_card_voided(self, card: Card) -> bool:  # noqa: ARG002
+        """Report the scripted card (``card``) never voided.
+
+        ``_StubEngine`` scripts credited hands only: a card outside
+        them reads as voided through ``_held_status``' own fallback,
+        which is the state the tests using this double pin.
+        """
+        return False
 
     def duplicate_crossings(self) -> tuple[tuple[Crossing, Crossing], ...]:
         """Report no pairs: every scripted crossing is a lone one."""
@@ -1420,6 +1531,76 @@ def _stub_run_void_card(
 
     monkeypatch.setattr(corrections, "run_void_card", _run)
     return calls
+
+
+class _RecordingVoidEngine(RideEngine):
+    """A ``RideEngine`` remembering the object ``void_card`` was handed.
+
+    The one fact the dialog's own outcome cannot show: whether the
+    handler passed the engine's dealt object or a fresh, value-equal
+    ``Card.parse`` copy of the confirm dialog's code -- which Phase 1's
+    identity-keyed registry and hold guard no longer recognise.
+    """
+
+    voided_card: Card | None = None
+
+    def void_card(self, entry_id: str, card: Card, reason: str) -> Event:
+        """Record *card*, then run the engine's own void."""
+        self.voided_card = card
+        return super().void_card(entry_id, card, reason)
+
+
+def test_on_void_card_given_a_confirmed_void_passes_the_engines_own_dealt_object(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Identity, never the confirm dialog's returned code.
+
+    ``void_card`` keys the registry and guards the hold queue by object
+    identity, so a parsed copy of the code would name a different
+    physical card -- and, on a held duplicate, slip past the guard.
+    """
+    roster = _solo_roster()
+    engine = _running_engine(roster, engine_class=_RecordingVoidEngine)
+    engine.record_crossing("12", at=_dt(10, 2))
+    crossing = engine.crossings[0]
+    card = engine.card_for(crossing)
+    view = _view(engine, roster=roster)
+    _stub_run_void_card(
+        monkeypatch, CardVoid(entry_id="12", card=card.code(), reason="wrong card")
+    )
+
+    view._on_void_card(_RecordingEvent())
+
+    assert engine.voided_card is card
+    assert (view.crossing_held_lbl.value, engine.credited_cards("12")) == ("Void", ())
+
+
+def test_on_void_card_given_a_held_duplicate_card_keeps_the_held_refusal(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The identity hold guard still recognises the card it is given.
+
+    A duplicate crossing's held card is voidable from this dialog, and
+    ``void_card`` refuses it with the hold message. A parsed copy of
+    the code is another object, so the guard misses and the refusal
+    degrades to "no dealt card ... credited".
+    """
+    roster = _solo_roster()
+    engine = _running_engine(roster, min_lap_s=1080, hold_short_laps=True)
+    engine.record_crossing("12", at=_dt(10, 2))
+    engine.record_crossing("12", at=_dt(10, 2))
+    crossing = engine.crossings[1]
+    card = engine.card_for(crossing)
+    view = _view(engine, roster=roster, crossing=crossing)
+    _stub_run_void_card(
+        monkeypatch, CardVoid(entry_id="12", card=card.code(), reason="wrong card")
+    )
+
+    view._on_void_card(_RecordingEvent())
+
+    assert view.crossing_detail_infobar.messages == [
+        "Could not void card: card is held; confirm or void it through the review panel"
+    ]
 
 
 def test_on_void_card_given_a_confirmed_void_rerenders_the_crossing_in_place(

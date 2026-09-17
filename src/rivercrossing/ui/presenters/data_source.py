@@ -674,20 +674,26 @@ class _FeedContext:
 def _card_status_for(engine: RideEngine, crossing: Crossing, held_card: Card | None) -> str:
     """Return *crossing*'s card disposition: held, credited or voided.
 
-    Read by elimination from the engine's surfaces -- the hold queue,
-    then the entry's credited hand, else voided -- rather than from
-    ``RideEngine._voided_cards``, which is the engine's own card-level
-    bookkeeping rather than a per-crossing reading. Held comes first
-    (R-34): a held card waits uncredited; a card the entry's credited
-    hand does not hold was voided off it -- by ``void_card`` or by the
-    review panel's ``void_held``, which retires the card into that
-    same registry. *crossing* is one the engine recorded
+    Held comes first (R-34): a held card waits uncredited. A card the
+    engine has retired is voided -- read from
+    :meth:`RideEngine.is_card_voided` on this crossing's own dealt
+    object, the identity-keyed registry, because the entry's credited
+    hand matches by *value* and an eight-deck shoe routinely credits
+    one entry two cards of a code: membership alone would call a voided
+    crossing "credited" off its sibling. Otherwise the card is credited
+    when the hand holds it and voided when it does not -- the
+    elimination the registry cannot answer for, since a value match can
+    take an earlier same-code twin out of the hand on another
+    crossing's behalf. *crossing* is one the engine recorded
     (:func:`_crossing_feed_row` walks ``engine.crossings``), so the
     dealt-card lookup cannot miss.
     """
     if held_card is not None:
         return "held"
-    if engine.card_for(crossing) in engine.credited_cards(crossing.entry_id):
+    card = engine.card_for(crossing)
+    if engine.is_card_voided(card):
+        return "voided"
+    if card in engine.credited_cards(crossing.entry_id):
         return "credited"
     return "voided"
 

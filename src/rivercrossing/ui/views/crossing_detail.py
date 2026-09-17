@@ -73,7 +73,6 @@ from typing import TYPE_CHECKING, Any
 import wx
 import wx.xrc  # submodule, not loaded by plain `import wx`
 
-from rivercrossing.cards import Card
 from rivercrossing.ride import RideEngineError, RideStatus
 from rivercrossing.roster import EntryType
 from rivercrossing.ui import ids, std_dialogs
@@ -282,15 +281,24 @@ def _held_status(engine: RideEngine, crossing: Crossing, held: object | None) ->
     row the operator needs corrected is the crossing, not the card.
     Otherwise three states, all read off the engine: the card is held
     for review (R-34 -- *held* is :meth:`RideEngine.held_card_for`'s
-    answer), it is credited to the entry's hand, or it was voided out
-    of the ride entirely. The distinction matters in exactly the dialog
-    a scorer opens to check why a card is missing from a hand.
+    answer), it was voided out of the ride entirely, or it is credited
+    to the entry's hand. Voided is read from
+    :meth:`RideEngine.is_card_voided` on this crossing's own dealt
+    object -- the identity-keyed registry, never membership of the
+    credited hand, which matches by value and would let a same-code
+    sibling report a retired card as "Credited". The hand's own
+    membership is then the last reading: a card it no longer holds
+    (a value-matched twin, say) is voided too. The distinction
+    matters in exactly the dialog a scorer opens to check why a card is
+    missing from a hand.
     """
     if _is_duplicate(engine, crossing):
         return _DUPLICATE_STATUS
     if held is not None:
         return _HELD_STATUS
     card = engine.card_for(crossing)
+    if engine.is_card_voided(card):
+        return _VOIDED_STATUS
     if card in engine.credited_cards(crossing.entry_id):
         return _CREDITED_STATUS
     return _VOIDED_STATUS
@@ -889,6 +897,11 @@ class CrossingDetailView(_DetailDialogView):
         disabled. A refusal lands on
         :data:`CROSSING_DETAIL_INFOBAR` and leaves the dialog open;
         Cancel does nothing.
+
+        The engine gets the very object it dealt, not a ``Card`` parsed
+        from the confirm dialog's returned code: the registry and the
+        hold guard are keyed by identity, so a value-equal copy is a
+        different physical card and would slip past the guard.
         """
         event.Skip()
         card = self.engine.card_for(self.crossing)
@@ -908,7 +921,7 @@ class CrossingDetailView(_DetailDialogView):
         if void is None:
             return
         try:
-            self.engine.void_card(void.entry_id, Card.parse(void.card), void.reason)
+            self.engine.void_card(void.entry_id, card, void.reason)
         except RideEngineError as exc:
             self.show_refusal(f"Could not void card: {exc}")
             return

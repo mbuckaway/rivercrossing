@@ -115,7 +115,9 @@ class CardVoid:
     """One confirmed ``void_card_confirm_dlg`` submission (E7.2.1).
 
     ``card`` is the dealt card's code (``Card.code()``); the caller
-    parses it back with :meth:`Card.parse` when it calls the engine.
+    still names the engine's own dealt object when it calls
+    ``void_card``, never a parsed copy of the code -- the registry and
+    the hold guard key by identity.
     """
 
     entry_id: str

@@ -2276,8 +2276,8 @@ class RideEngine:
         and therefore the lap -- stays recorded. The voided object is
         the engine's own dealt card, which is the one
         ``_discard_credited`` removed: *card* itself may be a fresh,
-        value-equal ``Card`` (the dialog and the replay both build one
-        with ``Card.parse``), so marking the caller's object would
+        value-equal ``Card`` (replay builds one with ``Card.parse``),
+        so marking the caller's object would
         leave the dealt card live. A held card is refused: the
         short-lap hold is the review surface's domain
         (``confirm_held``/``void_held``), never this command -- the

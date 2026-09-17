@@ -11,9 +11,12 @@ per-rider crossing attribution, where ``EngineDataSource``'s feed rows
 name the rider whose plate the operator typed and fall back to the
 entry's plate/team name only when no roster rider owns that plate.
 Pure functions over plain values -- no wx, no I/O, so there is nothing
-to fake or mock (T-10).
+to fake or mock (T-10), bar the card-disposition read's scripted
+engine: a double for the one arm no engine command can still reach,
+never an I/O boundary.
 """
 
+from dataclasses import replace
 from datetime import datetime, timedelta
 
 import pytest
@@ -21,8 +24,8 @@ from hypothesis import given
 from hypothesis import strategies as st
 
 from conftest import _pooled_team_roster, gorba_config
-from rivercrossing.cards import Shoe
-from rivercrossing.ride import Event, RideEngine
+from rivercrossing.cards import Card, Shoe
+from rivercrossing.ride import Crossing, Event, RideEngine
 from rivercrossing.roster import Entry, EntryMode, EntryType, PlateModel, Rider, Roster
 from rivercrossing.ui.presenters import data_source as data_source_module
 from rivercrossing.ui.presenters.data_source import EngineDataSource
@@ -792,11 +795,13 @@ def test_feed_rows_given_two_entries_at_one_instant_leaves_both_rows_clear() -> 
 
 # ----------------------------------------------------- card disposition
 # ``FeedRow.card_status`` is the Card column's own state: "held" while
-# an R-34 hold waits for confirm/void, "credited" once the card is in
-# the entry's hand, "voided" when it is in neither. The feed derives
-# it by elimination -- held queue, then credited hand, else voided --
-# rather than from ``RideEngine._voided_cards``, which is the engine's
-# own card-level bookkeeping, not a per-crossing reading.
+# an R-34 hold waits for confirm/void, "voided" once the engine has
+# retired the crossing's own dealt object, "credited" otherwise. The
+# voided reading comes from ``RideEngine.is_card_voided`` -- the
+# identity-keyed registry read through ``card_for``, i.e. exactly this
+# crossing's physical card -- because the credited hand is matched by
+# value: an eight-deck shoe routinely credits two same-code cards to
+# one entry, and only one of them may have been voided.
 
 
 def _half_a_second_on(instant: datetime) -> datetime:
@@ -833,10 +838,8 @@ def test_feed_rows_given_an_always_deal_short_lap_carries_the_credited_card_stat
 def test_feed_rows_given_a_voided_held_card_carries_the_voided_card_status() -> None:
     """Void discards the held card: held nowhere, credited nowhere.
 
-    The lap itself stays recorded, so its row must say "voided". The
-    disposition is read by elimination -- the card is no longer in the
-    hold queue and in no hand -- not from ``RideEngine._voided_cards``,
-    which is the engine's own card-level bookkeeping.
+    The lap itself stays recorded, so its row must say "voided" -- the
+    engine's own registry answers for the very card it retired.
     """
     roster = _pooled_team_roster()
     engine = _running_engine(roster)
@@ -862,6 +865,94 @@ def test_feed_rows_given_a_crossing_whose_card_was_voided_off_the_hand_is_voided
     feed = source.feed_rows()
 
     assert feed[0].card_status == "voided"
+
+
+# The same-code pair the case below needs: two physically different
+# cards sharing one code, both credited to one entry. The GORBA shoe's
+# eight decks repeat no code early enough to be worth dealing; a
+# two-deck shoe under this seed deals one code on two consecutive deals
+# (the seed test_ride.py's own identity cases use).
+_IDENTITY_SEED = 20260901
+
+
+def _identity_engine(roster: Roster) -> RideEngine:
+    """Build a RUNNING two-deck engine that repeats a code."""
+    config = replace(
+        gorba_config(min_lap_s=1, hold_short_laps=False),
+        deck_count=2,
+        jokers_per_deck=1,
+    )
+    shoe = Shoe(
+        decks=config.deck_count, jokers_per_deck=config.jokers_per_deck, seed=_IDENTITY_SEED
+    )
+    engine = RideEngine(config=config, shoe=shoe, clock=_frozen_clock, roster=roster)
+    engine.start()
+    return engine
+
+
+def _record_laps(engine: RideEngine, plate: str, count: int) -> None:
+    """Record *count* two-second-apart laps for *plate*."""
+    for index in range(count):
+        engine.record_crossing(plate, at=_dt(10, 0, 2 + index * 2))
+
+
+def test_feed_rows_given_a_voided_card_beside_its_credited_code_alias_is_voided() -> None:
+    """T-3: a value-equal sibling in the hand cannot mask the void.
+
+    The seventh lap's card is the sixth's code on another object and
+    stays credited, so a credited-membership read would call the
+    voided sixth row "credited" -- the eight-deck alias in one hand.
+    """
+    roster = _solo_roster()
+    engine = _identity_engine(roster)
+    _record_laps(engine, "12", 6)
+    engine.record_crossing("12", at=_dt(10, 0, 14))
+    engine.void_card("12", engine.card_for(engine.crossings[5]), reason="wrong card off the line")
+    source = EngineDataSource(engine, roster)
+
+    feed = source.feed_rows()
+
+    assert [(row.lap, row.card_status) for row in feed[:2]] == [(7, "credited"), (6, "voided")]
+
+
+class _StubEngine:
+    """A ``RideEngine`` double scripting the card reads.
+
+    The elimination arm -- a card the hand no longer holds and the
+    engine has not retired -- has no command left that reaches it: every
+    one that takes a card out of the hand retires the card or the
+    crossing (:meth:`RideEngine.void_card`, ``void_held``,
+    ``undo_last``, ``void_crossing``), and ``return_to_held`` puts it
+    back in the hold queue. So that one reading is pinned over a
+    scripted read surface -- the subject's own surface, never an I/O
+    boundary (T-10; the crossing-detail suite's ``_StubEngine``
+    precedent).
+    """
+
+    def __init__(self) -> None:
+        """Script a dealt card in no hand and in no void registry."""
+        self._card = Card.parse("AS")
+
+    def card_for(self, crossing: Crossing) -> Card:  # noqa: ARG002
+        """Return the scripted dealt card."""
+        return self._card
+
+    def is_card_voided(self, card: Card) -> bool:  # noqa: ARG002
+        """Report the scripted card unretired."""
+        return False
+
+    def credited_cards(self, plate: str) -> tuple[Card, ...]:  # noqa: ARG002
+        """Report the scripted empty hand."""
+        return ()
+
+
+def test_card_status_for_given_a_card_off_the_hand_and_unretired_is_voided() -> None:
+    """T-3: the elimination arm -- held, voided, credited all miss."""
+    crossing = Crossing(entry_id="12", seq=1, crossed_at=_dt(10, 2), rider_plate="12")
+
+    status = data_source_module._card_status_for(_StubEngine(), crossing, None)
+
+    assert status == "voided"
 
 
 def test_feed_rows_given_a_pending_miss_carries_no_card_status() -> None:
