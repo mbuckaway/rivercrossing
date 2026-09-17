@@ -211,6 +211,43 @@ def test_build_fields_given_a_voided_card_reports_it_voided() -> None:
     assert fields.held == "Void"
 
 
+def test_build_fields_given_a_voided_card_renders_void_in_the_card_field() -> None:
+    """D3: the Card field drops the voided glyph for the word "Void".
+
+    A card out of the ride is not the crossing's any more, so showing
+    its glyph would name a card the entry does not hold; the field
+    reads what the Status field beside it reads.
+    """
+    roster = _solo_roster()
+    engine = _running_engine(roster, min_lap_s=1080, hold_short_laps=True)
+    engine.record_crossing("12", at=_dt(10, 2))
+    crossing = engine.crossings[0]
+    engine.void_held(crossing)
+
+    fields = crossing_detail.build_fields(crossing, roster, engine)
+
+    assert (fields.card, fields.held) == ("Void", "Void")
+
+
+def test_build_fields_given_a_duplicate_card_keeps_its_glyph() -> None:
+    """D3 guardrail: a duplicate's card is in the ride, so it shows.
+
+    The pair membership outranks the card's own disposition
+    (``_held_status``), so this is the one status that can sit beside a
+    credited or held card and still read as a glyph-bearing row.
+    """
+    roster = _solo_roster()
+    engine = _running_engine(roster)
+    engine.record_crossing("12", at=_dt(10, 2))
+    engine.record_crossing("12", at=_dt(10, 2))
+    crossing = engine.crossings[-1]
+    glyph = format_card(engine.card_for(crossing).code())
+
+    fields = crossing_detail.build_fields(crossing, roster, engine)
+
+    assert (fields.card, fields.held) == (glyph, "Duplicate")
+
+
 @pytest.mark.parametrize("index", [0, 1], ids=["older_twin", "newer_twin"])
 def test_build_fields_given_either_half_of_a_duplicate_pair_reports_it_duplicate(
     index: int,

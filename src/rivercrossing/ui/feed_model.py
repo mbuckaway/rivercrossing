@@ -40,6 +40,7 @@ __all__ = [
     "COL_TOTAL",
     "LAP_TIME_COLUMN",
     "TOTAL_COLUMN",
+    "card_cell_text",
     "card_status_text",
     "card_text_or_blank",
     "edited_row_indexes",
@@ -227,6 +228,18 @@ def card_status_text(row: FeedRow) -> str:
     stored field stays the lowercase token.
     """
     return _CARD_STATUS_TEXTS[row.card_status]
+
+
+def card_cell_text(row: FeedRow) -> str:
+    """Return the feed Card column's cell text for *row*.
+
+    A voided card reads "Void" -- the card is out of the ride, so its
+    glyph would mislead -- while a held, credited or duplicate row
+    keeps the real dealt card's glyph.
+    """
+    if row.card_status == "voided":
+        return _CARD_STATUS_TEXTS["voided"]
+    return card_text_or_blank(row.card)
 
 
 def flagged_row_indexes(rows: Sequence[FeedRow]) -> frozenset[int]:

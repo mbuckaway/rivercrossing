@@ -29,6 +29,7 @@ from rivercrossing.ui.feed_model import (
     COLUMN_WIDTHS,
     LAP_TIME_COLUMN,
     TOTAL_COLUMN,
+    card_cell_text,
     card_status_text,
     card_text_or_blank,
     edited_row_indexes,
@@ -618,6 +619,62 @@ def test_card_status_text_given_any_known_status_is_blank_exactly_when_that_stat
     text = card_status_text(_feed_row(card_status=status))
 
     assert (text == "") is (status == "")
+
+
+# --- card_cell_text (Change D3: a voided card reads "Void") ----------
+# The feed's Card column, unlike the review tab's own, shows the dealt
+# card's glyph -- except when the card is voided: a card the entry's
+# hand does not hold and the hold queue does not carry is out of the
+# ride, so its glyph would name a card the crossing no longer has. The
+# word is the review tab's own for that state
+# (``card_status_text``), so the two columns agree.
+
+CARD_CELL_CASES = (
+    ("AS", "voided", "Void"),
+    ("AS", "credited", "A♠"),
+    ("AS", "held", "A♠"),
+    ("10D", "credited", "10♦"),
+    ("JK", "held", "JK★"),
+    ("", "", ""),
+    ("ZZ", "credited", ""),
+    # The status decides first: a voided row's glyph is gone, whatever
+    # (corrupt) code the stored cell happens to carry.
+    ("", "voided", "Void"),
+)
+
+
+@pytest.mark.parametrize(
+    ("card", "status", "text"),
+    CARD_CELL_CASES,
+    ids=[
+        "voided",
+        "credited",
+        "held",
+        "credited_ten",
+        "held_joker",
+        "miss",
+        "unmappable",
+        "voided_blank_code",
+    ],
+)
+def test_card_cell_text_given_a_rows_card_and_status_returns_the_cell_text(
+    card: str, status: str, text: str
+) -> None:
+    """D3: "Void" for a voided card, the glyph for every other one."""
+    assert card_cell_text(_feed_row(card=card, card_status=status)) == text
+
+
+@given(
+    card=st.sampled_from(("", "9H", "AS", "10D", "JK", "ZZ")),
+    status=st.sampled_from(("", "held", "credited", "voided")),
+)
+def test_card_cell_text_given_any_status_reads_void_exactly_when_that_status_is(
+    card: str, status: str
+) -> None:
+    """T-7: the word replaces the glyph for a voided card only."""
+    cell = card_cell_text(_feed_row(card=card, card_status=status))
+
+    assert (cell == "Void") is (status == "voided")
 
 
 # --- review_issue (Needs Review tab: why this row is here) -----------

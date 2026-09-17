@@ -327,7 +327,7 @@ class CrossingsFeedModel(wx.dataview.DataViewIndexListModel):  # type: ignore[mi
 
     The wx-facing half of the crossings feed; ``ui/feed_model.py``
     holds the column layout and the decisions this class delegates to
-    (``card_text_or_blank``, ``entry_text``, the flagged-row lookup),
+    (``card_cell_text``, ``entry_text``, the flagged-row lookup),
     so those stay testable without ``wx``
     (``tests/unit/ui/test_feed_model.py``). This class has exactly
     one consumer, :class:`MainFrame`, which is why it lives here
@@ -362,7 +362,7 @@ class CrossingsFeedModel(wx.dataview.DataViewIndexListModel):  # type: ignore[mi
         """Return the cell value at *row*/*col*."""
         feed_row = self._rows[row]
         if col == feed_model.COL_CARD:
-            return feed_model.card_text_or_blank(feed_row.card)
+            return feed_model.card_cell_text(feed_row)
         return _TEXT_ACCESSORS[col](feed_row)
 
     def Compare(  # noqa: PLR0913, PLR0917 -- wx's own four-argument callback shape
@@ -1106,7 +1106,7 @@ class MainFrame(DialogFindMixin):  # _find: ui.views._support, over self.frame
         per-column keys.
 
         Every column is text: the Card column renders the dealt
-        card's glyph display (``feed_model.card_text_or_blank``), not
+        card's glyph display (``feed_model.card_cell_text``), not
         a bitmap, so all eight share the one renderer.
         """
         for col, label in enumerate(feed_model.COLUMN_LABELS):

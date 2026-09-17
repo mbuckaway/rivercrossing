@@ -303,6 +303,12 @@ def build_fields(crossing: Crossing, roster: Roster, engine: RideEngine) -> Cros
     roster resolves which entry the crossing belongs to, the engine
     answers the timing and card questions. Pure -- no ``wx`` -- so the
     mapping is pinned headlessly.
+
+    Change D3: a voided card's Card field reads :data:`_VOIDED_STATUS`
+    rather than its glyph. The card is out of the ride -- in neither
+    the hold queue nor the entry's hand -- so its glyph would name a
+    card the entry does not hold. A held, credited or duplicate card
+    keeps the real dealt code's glyph, the feed's own rule.
     """
     entry = roster.resolve_plate(crossing.entry_id)
     entry_name = entry.display_name if entry is not None else crossing.entry_id
@@ -313,6 +319,7 @@ def build_fields(crossing: Crossing, roster: Roster, engine: RideEngine) -> Cros
     # never a placeholder -- held_card_for is that answer.
     held = engine.held_card_for(crossing)
     card = held if held is not None else engine.card_for(crossing)
+    status = _held_status(engine, crossing, held)
     return CrossingDetailFields(
         rider=rider or entry_name,
         team=team,
@@ -321,8 +328,8 @@ def build_fields(crossing: Crossing, roster: Roster, engine: RideEngine) -> Cros
         time=_local_time(crossing.crossed_at),
         lap_time=_format_lap_time(lap_time),
         total=format_duration(total),
-        card=format_card(card.code()),
-        held=_held_status(engine, crossing, held),
+        card=_VOIDED_STATUS if status == _VOIDED_STATUS else format_card(card.code()),
+        held=status,
     )
 
 
