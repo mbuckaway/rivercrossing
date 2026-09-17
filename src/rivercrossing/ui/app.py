@@ -3498,7 +3498,7 @@ def _open_crossing_detail_for(context: _RouteContext, row: int) -> None:
 def _delete_crossing_for(context: _RouteContext, row: int) -> None:
     """Delete the crossing the console feed's row *row* shows (Phase 7).
 
-    The console Delete/Ctrl+D accelerator's flow: wired as
+    The console feed's Delete/Ctrl+D flow: wired as
     :meth:`MainFrame.set_on_delete_crossing`'s callback
     (:func:`_wire_crossing_open_seam`), so the selected feed row is
     removed after the same danger confirm the Crossing Detail dialog's

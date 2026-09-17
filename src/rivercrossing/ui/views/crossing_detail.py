@@ -29,10 +29,10 @@ the retired Reassign Plate…/Void Card… menu rows' one real home.
 Every correction commits through the engine and then **returns to this
 dialog**, re-rendered in place on the crossing the engine now holds, so
 a scorer can retime, replate and void one crossing without reopening
-the row: OK is the one control that closes it. Delete is the single
-correction that still closes -- its crossing is gone -- and, for any
-crossing of a live (RUNNING or REOPENED) ride, removes the one it shows
-after a danger confirm: the newest runs
+the row: the stock OK and Cancel are the controls that close it.
+Delete is the single correction that still closes -- its crossing is
+gone -- and, for any crossing of a live (RUNNING or REOPENED) ride,
+removes the one it shows after a danger confirm: the newest runs
 :meth:`~rivercrossing.ride.RideEngine.undo_last`, exactly the console's
 Undo button, and any other one runs
 :meth:`~rivercrossing.ride.RideEngine.void_crossing` with
@@ -447,8 +447,9 @@ def confirm_delete_crossing(  # noqa: PLR0913, PLR0917 -- (parent, crossing, ros
     """Confirm and remove *crossing*; report whether it was removed.
 
     The shared Delete of the Crossing Detail dialog's ``delete_btn`` and
-    the console feed's own Delete/Ctrl+D accelerators. §5: any crossing
-    of a live ride is deletable, and which engine command runs depends
+    the console feed's own Delete (feed-scoped) and Ctrl+D (frame
+    accelerator). §5: any crossing of a live ride is deletable, and
+    which engine command runs depends
     on *which* crossing it is (:func:`is_last_crossing`). The newest one
     runs :meth:`~rivercrossing.ride.RideEngine.undo_last` -- the same
     operation the console's Undo button runs, its card restituted -- and
@@ -543,12 +544,12 @@ class _DetailDialogView(DialogFindMixin):  # _find: ui.views._support
 
     The crossing mode (:class:`CrossingDetailView`) and the miss mode
     (:class:`MissDetailView`) decorate the same frozen dialog, so the
-    nine value boxes, the four correction buttons, the stock OK, the
-    code-side info bar and Escape all live here. Each subclass supplies
-    what differs: the view-model it renders, what OK commits (nothing in
-    crossing mode, the miss's assignment in miss mode) and what Edit
-    does (both open the §9 Plate prompt, on the crossing's own plate and
-    on a blank field respectively).
+    nine value boxes, the four correction buttons, the stock OK/Cancel
+    pair and the code-side info bar all live here. Each subclass
+    supplies what differs: the view-model it renders, what OK commits
+    (nothing in crossing mode, the miss's assignment in miss mode) and
+    what Edit does (both open the §9 Plate prompt, on the crossing's
+    own plate and on a blank field respectively).
     """
 
     def __init__(self, dialog: wx.Dialog, engine: RideEngine) -> None:
@@ -585,15 +586,13 @@ class _DetailDialogView(DialogFindMixin):  # _find: ui.views._support
         # for a miss): binding it here would name a method this class
         # does not have.
         #
-        # Escape points at OK rather than at a Cancel button: the window
-        # carries no wxID_CANCEL, and wx's own Escape handling only ever
-        # looks for one (measured -- dialogs.wire_close_button's
-        # docstring), so without this the dialog would trap a
-        # keyboard-only operator. Nothing is staged in this dialog --
-        # every correction commits through its own button -- so Escape
-        # discards nothing and is never the destructive path
-        # (UX-DESKTOP §3).
-        self.dialog.SetEscapeId(self.ok_btn.GetId())
+        # Nothing points Escape at a non-Cancel button: the window
+        # authors the stock wxID_CANCEL beside OK, and wx's own Escape
+        # handling finds that id and ends the modal on a click
+        # (measured -- dialogs.wire_close_button's docstring). Nothing
+        # is staged in this dialog -- every correction commits through
+        # its own button -- so Escape discards nothing and is never the
+        # destructive path (UX-DESKTOP §3).
 
     def _build_infobar(self) -> Any:  # noqa: ANN401 -- wx ships no stubs
         """Build the code-side :data:`CROSSING_DETAIL_INFOBAR` bar.
@@ -648,8 +647,8 @@ class CrossingDetailView(_DetailDialogView):
 
     Every correction re-renders this dialog in place once the engine has
     taken it, so the scorer stays on the crossing and can keep working
-    (OK is the one button that closes it; Delete, whose crossing is
-    gone, is the other exit).
+    (the stock OK and Cancel are the buttons that close it; Delete,
+    whose crossing is gone, is the other exit).
     """
 
     def __init__(  # noqa: PLR0913 -- (dialog, crossing, roster, engine)
@@ -881,9 +880,9 @@ class CrossingDetailView(_DetailDialogView):
     def _on_ok(self, event: Any) -> None:  # noqa: ANN401, ARG002 -- wx ships no stubs
         """Handle ``wxID_OK``: close the dialog.
 
-        OK is this mode's only exit: every correction commits through
-        its own button and re-renders here, so there is no field for OK
-        to read and nothing to refuse.
+        Every correction commits through its own button and re-renders
+        here, so there is no field for OK to read and nothing to
+        refuse; the stock Cancel beside it is the discard path.
 
         *event* is never skipped: this handler alone decides whether
         the dialog closes (``ride_setup._on_ok``'s measured note).

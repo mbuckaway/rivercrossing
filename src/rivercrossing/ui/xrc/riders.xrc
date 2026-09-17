@@ -539,8 +539,9 @@
   <!-- Phase 5: the console's blocked-start report. The one-line native
        warning W5 used could only ever show the engine's joined reason
        string; this dialog lists each blocking issue on its own row,
-       with a single OK to dismiss (the ride stays un-started either
-       way). Shape mirrors rider_issues_dlg above. -->
+       with a stock OK + Cancel row (the ride stays un-started either
+       way, and wxID_CANCEL gives wx its own Escape route, R-76).
+       Shape mirrors rider_issues_dlg above. -->
   <object class="wxDialog" name="start_blocked_dlg">
     <title>Cannot Start Ride</title>
     <style>wxDEFAULT_DIALOG_STYLE|wxRESIZE_BORDER</style>
@@ -562,6 +563,11 @@
           <object class="button">
             <object class="wxButton" name="wxID_OK">
               <label>OK</label>
+            </object>
+          </object>
+          <object class="button">
+            <object class="wxButton" name="wxID_CANCEL">
+              <label>Cancel</label>
             </object>
           </object>
         </object>
