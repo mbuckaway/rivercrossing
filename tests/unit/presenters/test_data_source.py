@@ -971,3 +971,130 @@ def test_feed_rows_given_a_pending_miss_leaves_the_team_overlap_clear() -> None:
     feed = source.feed_rows()
 
     assert (feed[0].missed, feed[0].team_overlap) == (True, False)
+
+
+# -------------------------------------------- the rider list's DNF bit
+#
+# The editor's and the console's rider lists share one row shape and
+# one set of columns, so the DNF marker has to arrive on the row: a
+# solo or relay entry that is out marks every row of it, and a pooled
+# team member's own mark leaves the team's other rows alone.
+
+
+def test_riders_given_a_solo_dnf_entry_marks_its_row() -> None:
+    """A solo entry's DNF is its one rider's row."""
+    roster = _solo_roster()
+    engine = _running_engine(roster)
+    engine.mark_dnf("12", reason="mechanical failure")
+    source = EngineDataSource(engine, roster)
+
+    rows = source.riders()
+
+    assert [(row.plate, row.dnf) for row in rows] == [("12", True)]
+
+
+def test_riders_given_a_pooled_riders_own_dnf_marks_only_that_row() -> None:
+    """A pooled team stays in the results with its other riders."""
+    roster = _pooled_team_roster()
+    engine = _running_engine(roster)
+    engine.mark_dnf("45", reason="mechanical failure")
+    source = EngineDataSource(engine, roster)
+
+    rows = source.riders()
+
+    assert [(row.plate, row.dnf) for row in rows] == [("45", True), ("9", False)]
+
+
+def test_riders_given_a_pooled_team_of_only_dnf_riders_marks_every_row() -> None:
+    """A team comes out only when every one of its riders is out."""
+    roster = _pooled_team_roster()
+    engine = _running_engine(roster)
+    engine.mark_dnf("45", reason="mechanical failure")
+    engine.mark_dnf("9", reason="mechanical failure")
+    source = EngineDataSource(engine, roster)
+
+    rows = source.riders()
+
+    assert [(row.plate, row.dnf) for row in rows] == [("45", True), ("9", True)]
+
+
+def test_riders_given_a_healthy_entry_leaves_its_rows_unmarked() -> None:
+    """T-3 negative: no mark, no marker."""
+    roster = _pooled_team_roster()
+    engine = _running_engine(roster)
+    source = EngineDataSource(engine, roster)
+
+    rows = source.riders()
+
+    assert [row.dnf for row in rows] == [False, False]
+
+
+def test_riders_given_an_entry_wide_dnf_marks_every_row_of_it() -> None:
+    """A relay team's own plate marks the entry, so all its rows do."""
+    roster = _relay_team_roster()
+    engine = _running_engine(roster)
+    engine.mark_dnf("9", reason="mechanical failure")
+    source = EngineDataSource(engine, roster)
+
+    rows = source.riders()
+
+    assert [(row.plate, row.name, row.dnf) for row in rows] == [
+        ("9", "Sarah", True),
+        ("9", "Priya", True),
+    ]
+
+
+# ----------------------------------------- the audit trail's DNF naming
+
+
+def test_audit_rows_given_a_dnf_row_renders_the_carried_display() -> None:
+    """A dnf row's Entry cell is the display the engine carried."""
+    roster = _pooled_team_roster()
+    engine = _running_engine(roster)
+    engine.mark_dnf("45", reason="mechanical failure")
+    source = EngineDataSource(engine, roster)
+
+    rows = source.audit_rows()
+
+    assert rows[0].entry == "45 · Sarah"
+
+
+def test_audit_rows_given_a_dnf_row_without_a_display_falls_back() -> None:
+    """T-4 nullable: a payload without the key keeps the entry_id read.
+
+    The pre-Phase-5 payload shape -- an event recorded before the
+    engine carried the target's display -- still projects, so an
+    existing trail never loses its Entry cell.
+    """
+    roster = _pooled_team_roster()
+    engine = _running_engine(roster)
+    engine._events.append(  # the engine's own event log: a legacy payload
+        Event(
+            action="dnf",
+            payload={"entry_id": "9", "plate": "45", "rider": True, "reason": "old row"},
+        )
+    )
+    source = EngineDataSource(engine, roster)
+
+    rows = source.audit_rows()
+
+    assert rows[0].entry == "9"
+
+
+# The keys the Entry cell actually reads, so the property below reaches
+# the branches it guards instead of generating keys nothing looks at.
+_AUDIT_ENTRY_KEYS = st.sampled_from(["entry_id", "plate", "display", "reason"])
+_AUDIT_ENTRY_VALUES = st.one_of(st.none(), st.text(max_size=12), st.integers())
+
+
+@given(
+    action=st.sampled_from(["dnf", "record_crossing", ""]),
+    payload=st.dictionaries(_AUDIT_ENTRY_KEYS, _AUDIT_ENTRY_VALUES, max_size=4),
+)
+def test_audit_entry_given_any_payload_renders_a_string(
+    action: str, payload: dict[str, object]
+) -> None:
+    """Property (T-7): whatever a payload holds, the cell is text."""
+    cell = data_source_module._audit_entry(Event(action=action, payload=payload))
+
+    assert isinstance(cell, str)

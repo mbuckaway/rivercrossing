@@ -18,6 +18,12 @@ reindex to 0-3 and :meth:`AuditListModel.Compare` answers the native
 header sort for all of them, keyed by the same text accessors the cells
 render through.
 
+The Action cell now draws the friendly label
+:data:`~rivercrossing.ui.presenters.audit.ACTION_CHOICES` carries for a
+row's own action (``dnf`` -> "Mark DNF"), falling back to the raw action
+for anything the tuple does not carry; the header sort follows the cell,
+exactly as the other three columns do.
+
 A real ``wx.Dialog`` needs a desktop, so these tests drive recording
 doubles and call the steps directly -- the same shape
 ``test_main_frame_feed_list.py`` and ``test_dialogs_positioning.py``
@@ -198,7 +204,35 @@ def test_audit_list_model_value_by_row_given_a_row_returns_each_cell() -> None:
         model.GetValueByRow(0, COL_REASON),
     )
 
-    assert cells == ("10:02:00", "edit_crossing", "77", "mis-keyed")
+    assert cells == ("10:02:00", "Edit Crossing", "77", "mis-keyed")
+
+
+def test_audit_list_model_action_cell_given_a_dnf_row_renders_the_friendly_label() -> None:
+    """``dnf`` renders the dropdown's own words, not the raw action."""
+    model = AuditListModel([_row(action="dnf", entry="45 · Sarah")])
+
+    assert model.GetValueByRow(0, COL_ACTION) == "Mark DNF"
+
+
+def test_audit_list_model_action_cell_given_an_unmapped_action_keeps_the_raw_text() -> None:
+    """T-4 negative: an action the tuple lacks keeps its raw text."""
+    model = AuditListModel([_row(action="some_future_action")])
+
+    assert model.GetValueByRow(0, COL_ACTION) == "some_future_action"
+
+
+@pytest.mark.parametrize(
+    ("label", "action"),
+    ACTION_CHOICES,
+    ids=[action for _label, action in ACTION_CHOICES],
+)
+def test_audit_list_model_action_cell_given_every_mapped_action_renders_its_label(
+    label: str, action: str
+) -> None:
+    """Every audited action renders the dropdown's own label."""
+    model = AuditListModel([_row(action=action)])
+
+    assert model.GetValueByRow(0, COL_ACTION) == label
 
 
 # ------------------------------------------------------------- Compare
@@ -223,10 +257,13 @@ class _CompareShell:
 
 # Column, a lower row, a higher row: each pair differs only in the
 # column under test, and the higher row must order after the lower one
-# under that column's rendered text (T-4 per-column coverage).
+# under that column's rendered text (T-4 per-column coverage). The
+# Action column sorts by the label its cell draws ("Edit Crossing"
+# before "Mark DNF"), exactly like every other column sorts by what is
+# on screen.
 ORDER_CASES = (
     (COL_WHEN, _row(when="10:00:00"), _row(when="10:00:01")),
-    (COL_ACTION, _row(action="dnf"), _row(action="edit_crossing")),
+    (COL_ACTION, _row(action="edit_crossing"), _row(action="dnf")),
     (COL_ENTRY, _row(entry="12"), _row(entry="34")),
     (COL_REASON, _row(reason="double entry"), _row(reason="mis-keyed time")),
 )
@@ -481,7 +518,7 @@ def test_show_audit_rows_given_rows_renders_every_cell_of_the_first_row() -> Non
         model.GetValueByRow(0, COL_ENTRY),
         model.GetValueByRow(0, COL_REASON),
     )
-    assert cells == ("10:02:00", "edit_crossing", "77", "mis-keyed")
+    assert cells == ("10:02:00", "Edit Crossing", "77", "mis-keyed")
 
 
 def test_show_audit_rows_given_rows_reapplies_the_default_sort() -> None:

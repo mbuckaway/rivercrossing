@@ -22,14 +22,21 @@ the engine afterwards, exactly like the section-C rows).
 
 Every form/confirm requires a non-empty ``reason``: the OK handler
 keeps the dialog open and refocuses ``reason_input`` when it is blank
-(``_bind_reason_gate``), so the engine's own empty-reason refusal is
-never the first line of defence in the UI. ``void_card_confirm_dlg``
-also shows that gate up front -- its OK starts disabled and enables on
-the first non-blank ``wx.EVT_TEXT`` (``_bind_reason_enable``).
-``dnf_confirm_dlg`` gates
-on its ``plate_input`` as well (``_bind_plate_gate``) -- its target is
-typed in, and a blank plate would otherwise reach the engine's own
-unknown-plate refusal instead of the form's.
+(``_bind_reason_gate``, or ``_bind_plate_gate`` for the DNF form,
+which also writes the refusal line), so the engine's own empty-reason
+refusal is never the first line of defence in the UI.
+``void_card_confirm_dlg`` also shows that gate up front -- its OK
+starts disabled and enables on the first non-blank ``wx.EVT_TEXT``
+(``_bind_reason_enable``).
+``dnf_confirm_dlg`` gates on its ``plate_input`` as well
+(``_bind_plate_gate``) -- its target is typed in, and the engine's own
+unknown-plate refusal must never be the first line of defence either.
+That gate needs a *real* target, not merely a non-blank one: the plate
+has to be digits (``_is_plate``; ``_bind_digits_only`` filters the
+keystrokes that get there) and resolve through the caller's roster
+(``Roster.resolve_plate``). Every refusal keeps the dialog open, focuses
+the offending field and says why on the dialog's own inline
+``entry_lbl`` -- the consequence line directly under the plate field.
 
 The move-rider "team picker" has no XRC dialog (spec §15b authors
 none); :func:`run_move_rider` builds a small native picker in code.
@@ -120,10 +127,12 @@ class CardVoid:
 class DnfMark:
     """One confirmed ``dnf_confirm_dlg`` submission (E7.2.1).
 
-    ``plate`` is whatever the operator typed into the dialog's
-    ``plate_input`` -- a pooled rider's own plate, or a whole entry's
-    plate -- and the engine's ``mark_dnf`` resolves the scope from the
-    roster; the dialog never decides which is which.
+    ``plate`` is the digits-only plate the operator typed into the
+    dialog's ``plate_input`` -- a pooled rider's own plate, or a whole
+    entry's plate, resolved through the roster before OK closes (the
+    engine's ``mark_dnf`` re-resolves the scope from that plate; the
+    dialog never decides which is which). ``reason`` is the confirmed
+    reason.
     """
 
     plate: str
@@ -195,7 +204,38 @@ def _picked_time(time_picker: Any, base_date: date) -> datetime:  # noqa: ANN401
     )
 
 
-# wx ships no stubs
+# A plate's alphabet: ASCII digits only. ``str.isdigit`` would also take
+# "²" and the Arabic-Indic digits -- characters no roster lookup could
+# answer -- so the check is pinned to what a plate is made of.
+def _is_plate(text: str) -> bool:
+    """Return whether *text* is a usable plate: digits, nothing else."""
+    return text.isascii() and text.isdigit()
+
+
+# wx reports the editing keys -- Backspace, Tab, Escape, the arrows --
+# as key codes below the space character, and Delete above it; both must
+# still reach the field. Digits arrive as their own ASCII key codes
+# ("0".."9"), compared as codes so a platform reporting something
+# outside the Unicode range can never raise inside a handler.
+_CONTROL_KEY_LIMIT = 32
+_FIRST_DIGIT_KEY = ord("0")
+_LAST_DIGIT_KEY = ord("9")
+
+
+def _plate_key_allowed(key_code: int) -> bool:
+    """Return whether ``plate_input`` may accept the typed *key_code*.
+
+    Digits are the plate's whole alphabet; the control keys that edit
+    and leave the field (and Delete, which wx reports above the space
+    character) pass too, so the operator is never trapped in it.
+    """
+    return (
+        key_code < _CONTROL_KEY_LIMIT
+        or key_code == wx.WXK_DELETE
+        or _FIRST_DIGIT_KEY <= key_code <= _LAST_DIGIT_KEY
+    )
+
+
 def _bind_reason_enable(dialog: Any, reason_input: Any) -> None:  # noqa: ANN401
     """Start OK disabled and enable it when the reason is non-blank.
 
@@ -235,27 +275,67 @@ def _bind_reason_gate(reason_input: Any) -> Callable[[], bool]:  # noqa: ANN401
     return _reason_present
 
 
-def _bind_plate_gate(
+def _bind_plate_gate(  # noqa: PLR0913, PLR0917 -- (plate, reason, label, resolve): the form's own parts
     plate_input: Any,  # noqa: ANN401 -- wx ships no stubs
     reason_input: Any,  # noqa: ANN401 -- wx ships no stubs
+    entry_lbl: Any,  # noqa: ANN401 -- wx ships no stubs
+    resolve: Callable[[str], object | None],
 ) -> Callable[[], bool]:
-    """Return a gate requiring BOTH the plate and the reason.
+    """Return a gate requiring a real target AND a reason.
 
     ``dnf_confirm_dlg`` is the one correction form whose target is
-    typed in, so its OK gate covers two fields: with either blank the
-    dialog stays open and focus lands on the missing one, and the
-    engine's own empty-reason/unknown-plate refusals are never the
-    first line of defence in the UI.
+    typed in, so its OK gate covers three things: the plate must be
+    digits (:func:`_is_plate` -- the ``wx.EVT_CHAR`` filter cannot see
+    a prefilled or pasted value), it must resolve through *resolve*
+    (``Roster.resolve_plate``), and the reason must be non-blank -- the
+    same rule the other forms get from :func:`_bind_reason_gate`. Every
+    refusal keeps the dialog open (the handler returns without
+    ``event.Skip()``, so wx's stock-OK auto-close never fires), lands
+    focus on the offending field, and writes why onto ``entry_lbl`` --
+    the inline line directly under the plate field -- so neither a
+    mistyped plate nor a blank reason can reach the engine, and the
+    operator is told which field to fix (UX-DESKTOP §9).
     """
-    reason_present = _bind_reason_gate(reason_input)
 
-    def _fields_present() -> bool:
-        if not plate_input.GetValue().strip():
-            plate_input.SetFocus()
-            return False
-        return reason_present()
+    def _refuse(message: str, focus: Any) -> bool:  # noqa: ANN401 -- wx ships no stubs
+        entry_lbl.SetLabel(message)
+        focus.SetFocus()
+        return False
 
-    return _fields_present
+    def _target_present() -> bool:
+        plate = plate_input.GetValue().strip()
+        if not plate:
+            return _refuse("Enter the rider plate.", plate_input)
+        if not _is_plate(plate):
+            return _refuse("The plate must be digits only.", plate_input)
+        if resolve(plate) is None:
+            return _refuse(f"Unknown plate {plate} — check the roster.", plate_input)
+        # The reason rule, plus the refusal line ``_bind_reason_gate``
+        # cannot write (it has no label): the operator is told which
+        # field to fix, not merely where focus went.
+        if not reason_input.GetValue().strip():
+            return _refuse("Enter a reason for the DNF.", reason_input)
+        return True
+
+    return _target_present
+
+
+def _bind_digits_only(plate_input: Any) -> None:  # noqa: ANN401 -- wx ships no stubs
+    """Let only digit keystrokes reach ``plate_input`` (``EVT_CHAR``).
+
+    The typed half of the plate rule: a key the field's alphabet does
+    not carry is consumed before the control sees it (no
+    ``event.Skip()``, wx's own way to drop one keystroke), so a stray
+    letter never lands in the field. :func:`_bind_plate_gate` remains
+    the other half -- a prefilled or pasted value never passes through
+    this event.
+    """
+
+    def _on_char(event: Any) -> None:  # noqa: ANN401 -- wx ships no stubs
+        if _plate_key_allowed(event.GetKeyCode()):
+            event.Skip()
+
+    plate_input.Bind(wx.EVT_CHAR, _on_char)
 
 
 def _bind_ok(dialog: Any, gate: Callable[[], bool], on_ok: Callable[[], None]) -> None:  # noqa: ANN401 -- wx ships no stubs
@@ -459,23 +539,29 @@ def run_void_card(  # noqa: PLR0913 -- (resource, frame, entry_id, card, entry)
             dialog.Destroy()
 
 
-def run_dnf(  # noqa: PLR0913 -- (resource, frame, plate, entry): the runner's fixed shape
+def run_dnf(  # noqa: PLR0913 -- (resource, frame, roster, plate, entry): the runner's fixed shape
     resource: Any,  # noqa: ANN401 -- wx ships no stubs
     *,
     frame: Any,  # noqa: ANN401 -- wx ships no stubs
+    roster: Roster,
     plate: str = "",
     entry: str = "",
 ) -> DnfMark | None:
     """Open ``dnf_confirm_dlg``; return the confirmed DNF mark.
 
     The dialog is a form: ``plate_input`` takes the rider plate (or a
-    whole entry's plate) and ``reason_input`` the reason, both
-    non-empty before OK closes it -- the same gate every correction
-    form applies. *plate* prefills the input (the entry-detail button
-    passes its own entry plate; the menu route passes nothing and the
-    operator types the plate). *entry* writes the ``entry_lbl``
-    naming sentence (``dialogs.dnf_message``) when a target is already
-    known; with none, XRC's own standing copy stays.
+    whole entry's plate) and ``reason_input`` the reason. Its OK gate
+    is the strictest of the four correction forms -- the plate must be
+    digits *and* resolve through *roster* (``Roster.resolve_plate``)
+    before the reason is even considered, and any refusal keeps the
+    dialog open with the reason shown on its ``entry_lbl``
+    (:func:`_bind_plate_gate`); the typed half of the plate rule is the
+    ``wx.EVT_CHAR`` digit filter (:func:`_bind_digits_only`). *plate*
+    prefills the input (the entry-detail button passes its own entry
+    plate; the menu route passes nothing and the operator types the
+    plate). *entry* writes the ``entry_lbl`` naming sentence
+    (``dialogs.dnf_message``) when a target is already known; with
+    none, XRC's own standing copy stays until a refusal replaces it.
     """
     dialog = load_dialog(resource, ids.DNF_CONFIRM_DLG)
     if dialog is None:
@@ -483,9 +569,11 @@ def run_dnf(  # noqa: PLR0913 -- (resource, frame, plate, entry): the runner's f
     try:
         plate_input = _find(dialog, ids.PLATE_INPUT)
         reason_input = _find(dialog, ids.REASON_INPUT)
+        entry_lbl = _find(dialog, ids.ENTRY_LBL)
         plate_input.SetValue(plate)
         if entry:
-            _find(dialog, ids.ENTRY_LBL).SetLabel(entry)
+            entry_lbl.SetLabel(entry)
+        _bind_digits_only(plate_input)
         confirmed: DnfMark | None = None
 
         def _commit() -> None:
@@ -495,7 +583,8 @@ def run_dnf(  # noqa: PLR0913 -- (resource, frame, plate, entry): the runner's f
                 reason=reason_input.GetValue().strip(),
             )
 
-        _bind_ok(dialog, _bind_plate_gate(plate_input, reason_input), _commit)
+        gate = _bind_plate_gate(plate_input, reason_input, entry_lbl, roster.resolve_plate)
+        _bind_ok(dialog, gate, _commit)
         result = _run_dialog(dialog, frame)
         return confirmed if result == wx.ID_OK else None
     finally:

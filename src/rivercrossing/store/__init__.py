@@ -496,6 +496,33 @@ def _audit_when(epoch: int) -> str:
     return datetime.fromtimestamp(epoch).strftime("%H:%M:%S")  # noqa: DTZ006
 
 
+def _audit_entry(action: str, payload: Mapping[str, object]) -> str:
+    """Return one stored audit row's Entry cell (E7.3.1).
+
+    A ``dnf`` row renders the display the engine recorded with the
+    mark -- the target's "plate · name"
+    (``data_source._audit_entry``'s live-ride twin) -- so the viewer
+    names the rider, never the internal entry id; a row stored before
+    the display was carried keeps the ``entry_id``/``plate`` fallback.
+    Every other action projects the payload's ``entry_id``, falling
+    back to ``plate``, then (for a roster plate change, whose payload
+    carries neither) ``old_plate``, ``new_plate`` and ``display_name``,
+    then ``""``.
+    """
+    if action == "dnf":
+        carried = payload.get("display")
+        if carried:
+            return str(carried)
+    return str(
+        payload.get("entry_id")
+        or payload.get("plate")
+        or payload.get("old_plate")
+        or payload.get("new_plate")
+        or payload.get("display_name")
+        or ""
+    )
+
+
 # The lifecycle actions that move the ride row's status column in the
 # same transaction as their audit row (spec §3's four states). Every
 # other action -- crossings, holds, corrections -- is an audit-only
@@ -1407,16 +1434,17 @@ class Store:
         The audit viewer's read accessor: every ``audit`` row the
         ride recorded, projected to the display
         :class:`~rivercrossing.ui.presenters.data_source.AuditRow`
-        shape the viewer's list draws -- ``entry`` = the payload's
+        shape the viewer's list draws -- ``entry`` = the display a
+        ``dnf`` row carried with its mark, else the payload's
         ``entry_id``, falling back to ``plate``, then (for a roster
         plate change, whose payload carries neither) ``old_plate``,
-        ``new_plate`` and ``display_name``, then ``""``, ``reason`` =
-        the payload's ``reason``, and ``when`` rendered
-        from the stored ``at`` epoch as local ``HH:MM:SS`` (spec §13:
-        stored UTC, displayed local). Newest first by insert id -- the
-        same order the viewer draws -- never by ``at``, which is not
-        monotonic in append order (module docstring's E5.1.2
-        resolution).
+        ``new_plate`` and ``display_name``, then ``""``
+        (:func:`_audit_entry`), ``reason`` = the payload's ``reason``,
+        and ``when`` rendered from the stored ``at`` epoch as local
+        ``HH:MM:SS`` (spec §13: stored UTC, displayed local). Newest
+        first by insert id -- the same order the viewer draws -- never
+        by ``at``, which is not monotonic in append order (module
+        docstring's E5.1.2 resolution).
 
         Args:
             ride_id: The ride whose audit trail to read.
@@ -1442,14 +1470,7 @@ class Store:
                 AuditRow(
                     when=_audit_when(audit_row["at"]),
                     action=audit_row["action"],
-                    entry=str(
-                        payload.get("entry_id")
-                        or payload.get("plate")
-                        or payload.get("old_plate")
-                        or payload.get("new_plate")
-                        or payload.get("display_name")
-                        or ""
-                    ),
+                    entry=_audit_entry(audit_row["action"], payload),
                     reason=str(payload.get("reason") or ""),
                 )
             )

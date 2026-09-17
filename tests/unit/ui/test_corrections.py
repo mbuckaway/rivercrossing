@@ -16,6 +16,12 @@ Three behaviours this workstream adds:
   plate field and hide the void button; the defaults preserve the
   existing menu callers' behaviour.
 
+The DNF dialog (``run_dnf``) is the fourth: its OK gate now needs a
+*real* target, so a keystroke filter passes only digit keys
+(``_plate_key_allowed``) and the gate refuses -- keeping the dialog
+open, focusing the offending field and writing why onto ``entry_lbl``
+-- a blank, non-digit or roster-unknown plate, or a blank reason.
+
 Every runner is driven against recording widget doubles -- no window
 is built and no desktop is taken. The toolkit boundaries the runners
 call (``load_dialog`` and the ``find_control`` lookup) are
@@ -33,6 +39,7 @@ import pytest
 import wx
 from defusedxml.ElementTree import parse
 
+from rivercrossing.roster import EntryMode, PlateModel, Rider, Roster
 from rivercrossing.ui import ids
 from rivercrossing.ui.views import corrections, dialogs
 
@@ -103,12 +110,13 @@ class _RecordingLabel:
 
 
 class _RecordingText:
-    """A ``wx.TextCtrl`` double recording value and enablement."""
+    """A ``wx.TextCtrl`` double recording value and focus."""
 
     def __init__(self, value: str = "") -> None:
         """Start holding *value*, with no enablement applied."""
         self._value = value
         self.enabled: bool | None = None
+        self.focuses = 0
 
     def GetValue(self) -> str:  # noqa: N802 -- wx API name the SUT calls
         """Return the field's current text."""
@@ -123,8 +131,44 @@ class _RecordingText:
         self.enabled = enabled
 
     def SetFocus(self) -> None:  # noqa: N802 -- wx API name the SUT calls
-        """No-op; the reason gate refocuses the field it is given."""
-        return
+        """Record the focus a gate applied to the field it refused."""
+        self.focuses += 1
+
+
+class _KeyEvent:
+    """A ``wx.KeyEvent`` double carrying one key code and its skip."""
+
+    def __init__(self, key_code: int) -> None:
+        """Start on *key_code*, before the handler ran."""
+        self._key_code = key_code
+        self.skipped = False
+
+    def GetKeyCode(self) -> int:  # noqa: N802 -- wx API name the double mirrors
+        """Return the typed key code."""
+        return self._key_code
+
+    def Skip(self) -> None:  # noqa: N802 -- wx API name the double mirrors
+        """Record that the handler let the event continue."""
+        self.skipped = True
+
+
+class _RecordingPlateInput(_RecordingText):
+    """A plate field double recording its ``EVT_CHAR`` bind."""
+
+    def __init__(self, value: str = "") -> None:
+        """Start holding *value*, with no key handler bound."""
+        super().__init__(value)
+        self.char_handlers: list[Callable[[object], None]] = []
+
+    def Bind(self, _event_type: object, handler: Callable[[object], None]) -> None:  # noqa: N802
+        """Record the handler the runner bound to ``EVT_CHAR``."""
+        self.char_handlers.append(handler)
+
+    def press(self, key_code: int) -> _KeyEvent:
+        """Fire the bound handler with *key_code*, as typing would."""
+        event = _KeyEvent(key_code)
+        self.char_handlers[0](event)
+        return event
 
 
 class _RecordingReasonInput(_RecordingText):
@@ -217,6 +261,16 @@ class _EditCrossingDoubles(NamedTuple):
     dialog: _StubDialog
     plate_input: _RecordingText
     void_btn: _RecordingButton
+    ok_btn: _RecordingButton
+
+
+class _DnfDoubles(NamedTuple):
+    """The doubles one ``run_dnf`` run touches."""
+
+    dialog: _StubDialog
+    plate_input: _RecordingPlateInput
+    reason_input: _RecordingReasonInput
+    entry_lbl: _RecordingLabel
     ok_btn: _RecordingButton
 
 
@@ -603,6 +657,258 @@ def test_run_edit_crossing_given_the_two_void_flags_sets_the_buttons_state(  # n
         doubles.void_btn.enabled,
         len(doubles.void_btn.handlers),
     ) == expected
+
+
+# --------------------------------------------------------- run_dnf
+#
+# The DNF dialog is the one correction form whose target is typed in,
+# so its OK gate has to refuse a plate that is blank, not a number, or
+# no entry on the roster, as well as a blank reason -- and say why on
+# the dialog's own inline line (``entry_lbl``, the consequence line
+# directly under the field) rather than let the engine's unknown-plate
+# refusal be the first line of defence. The keystroke filter is the
+# typing half of that rule; the gate is the other half, because a
+# prefilled or pasted value never passes through ``wx.EVT_CHAR``.
+
+_PLATE_REFUSED_EMPTY = "Enter the rider plate."
+_PLATE_REFUSED_NOT_DIGITS = "The plate must be digits only."
+_PLATE_REFUSED_UNKNOWN = "Unknown plate 404 — check the roster."
+_REASON_REFUSED_EMPTY = "Enter a reason for the DNF."
+
+
+def _dnf_roster() -> Roster:
+    """Build a roster holding solo 12 and a pooled team (45, 9)."""
+    roster = Roster(entry_mode=EntryMode.MIXED, plate_model=PlateModel.RIDER_POOLED)
+    roster.create_solo_entry(first_name="J.", last_name="Okafor", plate="12")
+    roster.create_team_entry(
+        display_name="Dirt Dynamos",
+        riders=[
+            Rider(first_name="Alex", last_name="Smith", plate="45"),
+            Rider(first_name="Bo", last_name="Jones", plate="9"),
+        ],
+    )
+    return roster
+
+
+def _dnf_harness(  # noqa: PLR0913 -- the scripted run's own shape
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    result: int = wx.ID_CANCEL,
+    plate: str = "12",
+    reason: str = "",
+) -> _DnfDoubles:
+    """Build the DNF dialog's doubles, wired into the runner.
+
+    ``_run_dialog`` is stubbed (never ``dialogs.run_dialog``), so the
+    recorded-defaults step never looks a control up in the double; it
+    clicks OK -- as the operator would -- when *result* is ``wx.ID_OK``
+    and then answers *result*.
+    """
+    dialog = _StubDialog(ids.DNF_CONFIRM_DLG)
+    plate_input = _RecordingPlateInput(plate)
+    reason_input = _RecordingReasonInput(reason)
+    entry_lbl = _RecordingLabel()
+    ok_btn = _RecordingButton()
+    _patch_load(monkeypatch, dialog)
+    _patch_controls(
+        monkeypatch,
+        {
+            ids.PLATE_INPUT: plate_input,
+            ids.REASON_INPUT: reason_input,
+            ids.ENTRY_LBL: entry_lbl,
+            "wxID_OK": ok_btn,
+        },
+    )
+
+    def _run(_dialog: object, _frame: object) -> int:
+        if result == wx.ID_OK:
+            ok_btn.click()
+        return result
+
+    monkeypatch.setattr(corrections, "_run_dialog", _run)
+    return _DnfDoubles(dialog, plate_input, reason_input, entry_lbl, ok_btn)
+
+
+def _open_dnf(*, plate: str = "12", entry: str = "") -> corrections.DnfMark | None:
+    """Open the DNF dialog through the runner under test.
+
+    The roster is a real (wx-free) :class:`Roster` -- the gate's own
+    resolution seam -- so nothing here is mocked (T-10).
+    """
+    return corrections.run_dnf(
+        object(), frame=object(), roster=_dnf_roster(), plate=plate, entry=entry
+    )
+
+
+def test_run_dnf_given_a_resolvable_plate_and_reason_returns_the_mark(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A digit plate the roster answers plus a reason commits."""
+    doubles = _dnf_harness(monkeypatch, result=wx.ID_OK, plate="12", reason="mechanical failure")
+
+    result = _open_dnf()
+
+    assert result == corrections.DnfMark(plate="12", reason="mechanical failure")
+    assert (doubles.dialog.modal_ids, doubles.entry_lbl.label) == ([wx.ID_OK], "")
+
+
+def test_run_dnf_given_a_pooled_riders_own_plate_accepts_it(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A team member's own number resolves through the roster too."""
+    _dnf_harness(monkeypatch, result=wx.ID_OK, plate="45", reason="mechanical failure")
+
+    result = _open_dnf(plate="45")
+
+    assert result == corrections.DnfMark(plate="45", reason="mechanical failure")
+
+
+def test_run_dnf_given_a_blank_plate_keeps_the_dialog_open(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """T-4 empty: no plate, no close -- and the field says so."""
+    doubles = _dnf_harness(monkeypatch, result=wx.ID_OK, plate="", reason="mechanical failure")
+
+    result = _open_dnf(plate="")
+
+    assert (result, doubles.dialog.modal_ids) == (None, [])
+    assert doubles.entry_lbl.label == _PLATE_REFUSED_EMPTY
+    assert doubles.plate_input.focuses == 1
+
+
+def test_run_dnf_given_a_non_digit_plate_keeps_the_dialog_open(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A prefilled non-numeric plate is refused, not sent on."""
+    doubles = _dnf_harness(monkeypatch, result=wx.ID_OK, plate="K1", reason="mechanical failure")
+
+    result = _open_dnf(plate="K1")
+
+    assert (result, doubles.dialog.modal_ids) == (None, [])
+    assert doubles.entry_lbl.label == _PLATE_REFUSED_NOT_DIGITS
+    assert doubles.plate_input.focuses == 1
+
+
+def test_run_dnf_given_an_unknown_plate_keeps_the_dialog_open(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """T-3 negative: digits the roster does not answer are refused."""
+    doubles = _dnf_harness(monkeypatch, result=wx.ID_OK, plate="404", reason="mechanical failure")
+
+    result = _open_dnf(plate="404")
+
+    assert (result, doubles.dialog.modal_ids) == (None, [])
+    assert doubles.entry_lbl.label == _PLATE_REFUSED_UNKNOWN
+    assert doubles.plate_input.focuses == 1
+
+
+def test_run_dnf_given_a_blank_reason_keeps_the_dialog_open(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A real target still needs a reason; the field takes focus."""
+    doubles = _dnf_harness(monkeypatch, result=wx.ID_OK, plate="12")
+
+    result = _open_dnf()
+
+    assert (result, doubles.dialog.modal_ids) == (None, [])
+    assert doubles.entry_lbl.label == _REASON_REFUSED_EMPTY
+    assert (doubles.reason_input.focuses, doubles.plate_input.focuses) == (1, 0)
+
+
+def test_run_dnf_given_an_entry_prefill_writes_the_entry_label(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A known target's naming sentence lands on ``entry_lbl``."""
+    doubles = _dnf_harness(monkeypatch)
+
+    _open_dnf(entry="9 · Dirt Dynamos")
+
+    assert doubles.entry_lbl.label == "9 · Dirt Dynamos"
+
+
+def test_run_dnf_given_a_plate_binds_its_keystroke_filter_once(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The plate field filters keystrokes as the operator types."""
+    doubles = _dnf_harness(monkeypatch)
+
+    _open_dnf()
+
+    assert len(doubles.plate_input.char_handlers) == 1
+
+
+@pytest.mark.parametrize(
+    ("key_code", "expected"),
+    [(ord("5"), True), (ord("A"), False)],
+    ids=["digit_allowed", "letter_swallowed"],
+)
+def test_run_dnf_given_a_keystroke_lets_the_bound_filter_decide(
+    monkeypatch: pytest.MonkeyPatch, key_code: int, *, expected: bool
+) -> None:
+    """The bound handler skips a digit key, consumes the rest."""
+    doubles = _dnf_harness(monkeypatch)
+    _open_dnf()  # arrange: the runner binds the filter under test
+
+    event = doubles.plate_input.press(key_code)
+
+    assert event.skipped is expected
+
+
+_PLATE_KEY_CASES = (
+    (0, True),  # the lowest key code wx reports
+    (8, True),  # Backspace: below the control limit
+    (31, True),  # T-4: control limit - 1
+    (32, False),  # T-4: control limit (space) -- not a plate character
+    (47, False),  # "/": one under "0"
+    (48, True),  # "0"
+    (57, True),  # "9"
+    (58, False),  # ":": one past "9"
+    (65, False),  # "A"
+    (wx.WXK_DELETE, True),  # Delete still edits the field
+)
+_PLATE_KEY_CASE_IDS = (
+    "control_low",
+    "backspace",
+    "control_max",
+    "space",
+    "slash",
+    "zero",
+    "nine",
+    "colon",
+    "letter",
+    "delete",
+)
+
+
+@pytest.mark.parametrize(("key_code", "expected"), _PLATE_KEY_CASES, ids=_PLATE_KEY_CASE_IDS)
+def test_plate_key_allowed_given_a_key_code_accepts_digits_and_control_keys(
+    key_code: int, *, expected: bool
+) -> None:
+    """T-4 boundaries: the plate's alphabet plus the editing keys."""
+    assert corrections._plate_key_allowed(key_code) is expected
+
+
+def test_run_dnf_given_a_cancelled_dialog_returns_none(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """T-3 negative: Cancel returns no submission."""
+    doubles = _dnf_harness(monkeypatch, plate="12", reason="mechanical failure")
+
+    result = _open_dnf()
+
+    assert (result, doubles.dialog.destroyed) == (None, True)
+
+
+def test_run_dnf_given_an_unauthored_dialog_returns_none(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """T-3 negative: a dialog no .xrc authors loads nothing."""
+    _patch_load(monkeypatch, None)
+    monkeypatch.setattr(corrections, "find_control", _refuse_lookup)
+
+    result = _open_dnf()
+
+    assert result is None
 
 
 # ------------------------------------- the restructured .xrc top

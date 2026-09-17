@@ -2913,46 +2913,87 @@ def _handle_deal_manual_route(context: _RouteContext) -> None:
     )
 
 
-def _dnf_notice(roster: Roster, plate: str) -> str:
-    """Compose the Mark DNF… status notice for *plate*.
+def _dnf_subject(roster: Roster, plate: str) -> str | None:
+    """Compose the "plate · name (team|solo)" line naming *plate*.
 
-    The engine's own scope rule decides what the row just marked: a
-    plate naming a pooled team member is that member's own mark, so the
-    notice names the rider; every other plate -- a solo entry's, or a
+    The engine's own scope rule decides what a plate marks: a plate
+    naming a pooled team member is that member's own mark, so the line
+    names the rider; every other plate -- a solo entry's, or a
     relay team's, whose riders carry none (S1) -- marks the whole entry,
     so it names the entry. The parenthetical carries the team's name
     for a team row and reads "solo" for a solo entry, which has no team
-    to name. A plate no entry names keeps the row's generic notice.
+    to name. ``None`` when no entry answers the plate: the notice keeps
+    its generic copy and the route refuses the mark.
+
+    This is the one line the notice and the confirmation name the
+    target with (``dialogs.dnf_message`` builds the same sentence), so
+    what the operator confirms is exactly what the status bar then
+    reports.
     """
     entry = roster.resolve_plate(plate)
     if entry is None:
-        return "DNF marked"
+        return None
     is_team = entry.type is EntryType.TEAM
     member = next((rider for rider in entry.riders if rider.plate == plate), None)
     name = member.full_name if is_team and member is not None else entry.display_name
     label = entry.display_name if is_team else "solo"
-    return f"{plate} · {name} ({label}) — DNF"
+    return f"{plate} · {name} ({label})"
+
+
+def _dnf_notice(roster: Roster, plate: str) -> str:
+    """Compose the Mark DNF… status notice for *plate* (E7.2.1).
+
+    The naming line :func:`_dnf_subject` builds, with the DNF verdict
+    appended; a plate no entry names -- impossible through the dialog,
+    whose gate resolves it first -- keeps the row's generic notice.
+    """
+    subject = _dnf_subject(roster, plate)
+    return f"{subject} — DNF" if subject is not None else "DNF marked"
 
 
 def _handle_mark_dnf_route(context: _RouteContext) -> None:
-    """Riders ▸ Mark DNF…: dnf_confirm_dlg, then mark the typed target.
+    """Riders ▸ Mark DNF…: name the target, confirm, then mark it.
 
     Phase 3 makes this row self-sufficient: the dialog's ``plate_input``
     asks for the rider plate (or a whole entry's plate), so no entry
-    has to be open first. The engine's ``mark_dnf`` decides whether the
-    plate scopes to one pooled rider or to the whole entry; the notice
-    :func:`_dnf_notice` builds names whichever it was.
+    has to be open first, and the dialog's own gate refuses a plate no
+    entry answers before this handler runs. Phase 5 adds the second
+    half of UX-DESKTOP §4: the resolved target is named back -- the
+    same "plate · name (team|solo)" sentence the notice uses -- in a
+    non-destructive native confirm before anything is marked, so a
+    valid-but-wrong plate is caught here rather than in the audit
+    trail. Cancel, an unknown plate and the engine's own refusal all
+    mark nothing.
     """
     engine = _correction_engine(context)
     if engine is None:
         context.frame.SetStatusText("Mark DNF… — no ride open")
         return
+    from rivercrossing.ui import std_dialogs  # noqa: PLC0415 -- deferred, see module docstring
     from rivercrossing.ui.views import (  # noqa: PLC0415 -- deferred, see module docstring
         corrections,
     )
 
-    dnf = corrections.run_dnf(context.resource, frame=context.frame, plate="", entry="")
+    dnf = corrections.run_dnf(
+        context.resource,
+        frame=context.frame,
+        roster=context.roster,
+        plate="",
+        entry="",
+    )
     if dnf is None:
+        return
+    subject = _dnf_subject(context.roster, dnf.plate)
+    if subject is None:
+        # The dialog's own gate refuses this, so only a roster that
+        # changed under it lands here: refuse rather than prompt for a
+        # target the engine would not find either.
+        context.frame.SetStatusText(f"Mark DNF… — unknown plate {dnf.plate}")
+        return
+    question = f"{subject}\n\nMark this target DNF and exclude it from the results?"
+    if std_dialogs.show_prompt(context.frame, "Mark DNF", question, "Mark DNF", "Cancel") != int(
+        require_wx().ID_OK
+    ):
         return
     _apply_correction(
         context,

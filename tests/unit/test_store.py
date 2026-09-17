@@ -3091,6 +3091,63 @@ def test_store_audit_rows_entry_falls_back_through_plate_change_payload_keys(
     assert [row.entry for row in rows] == ["Trail Blazers", "77", "12"]
 
 
+def test_store_audit_rows_given_a_dnf_row_renders_the_carried_display(
+    tmp_path: Path,
+) -> None:
+    """A dnf row names the marked rider, never the bare entry id."""
+    db_path = tmp_path / "rides.db"
+    store = Store.open(db_path)
+    try:
+        ride_id = store.create_ride(_config(min_lap_s=1))
+        store.append(
+            ride_id,
+            Event(
+                action="dnf",
+                payload={
+                    "entry_id": "9",
+                    "plate": "45",
+                    "rider": True,
+                    "reason": "mechanical failure",
+                    "display": "45 · Sarah",
+                },
+            ),
+        )
+
+        rows = store.audit_rows(ride_id)
+    finally:
+        store.close()
+
+    assert rows[0].entry == "45 · Sarah"
+
+
+def test_store_audit_rows_given_a_dnf_row_without_a_display_falls_back(
+    tmp_path: Path,
+) -> None:
+    """T-4 nullable: a stored row predating the display keeps its id."""
+    db_path = tmp_path / "rides.db"
+    store = Store.open(db_path)
+    try:
+        ride_id = store.create_ride(_config(min_lap_s=1))
+        store.append(
+            ride_id,
+            Event(
+                action="dnf",
+                payload={
+                    "entry_id": "9",
+                    "plate": "45",
+                    "rider": True,
+                    "reason": "mechanical failure",
+                },
+            ),
+        )
+
+        rows = store.audit_rows(ride_id)
+    finally:
+        store.close()
+
+    assert rows[0].entry == "9"
+
+
 def test_store_load_engine_ignores_a_roster_plate_change_row(tmp_path: Path) -> None:
     """Replay skips a plate-change row: ``apply`` never sees it."""
     db_path = tmp_path / "rides.db"

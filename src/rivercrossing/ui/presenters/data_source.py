@@ -204,7 +204,9 @@ class RiderRow:
     drawn by the lists that carry those columns (the console's
     ``console_riders_list`` adds Cards; the editor stops at Sex), so
     both default to the empty value a list without the column leaves
-    them at.
+    them at. ``dnf`` marks a rider -- or a whole entry -- that is out
+    of the results, which both lists render as a plain ``" DNF"``
+    suffix on the Name cell (:mod:`rivercrossing.ui.rider_columns`).
     """
 
     plate: str
@@ -212,6 +214,7 @@ class RiderRow:
     team: str | None = None
     sex: str | None = None
     cards: tuple[str, ...] = ()
+    dnf: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -400,6 +403,26 @@ def _event_time(event: Event) -> str:
                 WARN(f"audit event {event.action!r} has a malformed {key} timestamp: {value!r}")
                 return ""
     return ""
+
+
+def _audit_entry(event: Event) -> str:
+    """Return the Entry cell one audit row shows for *event*.
+
+    A ``dnf`` event carries the marked target's human display -- the
+    engine resolved it when the mark was made (``ride.py``'s
+    ``_record_dnf``, "plate · name") -- so the trail names the rider or
+    entry the row is about, never the internal entry id; a payload
+    without it (an event recorded before the display was carried, or a
+    hand-written one) keeps the plain ``entry_id``/``plate`` reading,
+    exactly like the store-backed projection
+    (``store.audit_rows``). Every other action reads those two keys and
+    nothing else.
+    """
+    if event.action == "dnf":
+        carried = event.payload.get("display")
+        if carried:
+            return str(carried)
+    return str(event.payload.get("entry_id") or event.payload.get("plate") or "")
 
 
 # E7.3.2: the audited correction actions whose arrival after an export
@@ -887,11 +910,21 @@ class EngineDataSource:
         never credited and so never shows. A solo entry's row takes
         the one rider's sex -- the roster always gives a solo entry
         exactly one rider.
+
+        Phase 5: every row also carries the DNF bit the two lists mark
+        a row with -- the entry's own verdict
+        (:meth:`RideEngine.entry_is_dnf`: a solo/relay entry's status,
+        or a pooled team every one of whose riders is out) or, for a
+        pooled team member, their own plate in
+        :attr:`RideEngine.dnf_riders`. A solo entry's DNF is always the
+        entry's (its rider is never scoped on their own), so the
+        verdict is that row's whole rule.
         """
         engine = self._engine
         rows: list[RiderRow] = []
         for entry in self._roster.entries:
             cards = tuple(card.code() for card in engine.credited_cards(entry.plate))
+            entry_dnf = engine.entry_is_dnf(entry)
             if entry.type is EntryType.TEAM:
                 rows.extend(
                     RiderRow(
@@ -900,6 +933,8 @@ class EngineDataSource:
                         team=entry.display_name,
                         sex=rider.sex,
                         cards=cards,
+                        dnf=entry_dnf
+                        or (rider.plate is not None and rider.plate in engine.dnf_riders),
                     )
                     for rider in entry.riders
                 )
@@ -910,6 +945,7 @@ class EngineDataSource:
                         name=entry.display_name,
                         sex=entry.riders[0].sex,
                         cards=cards,
+                        dnf=entry_dnf,
                     )
                 )
         return rows
@@ -970,13 +1006,15 @@ class EngineDataSource:
 
         ``reason`` is the event payload's own, so a live ride's trail
         reads exactly what the store-backed one projects from the
-        persisted payloads (scope 6d).
+        persisted payloads (scope 6d). A ``dnf`` row's Entry cell is
+        the target's carried display (:func:`_audit_entry`), never the
+        bare entry id.
         """
         return [
             AuditRow(
                 when=_event_time(event),
                 action=event.action,
-                entry=str(event.payload.get("entry_id") or event.payload.get("plate") or ""),
+                entry=_audit_entry(event),
                 reason=str(event.payload.get("reason") or ""),
             )
             for event in reversed(self._engine.events)

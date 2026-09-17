@@ -610,6 +610,7 @@ def test_mark_dnf_audits_entry_plate_scope_and_reason() -> None:
             "plate": "12",
             "rider": False,
             "reason": "mechanical failure",
+            "display": "12 · Rider 12",
         },
     )
     assert len(engine.events) == before + 1
@@ -644,6 +645,7 @@ def test_mark_dnf_pooled_rider_plate_marks_that_rider_not_the_team() -> None:
         "plate": "45",
         "rider": True,
         "reason": "mechanical failure",
+        "display": "45 · Sarah",
     }
     results = {entry.plate: entry for entry in engine.snapshot()}
     assert results["9"].dnf is False
@@ -670,6 +672,7 @@ def test_mark_dnf_relay_team_plate_marks_the_whole_entry() -> None:
         "plate": "77",
         "rider": False,
         "reason": "mechanical failure",
+        "display": "77 · Trail Blazers",
     }
     results = {result.plate: result for result in engine.snapshot()}
     assert results["77"].dnf is True
@@ -945,7 +948,35 @@ def test_apply_dnf_event_marks_the_entry() -> None:
 
     results = {entry.plate: entry for entry in engine.snapshot()}
     assert results["12"].dnf is True
-    assert engine.events[-1] == event
+    assert engine.events[-1].payload == {**event.payload, "display": "12 · Rider 12"}
+
+
+def test_apply_dnf_event_given_an_audit_only_display_ignores_it() -> None:
+    """Replay reads the four state keys only: the display is audit-only.
+
+    A persisted row's ``display`` is never fed back into the engine's
+    state (``apply`` re-derives it from the roster it loaded), so a
+    payload whose display says anything at all still replays to the
+    same DNF mark.
+    """
+    engine, _ = _make_engine()
+    engine.start(at=_dt(10, 0))
+    event = Event(
+        action="dnf",
+        payload={
+            "entry_id": "12",
+            "plate": "12",
+            "rider": False,
+            "reason": "mechanical failure",
+            "display": "999 · Nobody",
+        },
+    )
+
+    engine.apply(event)
+
+    results = {entry.plate: entry for entry in engine.snapshot()}
+    assert results["12"].dnf is True
+    assert engine.events[-1].payload["display"] == "12 · Rider 12"
 
 
 def test_apply_dnf_rider_event_marks_the_rider_scope_from_the_payload() -> None:

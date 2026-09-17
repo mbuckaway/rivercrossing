@@ -2208,9 +2208,13 @@ class RideEngine:
         persisted ``dnf`` event: *rider* True records the member's own
         plate in the per-rider set, False writes the entry's status.
         Both scopes audit the same payload shape -- the plate, the
-        entry it belongs to, the scope and the reason -- so replay
-        rebuilds the identical state without re-deriving the scope from
-        the roster.
+        entry it belongs to, the scope, the reason and the marked
+        target's human display -- so replay rebuilds the identical
+        state without re-deriving the scope from the roster.
+        ``display`` is for the audit trail alone (the trail names the
+        rider, never the internal entry id): :meth:`apply` reads the
+        other four keys and re-derives a display of its own, so the
+        extra key can never move the state it replays onto.
         """
         if rider:
             self._dnf_riders.add(plate)
@@ -2219,6 +2223,12 @@ class RideEngine:
             # (module docstring), and the member must be a real StrEnum
             # -- the store's save_roster reads ``entry.status.value``.
             entry.status = type(entry.status)("dnf")
+        # The marked rider's own plate and name, or -- for a whole-entry
+        # mark, whose riders may carry no plate at all (S1) -- the
+        # entry's. The same "plate · name" sentence the DNF dialog names
+        # its target with (ui.views.dialogs.dnf_message).
+        member = next((item for item in entry.riders if item.plate == plate), None)
+        name = member.full_name if member is not None else entry.display_name
         return self._append(
             Event(
                 action="dnf",
@@ -2227,6 +2237,7 @@ class RideEngine:
                     "plate": plate,
                     "rider": rider,
                     "reason": reason,
+                    "display": f"{plate} · {name}",
                 },
             )
         )
@@ -2846,7 +2857,9 @@ class RideEngine:
             # by plate like every other replayed subject, but whether
             # the mark was a rider's or the entry's is never re-derived
             # from the roster: a rider DNF has no roster column to come
-            # back from, and a member may have changed teams since.
+            # back from, and a member may have changed teams since. The
+            # payload's audit-only ``display`` is never read either: the
+            # replayed event re-derives its own.
             self._record_dnf(
                 self._require_entry(str(event.payload["entry_id"])),
                 plate=str(event.payload["plate"]),
