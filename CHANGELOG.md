@@ -8,6 +8,8 @@ All notable changes to RiverCrossing are recorded here. The format follows
 
 ### Changed
 
+- **Crossings list default sort** — the feed now opens sorted by Time **descending**, so the newest
+  crossing is at the top of the list (it opened Time ascending).
 - **Crossing Detail** — OK always closes the dialog without validating or changing anything. A miss
   is scored through Edit, whose Save assigns the plate immediately (the Cancel button is gone), and
   the dialog opens with a taller floor so a refusal and the content both fit.

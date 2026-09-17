@@ -191,11 +191,11 @@ CROSSINGS_SEARCH = ids.CROSSINGS_SEARCH
 # must be spelled out or macOS sets NSTableColumnNoResizing.
 FEED_COLUMN_FLAGS = wx.dataview.DATAVIEW_COL_SORTABLE | wx.dataview.DATAVIEW_COL_RESIZABLE
 
-# The feed's opening sort (Phase 4): Time ascending, so the first row is
-# the first crossing of the ride (elapsed 0) and the list reads as the
-# ride clock. Re-applied by ``_apply_feed_sort`` after every rebuild;
-# an operator's header click replaces it (``_on_feed_column_sorted``).
-DEFAULT_FEED_SORT: tuple[int, bool] = (feed_model.COL_TIME, True)
+# The feed's opening sort (Phase 4): Time descending, so the newest
+# crossing sits at the top of the list (the operator's reading order).
+# Re-applied by ``_apply_feed_sort`` after every rebuild; an operator's
+# header click replaces it (``_on_feed_column_sorted``).
+DEFAULT_FEED_SORT: tuple[int, bool] = (feed_model.COL_TIME, False)
 
 # Phase 6: F2 opens the selected feed row's Crossing Detail. main.xrc's
 # menu map has no mi_* row for "edit crossing" (accelerators.
@@ -1241,8 +1241,8 @@ class MainFrame(DialogFindMixin):  # _find: ui.views._support, over self.frame
         for sorting") and aborts the process there.
 
         Unlike the riders tab's own sort, this one always applies: the
-        feed opens sorted by Time ASCENDING (the ride's own reading
-        order), so there is no "nothing sorted yet" state.
+        feed opens sorted by Time DESCENDING (newest crossing first),
+        so there is no "nothing sorted yet" state.
         """
         model = self._crossings_model
         if model is None:
