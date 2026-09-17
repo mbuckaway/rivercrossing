@@ -91,9 +91,9 @@ __all__ = [
     "FLAG_COLUMN_WIDTHS",
     "FLAG_COL_CARD",
     "FLAG_COL_LAP",
+    "FLAG_COL_LAP_TIME",
     "FLAG_COL_PLATE",
     "FLAG_COL_RIDER",
-    "FLAG_COL_TEAM",
     "MAX_CURRENT_LAP",
     "MIN_SIZE",
     "NEEDS_REVIEW_PAGE_LABEL",
@@ -246,24 +246,24 @@ RIDERS_COLUMN_WIDTHS: tuple[int, ...] = (80, 160, 80, 80, 80)
 # Issue column names why the row entered review; the Card column
 # carries its disposition (held/credited/voided), so the Issue cell
 # never repeats the hold; the other four identify the crossing
-# (Plate | Lap | Rider | Team). Unlike the feed, this list is not
+# (Plate | Lap | Lap time | Rider). Unlike the feed, this list is not
 # sortable -- it renders one review pass in the source's own order.
 FLAG_COL_ISSUE = 0
 FLAG_COL_CARD = 1
 FLAG_COL_PLATE = 2
 FLAG_COL_LAP = 3
-FLAG_COL_RIDER = 4
-FLAG_COL_TEAM = 5
-FLAG_COLUMN_LABELS: tuple[str, ...] = ("Issue", "Card", "Plate", "Lap", "Rider", "Team")
+FLAG_COL_LAP_TIME = 4
+FLAG_COL_RIDER = 5
+FLAG_COLUMN_LABELS: tuple[str, ...] = ("Issue", "Card", "Plate", "Lap", "Lap time", "Rider")
 
 # One width per FLAG_COLUMN_LABELS entry, in that order, so no cell
 # truncates at the default window size: 136 fits the "Duplicate
 # crossing" Issue text, 76 the "Credited" Card word, 64 a "9999"
-# plate, 52 a "999" lap, 256 the longest demo rider name, and 136 a
-# 15-character team name. DataView columns have no
-# autosize-to-content (xrc-windows.md's code-side list), so the widths
-# are pinned data here and applied by ``_build_flagged_columns``.
-FLAG_COLUMN_WIDTHS: tuple[int, ...] = (136, 76, 64, 52, 256, 136)
+# plate, 52 a "999" lap, 48 a "0:05" lap time, and 256 the longest
+# demo rider name. DataView columns have no autosize-to-content
+# (xrc-windows.md's code-side list), so the widths are pinned data
+# here and applied by ``_build_flagged_columns``.
+FLAG_COLUMN_WIDTHS: tuple[int, ...] = (136, 76, 64, 52, 48, 256)
 
 # start_blocked_dlg's one column (Phase 5): the blocked-start issue
 # list, one reason per row.
@@ -429,8 +429,8 @@ class FlaggedListModel(wx.dataview.DataViewIndexListModel):  # type: ignore[misc
 
     The review notebook's "Needs Review" tab: one row per short-lap
     flag -- or duplicate pair -- (the rows the console feed bolds or
-    lists), showing Issue | Card | Plate | Lap | Rider | Team. Rows
-    are supplied fresh each ``show_flagged``, exactly like
+    lists), showing Issue | Card | Plate | Lap | Lap time | Rider.
+    Rows are supplied fresh each ``show_flagged``, exactly like
     :class:`CrossingsFeedModel`'s own rebuild-per-show pattern. The
     Issue column names why each row is here
     (``feed_model.review_issue``) and the Card column its disposition
@@ -469,9 +469,9 @@ class FlaggedListModel(wx.dataview.DataViewIndexListModel):  # type: ignore[misc
             return flagged_row.plate
         if col == FLAG_COL_LAP:
             return str(flagged_row.lap)
-        if col == FLAG_COL_RIDER:
-            return flagged_row.entry
-        return flagged_row.team
+        if col == FLAG_COL_LAP_TIME:
+            return flagged_row.lap_time
+        return flagged_row.entry
 
     def card_status_for_row(self, row: int) -> str:
         """Return *row*'s card disposition token (plan §6).
@@ -1040,9 +1040,9 @@ class MainFrame(DialogFindMixin):  # _find: ui.views._support, over self.frame
         """Append the flagged list's six columns (WS-H).
 
         One column per :data:`FLAG_COLUMN_LABELS` entry -- Issue |
-        Card | Plate | Lap | Rider | Team -- each pinned to its own
-        :data:`FLAG_COLUMN_WIDTHS` entry, so a long Issue cell never
-        squeezes the identity cells beside it.
+        Card | Plate | Lap | Lap time | Rider -- each pinned to its
+        own :data:`FLAG_COLUMN_WIDTHS` entry, so a long Issue cell
+        never squeezes the identity cells beside it.
         """
         return tuple(
             self.flagged_list.AppendTextColumn(label, col, width=FLAG_COLUMN_WIDTHS[col])
