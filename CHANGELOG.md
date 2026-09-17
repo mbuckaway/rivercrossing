@@ -4,6 +4,23 @@ All notable changes to RiverCrossing are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versioning follows
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- **Crossing Detail** — OK always closes the dialog without validating or changing anything. A miss
+  is scored through Edit, whose Save assigns the plate immediately (the Cancel button is gone), and
+  the dialog opens with a taller floor so a refusal and the content both fit.
+- **Needs Review columns** — now Issue | Card | Plate | Lap | Lap time | Rider: the lap-time column
+  is restored at 48 px and the Team column is dropped.
+
+### Fixed
+
+- **Console status line** — recording a plate now confirms it (`Recorded plate N`, or the flagged
+  variant), so a stale "Unknown plate" notice no longer lingers.
+- **Rider Simulator** — a GO the engine blocks now shows the reasons instead of closing silently,
+  and the console re-renders to RUNNING/STOPPED when the run ends rather than staying on DRAFT.
+
 ## [1.0.20] - 2026-09-16
 
 ### Added
