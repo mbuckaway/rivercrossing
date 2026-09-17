@@ -10,8 +10,12 @@ controls on a real dialog -- stays with the (functional) suite.
 
 Phase 2 adds the Check button (a system modal, never ``sim_infobar``),
 the solo auto-fill on every riders/teams change, and the
-speed-derived interval seed. The no-ride open (``roster=None``) adds
-the other half: every generator and race control is disabled, the
+speed-derived interval seed. GO's own refusal path is pinned here too:
+a race the engine would not start comes back as ``SimOutcome.blocked``,
+so GO reports the reasons on ``sim_infobar`` and leaves the dialog open
+instead of closing over the failure. The no-ride open
+(``roster=None``) adds the other half: every generator and race
+control is disabled, the
 counts and behaviour choices are seeded from the passed settings all
 the same (the app's close-persist reads them back), and
 ``new_ride_btn`` -- the dialog's only live action -- routes to the
@@ -253,7 +257,14 @@ class _FakeInfobar:
 
 
 class _RecordingRunning:
-    """A SimRunningDialog stand-in recording its race settings."""
+    """A SimRunningDialog stand-in recording its race settings.
+
+    ``outcome`` is what :meth:`run` answers: a completed, unblocked
+    race by default, or the blocked/no-outcome value a test sets --
+    the real ``SimRunningDialog.run`` is typed ``SimOutcome | None``.
+    """
+
+    outcome: SimOutcome | None = SimOutcome(cancelled=False, recorded=0, blocked=None)
 
     def __init__(  # noqa: PLR0913 -- mirrors the SUT's own keyword constructor
         self,
@@ -277,9 +288,32 @@ class _RecordingRunning:
         self.team_stop = team_stop
         self.ran = False
 
-    def run(self) -> None:
-        """Record that the race was started."""
+    def run(self) -> SimOutcome | None:
+        """Record that the race was started, then return its outcome."""
         self.ran = True
+        return self.outcome
+
+
+def _patch_running(
+    monkeypatch: pytest.MonkeyPatch, *, outcome: SimOutcome | None
+) -> list[_RecordingRunning]:
+    """Swap ``SimRunningDialog`` for a recorder answering *outcome*.
+
+    The recorder keeps the built dialog and every race setting, so a
+    test can assert both what GO threaded in and what it did with the
+    outcome the race reported.
+    """
+    created: list[_RecordingRunning] = []
+
+    def _build(dialog: object, **kwargs: object) -> _RecordingRunning:
+        running = _RecordingRunning(dialog, **kwargs)
+        running.outcome = outcome
+        created.append(running)
+        return running
+
+    monkeypatch.setattr(simulator_module, "_load_running_window", lambda _parent: _Control())
+    monkeypatch.setattr(simulator_module, "SimRunningDialog", _build)
+    return created
 
 
 class _RefusingPresenter:
@@ -971,6 +1005,65 @@ def test_on_go_given_an_out_of_range_lap_count_warns_and_keeps_the_dialog_open()
 
     assert shell.sim_infobar.messages == ["laps must be at least 1"]
     assert (shell.dialog.ended, shell.dialog.layouts) == ([], 1)
+
+
+@pytest.mark.parametrize(
+    ("reasons", "expected"),
+    [
+        pytest.param(("roster has no riders",), "roster has no riders", id="one-reason"),
+        pytest.param(
+            ("venue is required", "scorer is required"),
+            "venue is required; scorer is required",
+            id="every-reason",
+        ),
+    ],
+)
+def test_on_go_given_a_blocked_race_shows_the_reasons_and_keeps_the_dialog_open(
+    monkeypatch: pytest.MonkeyPatch, reasons: tuple[str, ...], expected: str
+) -> None:
+    """A refused start lands on sim_infobar; GO never closes.
+
+    The running dialog's own race reported the refusal, so GO stops
+    where the operator can read it: the reasons go on the dialog's
+    info bar, the spins are not snapshotted and the modal is not ended
+    -- a close would hide the very dialog the operator must fix.
+    """
+    roster = Roster(entry_mode=EntryMode.MIXED, plate_model=PlateModel.RIDER_POOLED)
+    shell = _generator_shell(roster, laps=3, interval=7)
+    shell.sim_values = (9, 9, 9, 9, 9)
+    _patch_running(monkeypatch, outcome=SimOutcome(cancelled=False, recorded=0, blocked=reasons))
+
+    SimulatorDialog._on_go(shell, None)
+
+    assert shell.sim_infobar.messages == [expected]
+    assert (shell.dialog.ended, shell.dialog.layouts) == ([], 1)
+    assert shell.sim_values == (9, 9, 9, 9, 9)  # never snapshotted
+
+
+@pytest.mark.parametrize(
+    "outcome",
+    [
+        pytest.param(None, id="no-outcome"),
+        pytest.param(SimOutcome(cancelled=False, recorded=0, blocked=()), id="no-reasons"),
+    ],
+)
+def test_on_go_given_no_reasons_to_report_closes_the_dialog(
+    monkeypatch: pytest.MonkeyPatch, outcome: SimOutcome | None
+) -> None:
+    """T-3/T-4: nothing to report closes GO as it always did.
+
+    A run that answers no outcome at all, and the engine's own
+    ``blocked=tuple(exc.reasons)`` refusal that listed no issue, both
+    leave GO with nothing to put on the bar -- so it closes rather
+    than opening an empty one.
+    """
+    roster = Roster(entry_mode=EntryMode.MIXED, plate_model=PlateModel.RIDER_POOLED)
+    shell = _generator_shell(roster, laps=3, interval=7)
+    _patch_running(monkeypatch, outcome=outcome)
+
+    SimulatorDialog._on_go(shell, None)
+
+    assert (shell.sim_infobar.messages, shell.dialog.ended) == ([], [wx.ID_OK])
 
 
 # --- the no-ride open: New Ride routes to the app, then closes

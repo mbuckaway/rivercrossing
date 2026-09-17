@@ -998,7 +998,10 @@ def test_open_target_given_simulation_close_with_changes_saves_the_roster(
 # disabled after the modal closes. The tests below stage the app's own
 # flow headless (real store, store-replayed engine with the store's
 # append as its event sink, a real console presenter) and drive the
-# close-persist the route runs once the modal has ended.
+# close-persist the route runs once the modal has ended. The console
+# half is the same defect: no ride-state change fired either, so the
+# console kept its pre-GO render (an unlocked entry row on a stopped
+# ride) until a tick; the close refreshes it beside the menu.
 
 
 class _FakeMenuItem:
@@ -1048,15 +1051,53 @@ class _MenuFrame(_NoticeFrame):
 
 
 class _ConsoleViewStub:
-    """A console-view stub: only the presenter's constructor render."""
+    """A console-view stub: the renders the presenter drives.
+
+    The constructor's own R-11 teams-chip push, and -- since the
+    simulator's close-persist now re-renders the console beside the
+    menu re-apply (plan §2) -- every channel
+    :meth:`ConsolePresenter.refresh_state` pushes. The ride state and
+    the entry lock are recorded, because they are what this module's
+    post-GO test reads; the rest are inert.
+    """
 
     def __init__(self) -> None:
-        """Start with no chip render recorded."""
+        """Start with no chip render and no state render recorded."""
         self.team_ui_visible: bool | None = None
+        self.last_state: RideStatus | None = None
+        self.last_stopped: bool | None = None
+        self.entry_locked: bool | None = None
 
     def set_team_ui_visible(self, *, visible: bool) -> None:
         """Record the R-11 teams-chip visibility push."""
         self.team_ui_visible = visible
+
+    def set_state(self, status: RideStatus, *, stopped: bool = False) -> None:
+        """Record the ride state and the stop guard."""
+        self.last_state = status
+        self.last_stopped = stopped
+
+    def set_entry_locked(self, *, locked: bool) -> None:
+        """Record the entry-row lock verdict."""
+        self.entry_locked = locked
+
+    def show_feed(self, _rows: list[object]) -> None:
+        """No-op: the post-GO test reads the state render alone."""
+
+    def show_flagged(self, _rows: list[object]) -> None:
+        """No-op: the review tab is not this module's concern."""
+
+    def show_current_lap(self, _lap: int) -> None:
+        """No-op: the header reading is not this module's concern."""
+
+    def show_counters(self, _counters: object) -> None:
+        """No-op: the counter chips are not this module's concern."""
+
+    def show_clock(self, _elapsed: str, _remaining: str) -> None:
+        """No-op: the clock labels are not this module's concern."""
+
+    def set_clock_fractions(self, *, elapsed_frac: float, remaining_frac: float) -> None:
+        """No-op: the gauge dials are not this module's concern."""
 
 
 # The staged GO: four generated riders on two teams, replayed for two
@@ -1156,6 +1197,30 @@ def test_persist_simulator_changes_after_a_simulated_go_keeps_the_audit_trail(
         *["record_crossing"] * _SIM_CROSSINGS,
         "start",
     ]
+
+
+def test_persist_simulator_changes_after_a_simulated_go_renders_the_console(
+    simulated_go: _SimulatedGo,
+) -> None:
+    """Plan §2: the close re-renders the console the GO left behind.
+
+    GO drives the engine directly, so no console ride-state change
+    fires: the main screen would keep its pre-GO render -- an unlocked
+    entry row on a stopped ride, a stale clock -- until the next tick.
+    The close-persist refreshes it beside the menu re-apply, so the
+    engine's own verdicts (RUNNING, stopped, entry locked) are what
+    the console shows the moment the modal is gone.
+    """
+    context, _store, _ride_id, _menubar = simulated_go
+    view = context.presenter.view  # type: ignore[union-attr] -- the fixture threads one
+
+    app_module._persist_simulator_changes(context, _SimulatorViewStub(roster_changed=True))
+
+    assert (view.last_state, view.last_stopped, view.entry_locked) == (
+        RideStatus.RUNNING,
+        True,
+        True,
+    )
 
 
 def test_persist_simulator_changes_without_a_presenter_leaves_the_menu_untouched(
