@@ -848,10 +848,11 @@ class RideEngine:
       held, never by ride state: the review surface stays usable while
       RUNNING, and FINISHED's corrections flow routes through REOPENED
       for timing changes (undo), not card disposition.
-      ``return_to_held`` is the disposition seam back: whichever
-      accounting a dealt card currently has -- credited, retired by
-      ``void_card``, or discarded by ``void_held`` -- it returns to
-      the hold queue under that same state-irrelevant gate.
+      ``return_to_held`` is the disposition seam back: a credited card
+      re-enters the hold queue under that same state-irrelevant gate,
+      while a voided card -- retired by ``void_card`` or discarded by
+      ``void_held`` -- stays voided and the crossing is dealt a fresh
+      card instead, which needs the shoe open (RUNNING or REOPENED).
     - **Short-lap policy (W4).** ``RideConfig.hold_short_laps`` gates
       whether that hold path runs at all. The True default is the W4
       product decision -- hold short-lap cards for review -- so the
@@ -1666,13 +1667,15 @@ class RideEngine:
     def return_to_held(self, crossing: Crossing) -> Event:
         """Put *crossing*'s dealt card back into the hold queue (R-34).
 
-        The operator's "that card needs another look" action: the card
-        leaves wherever it currently sits -- the entry's credited hand,
-        a ``void_card`` retirement, or a previous ``void_held`` discard
-        -- and re-enters the hold queue, awaiting ``confirm_held`` or
-        ``void_held`` again. Audited. Gated only by the card not
-        already being held: ride state is irrelevant to card
-        disposition, exactly as for the other two hold-queue moves.
+        The operator's "that card needs another look" action, in two
+        dispositions. A *credited* card leaves the entry's hand and
+        re-enters the hold queue under the same state-irrelevant gate
+        ``confirm_held``/``void_held`` use. A *voided* card
+        (``void_card``/``void_held``) never comes back -- it stays in
+        ``_voided_cards`` out of the ride -- so the crossing is given a
+        fresh card dealt from the shoe instead, which needs the shoe
+        open: RUNNING or REOPENED. Either way the card awaits
+        ``confirm_held`` or ``void_held`` again. Audited.
 
         Args:
             crossing: A crossing this engine dealt a card for.
@@ -1681,14 +1684,20 @@ class RideEngine:
             The appended ``return_to_held`` audit event.
 
         Raises:
-            IllegalStateError: *crossing*'s card is already held.
+            IllegalStateError: *crossing*'s card is already held, or it
+                was voided and the ride is not RUNNING or REOPENED.
             KeyError: *crossing* was never dealt by this engine.
         """
         if crossing in self._held:
             raise IllegalStateError("crossing's card is already held")
         card = self.card_for(crossing)
-        self._voided_cards.discard(card)
-        self._discard_credited(crossing.entry_id, card)
+        if card in self._voided_cards:
+            if self._state not in (RideStatus.RUNNING, RideStatus.REOPENED):
+                raise IllegalStateError(f"cannot re-deal a voided card from {self._state}")
+            card = self._deal_card()
+            self._dealt[crossing] = card
+        else:
+            self._discard_credited(crossing.entry_id, card)
         self._held[crossing] = card
         return self._append(
             Event(

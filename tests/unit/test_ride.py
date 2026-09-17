@@ -1483,8 +1483,8 @@ def test_void_held_records_the_card_in_the_voided_registry() -> None:
     reassign and return paths consult, so a void_held card must join it
     -- otherwise a later reassign of the crossing re-credits the card
     the operator already voided. Pokes the private marker deliberately,
-    as the un-retire test below does: the registry is what this test
-    pins, and it has no public reader.
+    as the fresh-deal return tests below do: the registry is what
+    this test pins, and it has no public reader.
     """
     engine, _ = _make_engine(config=_config(hold_short_laps=True))
     engine.start()
@@ -1539,44 +1539,71 @@ def test_return_to_held_moves_a_credited_card_into_the_hold_queue() -> None:
     assert engine.held_crossings() == (HeldCrossing(crossing=crossing, card=result.card),)
 
 
-def test_return_to_held_re_holds_a_void_held_card() -> None:
-    """return_to_held re-holds a card the review panel voided (R-34)."""
+def test_return_to_held_on_a_void_held_card_deals_a_fresh_card() -> None:
+    """return_to_held replaces a void_held card with a fresh deal."""
     engine, _ = _make_engine(config=_config(hold_short_laps=True))
     engine.start()
-    result = engine.record_crossing("12", at=_dt(10, 0, 30))
+    engine.record_crossing("12", at=_dt(10, 0, 30))
     crossing = engine.held_crossings()[0].crossing
     engine.void_held(crossing)
+    old = engine.card_for(crossing)
     assert engine.held_crossings() == ()
+    dealt_before = engine._shoe.dealt
 
     event = engine.return_to_held(crossing)
 
+    fresh = engine.card_for(crossing)
+    assert engine.held_card_for(crossing) == fresh
+    assert fresh != old
+    # Private reads deliberately: the voided-card record and the shoe's
+    # deal count are exactly what this test pins, and neither has a
+    # public reader.
+    assert engine._shoe.dealt == dealt_before + 1
+    assert old in engine._voided_cards
     assert event == Event(
         action="return_to_held",
-        payload={"entry_id": "12", "seq": 1, "card": result.card.code()},
+        payload={"entry_id": "12", "seq": 1, "card": fresh.code()},
     )
-    assert engine.held_crossings() == (HeldCrossing(crossing=crossing, card=result.card),)
 
 
-def test_return_to_held_clears_a_void_card_marker_and_re_holds_the_card() -> None:
-    """return_to_held un-retires a void_card'd card into the hold."""
+def test_return_to_held_on_a_void_card_deals_a_fresh_card() -> None:
+    """return_to_held replaces a void_card'd card with a fresh deal."""
     engine, _ = _make_engine(config=_config(min_lap_s=1))
     engine.start()
     engine.record_crossing("12", at=_dt(10, 30))
     second = engine.record_crossing("12", at=_dt(10, 32))
     crossing = engine.crossings[1]
     engine.void_card("12", second.card, reason="wrong card dealt")
-    # Pokes the private marker deliberately: the void/un-void
-    # bookkeeping is what this test pins, and it has no public reader.
-    assert second.card in engine._voided_cards
+    dealt_before = engine._shoe.dealt
 
     event = engine.return_to_held(crossing)
 
+    fresh = engine.card_for(crossing)
+    assert engine.held_card_for(crossing) == fresh
+    assert fresh != second.card
+    assert engine._shoe.dealt == dealt_before + 1
+    assert second.card in engine._voided_cards
     assert event == Event(
         action="return_to_held",
-        payload={"entry_id": "12", "seq": 2, "card": second.card.code()},
+        payload={"entry_id": "12", "seq": 2, "card": fresh.code()},
     )
-    assert second.card not in engine._voided_cards
-    assert engine.held_card_for(crossing) == second.card
+
+
+def test_return_to_held_voided_card_in_reopened_deals_a_fresh_card() -> None:
+    """Reopen re-opens the shoe, so a voided card is re-dealt."""
+    engine, _ = _make_engine(config=_config(hold_short_laps=True))
+    engine.start()
+    engine.record_crossing("12", at=_dt(10, 0, 30))
+    crossing = engine.held_crossings()[0].crossing
+    engine.void_held(crossing)
+    old = engine.card_for(crossing)
+    engine.finish()
+    engine.reopen()
+
+    engine.return_to_held(crossing)
+
+    assert engine.held_card_for(crossing) == engine.card_for(crossing)
+    assert engine.card_for(crossing) != old
 
 
 def test_return_to_held_given_an_already_held_card_raises_illegal_state_error() -> None:
@@ -1600,8 +1627,23 @@ def test_return_to_held_given_a_never_dealt_crossing_raises_key_error() -> None:
         engine.return_to_held(crossing)
 
 
+def test_return_to_held_voided_card_after_finish_raises_illegal_state_error() -> None:
+    """Re-dealing a voided card needs an open shoe: FINISHED refuses."""
+    engine, _ = _make_engine(config=_config(hold_short_laps=True))
+    engine.start()
+    engine.record_crossing("12", at=_dt(10, 0, 30))
+    crossing = engine.held_crossings()[0].crossing
+    engine.void_held(crossing)
+    engine.finish()
+
+    with pytest.raises(
+        IllegalStateError, match=re.escape("cannot re-deal a voided card from finished")
+    ):
+        engine.return_to_held(crossing)
+
+
 def test_return_to_held_after_finish_re_holds_the_card_and_keeps_the_state() -> None:
-    """Card disposition is state-irrelevant: FINISHED still re-holds."""
+    """A credited card is state-irrelevant: FINISHED still re-holds."""
     engine, _ = _make_engine()
     engine.start()
     result = engine.record_crossing("12", at=_dt(10, 30))
@@ -2614,10 +2656,12 @@ def test_apply_return_to_held_event_re_holds_the_credited_card() -> None:
 def test_apply_replay_return_to_held_reproduces_the_re_held_disposition() -> None:
     """Replaying a return_to_held log rebuilds the live held queue.
 
-    The live ride ends with every dealt card back in the hold queue --
-    one released from the credited hand, one un-retired from
-    ``void_card`` -- so the replayed engine must agree on the snapshot,
-    the hold queue and the voided-card record.
+    The live ride ends with three crossings held: the short lap's card
+    dealt held, one released from the credited hand, and one voided
+    card replaced by a fresh deal. Replay walks the same states and the
+    seeded shoe deals the same replacement, so the replayed engine must
+    agree on the snapshot, the hold queue, the voided-card record and
+    the shoe's deal count.
     """
     live, _ = _make_engine(config=_config(hold_short_laps=True))
     live.start(at=_dt(10, 0))
