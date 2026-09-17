@@ -1633,8 +1633,11 @@ class RideEngine:
 
         The operator's "that short lap was a double-entry" action: the
         card is voided out of the system -- not returned to the shoe,
-        not added to any hand. The lap itself stays recorded. Audited.
-        Gated only by the card being held.
+        not added to any hand -- and recorded in ``_voided_cards``, the
+        same registry ``void_card``/``void_crossing`` use, so every
+        later reassign or return path reads it as already voided. The
+        lap itself stays recorded. Audited. Gated only by the card
+        being held.
 
         Args:
             crossing: A crossing currently in :meth:`held_crossings`.
@@ -1648,6 +1651,7 @@ class RideEngine:
         card = self._held.pop(crossing, None)
         if card is None:
             raise IllegalStateError("crossing's card is not held")
+        self._voided_cards.add(card)
         return self._append(
             Event(
                 action="void_held",

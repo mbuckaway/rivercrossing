@@ -647,13 +647,14 @@ class _FeedContext:
 def _card_status_for(engine: RideEngine, crossing: Crossing, held_card: Card | None) -> str:
     """Return *crossing*'s card disposition: held, credited or voided.
 
-    Read by elimination, never from ``RideEngine._voided_cards``: a
-    card voided out of the hold queue (:meth:`RideEngine.void_held`)
-    is dropped, not returned to the shoe, so it never joins that set
-    and never credits either -- membership in the set would miss the
-    very case it is named for. Held comes first (R-34): a held card
-    waits uncredited; a card the entry's credited hand does not hold
-    was voided off it. *crossing* is one the engine recorded
+    Read by elimination from the engine's surfaces -- the hold queue,
+    then the entry's credited hand, else voided -- rather than from
+    ``RideEngine._voided_cards``, which is the engine's own card-level
+    bookkeeping rather than a per-crossing reading. Held comes first
+    (R-34): a held card waits uncredited; a card the entry's credited
+    hand does not hold was voided off it -- by ``void_card`` or by the
+    review panel's ``void_held``, which retires the card into that
+    same registry. *crossing* is one the engine recorded
     (:func:`_crossing_feed_row` walks ``engine.crossings``), so the
     dealt-card lookup cannot miss.
     """
