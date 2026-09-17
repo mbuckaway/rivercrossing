@@ -623,7 +623,9 @@ class RiderEditor(DialogFindMixin):  # _find: ui.views._support
         """Toggle ``delete_btn``'s enabled state (R-15)."""
         self.delete_btn.Enable(enabled)
 
-    def confirm(  # noqa: PLR0913 -- (title, message) + 2 button labels, mirroring std_dialogs.show_confirm
+    # (title, message) + 2 button labels, mirroring
+    # std_dialogs.show_confirm
+    def confirm(  # noqa: PLR0913
         self,
         title: str,
         message: str,
@@ -1002,7 +1004,8 @@ class CsvPreviewDialog(DialogFindMixin):  # _find: ui.views._support
         event.Skip()
         self.presenter.on_toggle_map_unknown_sex(enabled=self.map_unknown_sex_chk.GetValue())
 
-    def _on_convert_teams_of_one_chk(self, event: Any) -> None:  # noqa: ANN401 -- wx ships no stubs
+    # wx ships no stubs
+    def _on_convert_teams_of_one_chk(self, event: Any) -> None:  # noqa: ANN401
         """Forward the teams-of-one checkbox's new state (Phase E)."""
         event.Skip()
         self.presenter.on_toggle_convert_teams_of_one(

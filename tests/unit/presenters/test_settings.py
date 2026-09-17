@@ -437,6 +437,73 @@ def test_load_settings_json_that_is_not_an_object_returns_defaults(
     assert loaded == default_settings()
 
 
+def test_load_settings_missing_file_records_the_default_fallback(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """T-5: falling back to defaults is recorded, never silent.
+
+    The injectable ``WARN`` seam mirrors ``console.FINISH_GATE``: the
+    module has no log handle of its own, so a caller (or a test) swaps
+    the sink and the record is observable. A missing file is still
+    recorded -- the operator sees why the launch came up on defaults.
+    """
+    warned: list[str] = []
+    monkeypatch.setattr(settings_module, "WARN", warned.append)
+    path = tmp_path / "no-such-settings.json"
+
+    loaded = load_settings(path)
+
+    assert loaded == default_settings()
+    assert warned == [
+        f"settings file {path} could not be read (FileNotFoundError); using defaults"
+    ]
+
+
+def test_load_settings_corrupt_json_records_the_default_fallback(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """T-5: undecodable JSON records the exception type."""
+    warned: list[str] = []
+    monkeypatch.setattr(settings_module, "WARN", warned.append)
+    path = tmp_path / "settings.json"
+    path.write_text('{"appearance": "dark", oops', encoding="utf-8")
+
+    loaded = load_settings(path)
+
+    assert loaded == default_settings()
+    assert warned == [f"settings file {path} could not be read (JSONDecodeError); using defaults"]
+
+
+def test_load_settings_non_object_json_records_the_default_fallback(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """T-5: a JSON array/scalar records why the defaults replaced it."""
+    warned: list[str] = []
+    monkeypatch.setattr(settings_module, "WARN", warned.append)
+    path = tmp_path / "settings.json"
+    path.write_text(json.dumps(_ZOOM_RUNGS), encoding="utf-8")
+
+    loaded = load_settings(path)
+
+    assert loaded == default_settings()
+    assert warned == [f"settings file {path} is not a JSON object; using defaults"]
+
+
+def test_load_settings_well_formed_file_records_nothing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """T-3 false branch: a good file never reaches the warn seam."""
+    warned: list[str] = []
+    monkeypatch.setattr(settings_module, "WARN", warned.append)
+    path = tmp_path / "settings.json"
+    path.write_text('{"appearance": "dark"}', encoding="utf-8")
+
+    loaded = load_settings(path)
+
+    assert loaded.appearance == ThemeMode.DARK.value
+    assert warned == []
+
+
 def test_load_settings_missing_keys_use_defaults_for_each_field(
     tmp_path: Path,
 ) -> None:

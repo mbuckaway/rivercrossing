@@ -301,7 +301,8 @@ def test_wire_flagged_open_seam_routes_the_flagged_row_to_the_review_handler(
     context = _RouteStub(console_view=console)
 
     app_module._wire_flagged_open_seam(context)  # type: ignore[arg-type]
-    console._on_open_flagged("77", "held", False)  # type: ignore[attr-defined]  # noqa: FBT003 -- bit
+    # bit
+    console._on_open_flagged("77", "held", False)  # type: ignore[attr-defined]  # noqa: FBT003
 
     assert opened == [(context, "77", "held", False)]
 
@@ -403,7 +404,8 @@ def test_open_flagged_review_for_given_a_held_row_routes_to_the_held_review(
         lambda _context, _engine, crossing: routed.append(crossing),
     )
 
-    app_module._open_flagged_review_for(context, "12", "held", False)  # noqa: FBT003 -- the row's bit
+    # the row's bit
+    app_module._open_flagged_review_for(context, "12", "held", False)  # noqa: FBT003
 
     assert routed == [engine.crossings[-1]]
 
@@ -448,7 +450,8 @@ def test_open_flagged_review_for_given_a_voided_row_routes_to_return_to_held(
         lambda _context, _engine, crossing: routed.append(crossing),
     )
 
-    app_module._open_flagged_review_for(context, "12", "voided", False)  # noqa: FBT003 -- the row's bit
+    # the row's bit
+    app_module._open_flagged_review_for(context, "12", "voided", False)  # noqa: FBT003
 
     assert routed == [voided]
 
@@ -510,7 +513,8 @@ def test_open_flagged_review_for_given_a_duplicate_held_row_opens_the_detail_fir
     )
     monkeypatch.setattr(app_module, "_review_held_crossing", lambda *_args: routed.append("held"))
 
-    app_module._open_flagged_review_for(context, "12", "held", True)  # noqa: FBT003 -- the row's bit
+    # the row's bit
+    app_module._open_flagged_review_for(context, "12", "held", True)  # noqa: FBT003
 
     assert (detailed, routed) == ([engine.crossings[-1]], [])
 
@@ -533,7 +537,8 @@ def test_open_flagged_review_for_given_an_unresolvable_plate_posts_a_notice(
         app_module, "_show_crossing_detail_dialog", lambda *_args: routed.append("detail")
     )
 
-    app_module._open_flagged_review_for(context, "99", card_status, False)  # noqa: FBT003 -- row bit
+    # row bit
+    app_module._open_flagged_review_for(context, "99", card_status, False)  # noqa: FBT003
 
     assert (notices, routed) == (["Review — no crossing found for plate 99"], [])
 
@@ -545,7 +550,8 @@ def test_open_flagged_review_for_given_a_credited_row_asked_as_held_posts_a_noti
     notices: list[str] = []
     context = _review_context(engine, frame=_NoticeFrame(notices))
 
-    app_module._open_flagged_review_for(context, "12", "held", False)  # noqa: FBT003 -- the row's bit
+    # the row's bit
+    app_module._open_flagged_review_for(context, "12", "held", False)  # noqa: FBT003
 
     assert notices == ["Review — no crossing found for plate 12"]
 
@@ -572,7 +578,8 @@ def test_open_flagged_review_for_given_no_presenter_posts_nothing() -> None:
     notices: list[str] = []
     context = _RouteStub(frame=_NoticeFrame(notices), presenter=None)
 
-    app_module._open_flagged_review_for(context, "12", "held", False)  # noqa: FBT003 -- the row's bit
+    # the row's bit
+    app_module._open_flagged_review_for(context, "12", "held", False)  # noqa: FBT003
 
     assert notices == []
 

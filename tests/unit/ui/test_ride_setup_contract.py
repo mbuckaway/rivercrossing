@@ -97,7 +97,8 @@ class _FakeControl:
         """Record the item text the view selected."""
         self._value = value
 
-    def Enable(self, enabled: bool) -> None:  # noqa: N802, FBT001 -- wx API name and positional bool
+    # wx API name and positional bool
+    def Enable(self, enabled: bool) -> None:  # noqa: N802, FBT001
         """Record the enabled state the view applied."""
         self.enabled = enabled
 

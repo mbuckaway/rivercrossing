@@ -346,7 +346,9 @@ class ResultsWindow(DialogFindMixin):  # _find: ui.views._support
     ``RideSetup`` precedent.
     """
 
-    def __init__(  # noqa: PLR0913 -- (dialog, data_source) + the tie-break order, export-watermark, entry-mode and plate-model seams
+    # (dialog, data_source) + the tie-break order, export-watermark,
+    # entry-mode and plate-model seams
+    def __init__(  # noqa: PLR0913
         self,
         dialog: wx.Dialog,
         *,

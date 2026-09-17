@@ -448,11 +448,12 @@ def test_main_frame_display_change_given_a_smaller_monitor_clamps_it(
     assert (frame.size.width, frame.size.height) == (1366 - 32, 768 - 32)
 
 
-def test_main_frame_init_binds_the_display_change_refit() -> None:
-    """The constructor wires EVT_DISPLAY_CHANGED to the re-fit handler.
+def test_main_frame_bind_frame_commands_wires_the_display_change_refit() -> None:
+    """The frame-command constructor step wires the re-fit handler.
 
     A real ``wx.Frame`` needs a desktop, so the wiring is pinned on the
-    constructor's own source -- the same transcription contract
+    source of the step that owns it --
+    ``MainFrame._bind_frame_commands``, the same transcription contract
     ``test_main_frame_guard.py`` holds REQUIRED_CONTROLS to, and the
     only headless way to prove the binding exists at all.
 
@@ -462,7 +463,7 @@ def test_main_frame_init_binds_the_display_change_refit() -> None:
     covered behaviourally by the two ``_on_display_changed`` tests
     above; this pin covers only the wiring itself.
     """
-    source = inspect.getsource(main_frame.MainFrame.__init__)
+    source = inspect.getsource(main_frame.MainFrame._bind_frame_commands)
 
     assert "wx.EVT_DISPLAY_CHANGED" in source
     assert "self._on_display_changed" in source

@@ -86,7 +86,8 @@ def _hand(codes: str) -> tuple[Card, ...]:
     return tuple(Card.parse(code) for code in codes.split())
 
 
-def _sample_entry(  # noqa: PLR0913 -- (plate, name, laps, kind, dnf, codes): the EntryResult's own fields
+# (plate, name, laps, kind, dnf, codes): the EntryResult's own fields
+def _sample_entry(  # noqa: PLR0913
     plate: str,
     name: str,
     laps: int,

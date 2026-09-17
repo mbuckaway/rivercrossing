@@ -119,6 +119,45 @@ def test_event_time_given_non_iso_timestamp_renders_empty_string() -> None:
     assert data_source_module._event_time(event) == ""
 
 
+def test_event_time_given_non_iso_timestamp_records_the_malformed_value(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """T-5: the blanked cell is recorded through the warn seam."""
+    warned: list[str] = []
+    monkeypatch.setattr(data_source_module, "WARN", warned.append)
+    event = Event(
+        action="record_crossing",
+        payload={"entry_id": "12", "crossed_at": "not an ISO timestamp"},
+    )
+
+    rendered = data_source_module._event_time(event)
+
+    assert rendered == ""
+    assert warned == [
+        (
+            "audit event 'record_crossing' has a malformed crossed_at timestamp:"
+            " 'not an ISO timestamp'"
+        )
+    ]
+
+
+def test_event_time_given_a_parseable_timestamp_records_nothing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """T-3 false branch: a good timestamp never warns."""
+    warned: list[str] = []
+    monkeypatch.setattr(data_source_module, "WARN", warned.append)
+    event = Event(
+        action="record_crossing",
+        payload={"entry_id": "12", "crossed_at": "2026-09-20T10:30:00"},
+    )
+
+    rendered = data_source_module._event_time(event)
+
+    assert rendered == "10:30:00"
+    assert warned == []
+
+
 def test_event_time_given_payload_without_timestamp_key_renders_empty_string() -> None:
     """A payload with no ISO timestamp key renders "" (exhausted)."""
     event = Event(action="stop", payload={"entry_id": "12", "reason": "track blocked"})

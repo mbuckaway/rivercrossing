@@ -27,6 +27,13 @@ subtree or a stale wrapper, and the frame/resource objects are
 (the same reason ``test_view_support.py`` carries no window). The two
 tests that exercise the walk itself use plain frame/control doubles
 instead of ``MagicMock``s.
+
+The window-load phase's own log drain is pinned here too
+(``app._load_window_parts``): a partly skipped ``.xrc`` load is named
+only through ``wx.LogWarning``, which reaches ``wx.LogStderr`` and
+never the launch's NDJSON file, so the loader records each failed
+file in the module-level ``_xrc_load_failures`` and the load phase
+drains that list into the launch's ``Logging``.
 """
 
 from __future__ import annotations
@@ -532,3 +539,102 @@ def test_build_main_window_given_no_authored_menubar_raises_lookup_error(
 
     with pytest.raises(LookupError, match=re.escape(f"no menubar named {ids.MAIN_MENUBAR!r}")):
         app.build_main_window(MagicMock(), settings_path=tmp_path / "settings.json")
+
+
+# ---- the failed .xrc loads are drained into the launch's own log
+#
+# ``wx.LogWarning`` reaches only ``wx.LogStderr``, never the launch's
+# NDJSON file, so a degraded load left an operator with nothing to
+# send in. ``_load_xrc_resources`` records each failed file in the
+# module-level ``_xrc_load_failures`` (it takes no arguments -- the
+# Fault-B tests bind a zero-argument stand-in -- so the log cannot
+# reach it through its signature), and ``_load_window_parts`` drains
+# that list into the launch's ``Logging``.
+
+
+class _RecordingLog:
+    """A launch-log double recording the drain's ``warn`` records."""
+
+    def __init__(self) -> None:
+        """Start with an empty record log."""
+        self.warnings: list[str] = []
+
+    def warn(self, message: str) -> None:
+        """Record one drained failure."""
+        self.warnings.append(message)
+
+
+def _window_parts_doubles(
+    monkeypatch: pytest.MonkeyPatch,
+) -> tuple[MagicMock, MagicMock, MagicMock, object]:
+    """Patch the load seam; return the four loaded doubles.
+
+    The XRC loader is the zero-argument stand-in the Fault-B guard
+    tests bind (``_load_xrc_resources`` takes no arguments), so the
+    failures the drain reads are staged straight into
+    ``_xrc_load_failures``. The menubar double answers the
+    ``FindItem`` miss ``_apply_publish_gate`` skips on.
+    """
+    frame = MagicMock()
+    menubar = MagicMock()
+    menubar.FindItem.return_value = (None, None)
+    resource = MagicMock()
+    resource.LoadMenuBar.return_value = menubar
+    settings = app.settings_store.default_settings()
+    monkeypatch.setattr(app, "_load_xrc_resources", lambda: resource)
+    monkeypatch.setattr(app, "_load_frame_verified", lambda *_args, **_kwargs: frame)
+    monkeypatch.setattr(app.settings_store, "load_settings", lambda *_args, **_kwargs: settings)
+    return frame, resource, menubar, settings
+
+
+def test_load_window_parts_drains_failed_xrc_loads_into_the_launch_log(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Every recorded .xrc failure reaches the launch log, in order."""
+    failures = [
+        f"XRC load failed for {tmp_path / 'main_frame.xrc'}",
+        f"XRC load failed for {tmp_path / 'results.xrc'}",
+    ]
+    frame, resource, menubar, settings = _window_parts_doubles(monkeypatch)
+    monkeypatch.setattr(app, "_xrc_load_failures", list(failures))
+    log = _RecordingLog()
+
+    result = app._load_window_parts(log, tmp_path / "settings.json")
+
+    assert log.warnings == failures
+    assert result == (frame, resource, menubar, settings)
+    frame.SetMenuBar.assert_called_once_with(menubar)
+
+
+def test_load_window_parts_without_failed_xrc_loads_writes_no_log_record(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A clean load drains an empty list: the log stays untouched."""
+    frame, resource, menubar, settings = _window_parts_doubles(monkeypatch)
+    monkeypatch.setattr(app, "_xrc_load_failures", [])
+    log = _RecordingLog()
+
+    result = app._load_window_parts(log, tmp_path / "settings.json")
+
+    assert log.warnings == []
+    assert result == (frame, resource, menubar, settings)
+
+
+def test_load_window_parts_without_a_log_leaves_the_failed_loads_undrained(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A log-less construction still builds; nothing tries to warn.
+
+    The window is built by helpers whose app carries no ``Logging``
+    (and by a store-less launch), so the drain is guarded rather than
+    an ``AttributeError`` on ``None``. The recorded failures stay put,
+    so a later launch with a log still reports them.
+    """
+    failures = ["XRC load failed for main_frame.xrc"]
+    frame, resource, menubar, settings = _window_parts_doubles(monkeypatch)
+    monkeypatch.setattr(app, "_xrc_load_failures", list(failures))
+
+    result = app._load_window_parts(None, tmp_path / "settings.json")
+
+    assert result == (frame, resource, menubar, settings)
+    assert app._xrc_load_failures == failures

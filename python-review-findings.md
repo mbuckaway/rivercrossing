@@ -1,86 +1,96 @@
-# Python Review Findings — full-codebase review (post 1.0.17 follow-ups)
+# Python Review Findings — full-codebase review (post Standings/time-columns fixes)
 
-_Generated: 2026-09-14 | Project: rivercrossing | Type: basic | Scope: whole repo (src + tests + docs)_
+_Generated: 2026-09-17 | Project: rivercrossing | Type: basic | Scope: whole repo (src + tests + tools + docs)_
 
-## Summary
+## Executive Summary
 
-| Severity | Count |
-|---|---|
-| Critical | 0 |
-| High | 2 |
-| Medium | 12 |
-| Low | 23 |
+Ran the full `python-review` protocol (Phases 1–4) over the whole tree with four read-only agents.
+31 findings: **0 CRITICAL, 0 HIGH, 7 MEDIUM, 24 LOW**. All 31 were fixed (no review memory existed,
+so no learned rules applied). `ruff` (`select = ["ALL"]`) and `mypy --strict` were already clean, so
+the findings are correctness / observability / simplification refinements, not defects.
 
-No CRITICAL findings (no bare `except`, no hardcoded secrets, no SQL injection, no unvalidated external input, no unbounded scan). The codebase is unusually disciplined — `ruff check`, `ruff format --check`, `mypy --strict`, `bandit` (0 medium/high), `pip-audit` (0 vulns), and the 99.85% branch-coverage gate all pass. Findings below are the residual class the automated gates do not enforce.
+## Detection Results
 
-## Findings (deduplicated)
+| Attribute | Value |
+|-----------|-------|
+| Project Type | basic (no requirements.txt / Pulumi.yaml; wxPython desktop app) |
+| Python Version | 3.14 |
+| Agents | python-standards-reviewer (P1/P2), python-security-reviewer (P3), python-simplification-reviewer (P4c), python-docs-reviewer (P4d) |
 
-### High
+## Findings Summary
 
-- **unlogged-persistence-failure** — `src/rivercrossing/ui/app.py:859` — the engine event sink `_append` reports a `store.append()`/`set_active_ride`/`clear_active_ride` failure only via `SetStatusText`, never the always-on NDJSON log; the first DB write failure of a live race degrades every later crossing to a transient status line and leaves no crash-diagnosis record. Fix: `log.warn(f"Could not save event: {exc}")` in the sink.
-- **public-api-declaration** — `src/rivercrossing/ui/views/dialogs.py:75` — `__all__` omits `wire_escape_to` (line 217) and `set_default_button` (line 244), both public and imported by `app.py`/several views. Fix: add both to `__all__`.
+| Severity | Count | Fixed |
+|----------|-------|-------|
+| Critical | 0 | — |
+| High | 0 | — |
+| Medium | 7 | 7 |
+| Low | 24 | 24 |
+| **Total** | **31** | **31** |
 
-### Medium
+## Findings & Fixes — Medium (7)
 
-- **unlogged-store-write-guard** — `src/rivercrossing/ui/app.py:1000` (+16 sibling sites) — every store/settings write guard reports the exception only to `SetStatusText`, never the log; a failed `create_ride`/`save_roster`/backup is invisible after the fact. Fix: `log.warn(...)` beside each `SetStatusText`.
-- **swallowed-exception** — `src/rivercrossing/ui/views/_support.py:325` (+ `:349` load_menubar) — the self-heal rebuild `except Exception: return None` discards the exception with no type/path; the diagnosis ("rebuild raised OSError/ParseError on <file>") is lost. Fix: `except Exception as exc: wx.LogWarning(f"XRC rebuild failed: {type(exc).__name__}: {exc}"); return None`.
-- **missing-auto-backup** — `src/rivercrossing/store/backup.py:263` — `schedule_hourly()` has zero call sites; R-54 "Automatic backups on open + hourly" is only half-implemented. Fix: wire a `wx.Timer` to `tick()` and run one `backup.run` after `Store.open`.
-- **function-length** — `src/rivercrossing/ui/views/main_frame.py:648` — `MainFrame.__init__` is 294 lines (and `app.py:4069 build_main_window`, `app.py:1306 _decorate`, `app.py:3616 _make_route_handler`, `ride.py:2542 apply`, `app.py:4555 main`, `data_source.py:608 feed_rows`, `store/__init__.py:1391 duplicate_ride` exceed 100). Fix: split into named phases (behaviour-preserving, drop `PLR0915` after).
-- **duplicated-code (_find)** — 13 view modules carry a verbatim `_find` pass-through (`return find_control(...)`). Fix: one shared mixin in `_support.py`, 16 sites inherit.
-- **duplicated-code (test helpers)** — `_records`/`_roster_with_entries`/`_pooled_team_roster` etc. copy-pasted 2–4× across test modules. Fix: move to `tests/conftest.py` / existing fixture modules.
-- **missing-docstring-section** — `src/rivercrossing/ui/app.py:4069` — `build_main_window` docstring lacks `Raises: LookupError`. Fix: add it.
-- **docstring-inaccurate-count** — `src/rivercrossing/ui/views/dialogs.py:247` — "six dialogs" but `DEFAULT_BUTTON_DECISIONS` has seven (`add_team_dlg` unaccounted). Fix: "seven" + add `add_team_dlg` to the prose list.
-- **dangling-doc-reference** — `src/rivercrossing/ui/app.py:734` (+14 sibling citations) — cite the deleted `docs/EPIC3-SESSION-SUMMARY.md`. Fix: repoint or drop the citation clause.
-- **vacuous-assertion** — `tests/unit/presenters/test_rider_issues.py:405` — final `assert presenter._selected is not None` (forbidden T-2 pattern). Fix: assert the concrete value.
-- **lambda-assignment** — `tests/unit/ui/test_app_store_wiring.py:70` — `clock = lambda: ...` (E731, forbidden). Fix: nested `def clock() -> datetime`.
-- **contradicts-code (R-32/R-84)** — `design/docs-md/requirements.md:51,114` + `xrc-windows.md` — feed described as 7 columns (now 8 with Team) and Needs Review as 3 columns (now 4 with Issue). Fix: add the new columns to the contract.
+| File:Line | Category | Fix |
+|-----------|----------|-----|
+| `store/__init__.py:1336` | input-validation / error-contract | Replay wraps `engine.apply(json.loads(...))` in `except (JSONDecodeError, KeyError, TypeError, ValueError)` → `StoreError` naming ride + audit row; `load_engine` `Raises:` documents it. 4 tests. |
+| `ui/views/main_frame.py:1792` | speculative-generality | Dropped the never-read `planned_start` / `entry_mode` params from `show_ride_header`; call site + 4 test fakes updated. |
+| `ui/views/main_frame.py:678` | long-function | Extracted `MainFrame.__init__` (277 lines) into 9 cohesive private steps; behaviour unchanged (source pins re-pointed). |
+| `ui/app.py:3975` | long-function | Folded the 9-branch `_make_route_handler` literal chain into the existing target tables; 129→39 lines. |
+| `ui/app.py:3511` | stale-comment | Rewrote the miss-Plate-prompt comment to the current commit-then-close flow. |
+| `design/docs-md/xrc-windows.md:562` | stale-doc | Miss-mode Edit description corrected to `assign_plate_to_miss`. |
+| `docs/user-guide.html:191` | inaccurate-instruction | Removed the non-existent dialog export buttons; "Generate HTML…" → "Export HTML…". |
 
-### Low
+## Findings & Fixes — Low (24)
 
-- **stale-doc (shortcuts)** — `docs/user-guide.html:249` + `xrc-windows.md:527-529` — Appendix A lists 4 shortcuts; `ACCELERATOR_TABLE` now has 8 (missing F2/Delete/Ctrl+D/Ctrl+E). Fix: regenerate from the table.
-- **inaccurate-doc** — `docs/user-guide.html:217` — "Card shoe" says the order only changes on empty; a DRAFT deck/joker edit also rebuilds it. Fix: qualify.
-- **inaccurate-doc** — `CHANGELOG.md:12` — says "rebuilt once"; the loader makes up to two attempts. Fix: "up to twice".
-- **stale-doc** — `design/docs-md/spec.md:350` — "10 chapters + 2 appendices" → 11 chapters.
-- **inconsistent-terminology** — `src/rivercrossing/ui/views/main_frame.py:1165` (and `:227`, `:800`) — leftover "Number prompt" from the number→plate sweep. Fix: "Plate prompt".
-- **docstring-line-length** — 6 docstring lines exceed 72 chars (`store/__init__.py:879`, `team_editor.py:858,860`, `test_hands.py:887`, `test_dialogs_positioning.py:145`, `fixtures/incomplete_console_view.py:5`). Fix: rewrap.
-- **line-length** — 149 lines exceed 99 chars via long trailing `# noqa` rationale (`pdfexport.py:1428` etc.). Fix: move rationale to a preceding `#` comment.
-- **broken-cross-reference** — `src/rivercrossing/ui/presenters/riders.py:854` — cites non-existent `on_add`/`on_save`. Fix: `on_add_committed`.
-- **redundant-returns-section** — `src/rivercrossing/ui/theme.py:100` — `-> None` fn with a `Returns:` block. Fix: delete it.
-- **stale-comment-reference** — `src/rivercrossing/ui/views/results_win.py:418` — cites deleted `_lists_common.py`. Fix: state the property directly.
-- **middle-man** — `src/rivercrossing/ui/views/dialogs.py:360` `_format_card_code` (one-line alias) — delete, call `format_card` directly.
-- **middle-man** — `src/rivercrossing/csvio.py:876` `_fuzzy_team_key` — delete, call `team_name_key` directly.
-- **middle-man** — `src/rivercrossing/ui/presenters/rider_issues.py:157` `refresh`/`_load` — one behaviour two names. Fix: rename `_load`→`refresh`, drop wrapper.
-- **defensive-overwrap** — `src/rivercrossing/ui/views/about.py:118` — dead 4-tier fallback arms (inert icon arm + `_drawn_placeholder_bitmap`). Fix: delete the unreachable tiers.
-- **long-function** — `src/rivercrossing/ui/presenters/data_source.py:608` `feed_rows` (109 lines) — extract `_crossing_feed_row`.
-- **insecure-temp-file** — `src/rivercrossing/store/__init__.py:372` — predictable temp path (CWE-377). Fix: `tempfile.mkstemp`.
-- **non-atomic-export-write** — `src/rivercrossing/ui/app.py:1843` — HTML export writes in place; PDF/CSV are atomic. Fix: temp sibling + `os.replace`.
-- **csv-formula-injection** — `src/rivercrossing/csvio.py:1719` — leading `=,+,-,@` not neutralised on export (CWE-1236). Fix: neutralise in `_write_csv_rows`.
-- **temp-dir-leak** — `src/rivercrossing/ui/views/ride_setup.py:190` — `mkdtemp` never removed. Fix: `shutil.rmtree` on teardown/replace.
+| File:Line | Category | Fix |
+|-----------|----------|-----|
+| `tests/unit/ui/test_app_exports.py:454` | comment-convention | Capitalized the standalone comment. |
+| `src/.../*.py` (repo-wide) | line-length | 163 of 183 over-99 lines reflowed (noqa explanations moved above the code line); 20 residual documented (base64 literals, `type: ignore`, code+directive > 99). |
+| `tools/toolkit_probe.py:272` | missing-docstring | Docstrings added to the 4 `FeedModel` methods. |
+| `store/__init__.py:1313` | input-validation | Blind `cast` replaced with real `tiebreak_order` validation (length 3 + known spellings → `StoreError`). 8 tests. |
+| `ui/app.py:1402` | error-handling | Library Open guarded like the resume path (ride-named notice + alert + marker clear). 6 tests. |
+| `ui/app.py:372` | silent-failure / observability | Failed XRC loads drained into the launch `Logging` (zero-arg loader contract preserved). 3 tests. |
+| `ui/views/_support.py:333,403,428` | silent-failure / observability | Always-on `XRC_WARN` seam (app log, else stdlib) beside every `wx.LogWarning`. 5 tests. |
+| `ui/presenters/settings.py:209` | silent-failure | `load_settings` fallback recorded through an injectable `WARN` seam. 4 tests. |
+| `ui/presenters/data_source.py:379` | silent-failure | Malformed audit timestamp recorded at WARNING; blank cell kept. 2 tests. |
+| `store/__init__.py:1397` | long-function | Extracted `_copy_roster_rows`. |
+| `ride.py:2715` | long-function | Added `_payload_int`; used at 5 sites. |
+| `ui/app.py:4428` | long-function | Extracted `_load_window_parts` from `build_main_window`. |
+| `ui/presenters/riders.py:236` | dead-code | Deleted the test-only `_rider_rows`; test now exercises the production composition. |
+| `ui/std_dialogs.py:280` | speculative-generality | Dropped the unused `default_cancel` / `icon` params from `show_three_choice`. |
+| `htmlexport/__init__.py:439` | premature-optimization | Removed the unjustified `@lru_cache`. |
+| `ui/app.py:4618` | middle-man | `_save_layout` closure replaced with `functools.partial`. |
+| `ui/views/dialogs.py:428` | noise-comment | Comments that repeated the docstring trimmed. |
+| `docs/user-guide.html:194` | terminology-drift | "results dialog" → "Standings dialog". |
+| `docs/user-guide.html:197` | stale-doc | Publish options correctly located on the Results menu, not in the dialog. |
+| `CHANGELOG.md:16` | inaccurate-changelog | Corrected the Cancel/OK contract wording. |
+| `tools/check_asset_manifest.py:38` | stale-doc | "five" → "six" template artifacts. |
+| `design/docs-md/project-plan.md:190` | stale-doc | "results window" → "Standings window"; dropped the retired export-buttons clause. |
 
 ## Fixes Applied
 
-All severities fixed per user instruction. 37 findings addressed:
+- **Severity selection:** all severities (the user's explicit instruction overrides the skill's
+  approval gate).
+- **Phase 5 auto-fix:** n/a — the repo is ruff-only, and ruff was already clean.
+- **Phase 6 fixes:** `tdd-python-writer` (tests first) across non-overlapping batches, plus a
+  dedicated mechanical line-length reflow pass.
+- **Fix rate:** 31/31 (0 NEEDS_REVIEW, 0 OUT_OF_SCOPE).
 
-- **HIGH (2):** unlogged persistence sink → `log.warn(...)` in `_wire_store_append`; `dialogs.__all__` → added `set_default_button`/`wire_escape_to`.
-- **MEDIUM (12):** 17 store/settings write guards now also `log.warn(...)`; `_support` self-heal records the swallowed exception; R-54 automatic backup wired (on-open + hourly `wx.Timer`, with a measured `EVT_WINDOW_DESTROY` binding-collision segfault fix); `_decorate`/`feed_rows` split into helpers; `_find` deduped into `_support.DialogFindMixin` (17 classes); test helpers deduped into `tests/conftest.py`; `build_main_window` gained `Raises:`; docstring counts corrected ("six"→"seven", flagged-list/feed columns); 15 dangling `docs/EPIC3-SESSION-SUMMARY.md` citations dropped; vacuous `_selected` assertion corrected to `is presenter._issues[1]`; `clock = lambda` → nested `def`; R-32/R-84 contract columns updated.
-- **LOW (23):** shortcut tables regenerated (8 rows); chapter count 11; card-shoe sentence qualified; CHANGELOG "rebuilt once"→"up to twice"; "Number prompt"→"Plate prompt" leftovers; 6 docstring lines rewrapped; broken cross-ref, redundant `Returns:`, stale `_lists_common.py` citation fixed; 3 middle-men deleted (`_format_card_code`, `_fuzzy_team_key`, `refresh`/`_load`); dead defensive logo tiers deleted; insecure temp file → `mkstemp`; HTML export atomic; CSV formula injection neutralised; temp-dir leak fixed.
+## Re-Validation (Phase 7)
 
-Residuals (documented, not silently dropped):
-- **line-length (LOW)** — ~149 lines still exceed the documented 99-char cap via long trailing `# noqa` rationale comments. The `ruff` gate (`E501`) deliberately exempts pragma-terminated lines and is green; rewrapping 149 lines across 64+ files is high-churn with regression risk for a consistency-only gain. Left as-is unless requested.
-- **backup timer start point** — the hourly timer starts at first ride attach (mirrors the existing `_tick_timer` idiom), not at launch; a ride-less session still gets the on-open backup but no hourly ticks. Flagged for a one-line move if R-54 means "hourly from launch".
-
-## Re-Validation
-
-| Gate | Result |
-|---|---|
-| `nox -s lint` | PASS |
-| `nox -s typecheck` | PASS |
-| `nox -s importlint` | PASS (wx stays inside `rivercrossing.ui`) |
-| `nox -s ids_drift` | PASS (230 names) |
-| `nox -s css_drift` | PASS |
-| `nox -s unit` | **5222 passed, 1 skipped**, coverage **99.85%** (≥90%) |
-| `scripts/run-open.sh` | **1 passed** |
+| Tool | Status | Details |
+|------|--------|---------|
+| ruff check `.` | PASS | All checks passed (`select = ALL`) |
+| ruff format `--check` | PASS | 193 files already formatted |
+| mypy | PASS | Success: no issues found in 65 source files |
+| import-linter | PASS | 1 contract kept, 0 broken |
+| ids drift | PASS | ids.py matches 229 names |
+| asset manifest | PASS | all required assets present |
+| pytest | PASS | **6044 passed, 1 skipped**, coverage 99.87% (≥ 90% gate) |
+| nox bundle | PASS | onedir + .app build |
 
 ## Final Status
 
-**Review Status:** ADDRESSED. 35 of 37 findings fully fixed; 2 documented residuals (low-severity line-length consistency; backup-timer start-point nuance). No CRITICAL/HIGH remaining. All CI gates green.
+**Review Status:** PRODUCTION READY
+**Total Fixed:** 31/31 (100%)
+**Remaining:** 0 findings (20 residual over-99-char comment lines documented as non-relocatable
+without code changes).

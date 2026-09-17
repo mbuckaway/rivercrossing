@@ -24,10 +24,18 @@ packaged ``ui/xrc`` for the two simulator dialogs the reported
 regression skipped -- so the Load-result check, its warning, the
 module-scope memoization and the shipped window ids are pinned by
 behaviour, not by a double.
+
+Every failure these loaders report goes to two sinks: ``wx.LogWarning``
+(stderr only) and :data:`~rivercrossing.ui.views._support.XRC_WARN`,
+the always-on seam whose default writes the launch's NDJSON log
+(``app.log``, F1). The three reporting sites are pinned below: the
+failed ``Load``, the dialog rebuild that raises and the menubar
+rebuild that raises.
 """
 
 from __future__ import annotations
 
+import logging
 from functools import cache
 from typing import TYPE_CHECKING, Any
 
@@ -256,6 +264,136 @@ def test_load_menubar_given_a_rebuild_that_raises_returns_none(
     assert warnings == ["XRC rebuild failed: OSError: cannot read the xrc dir"]
     assert result is None
     assert resource.menubars == [(None, ids.MAIN_MENUBAR)]
+
+
+# ------------- the always-on record (XRC_WARN) beside wx.LogWarning
+#
+# wx.LogWarning writes to stderr, so a support session holding the
+# NDJSON log alone could not see an unreadable .xrc or a rebuild that
+# raised. Each of the three reporting sites also calls ``XRC_WARN``
+# with the exception type/message and what it was loading.
+
+_EXPLODED = "cannot read the xrc dir"
+
+
+def _recording_warn(monkeypatch: pytest.MonkeyPatch) -> list[str]:
+    """Point ``XRC_WARN`` at a list and return it."""
+    recorded: list[str] = []
+    monkeypatch.setattr(_support, "XRC_WARN", recorded.append)
+    return recorded
+
+
+def _exploding_fresh_resource() -> object:
+    """Fail the test's rebuild with the pinned OSError text."""
+    raise OSError(_EXPLODED)
+
+
+def test_load_dialog_given_a_rebuild_that_raises_records_the_warning_with_the_name(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The record names the dialog, the exception type and message."""
+    recorded = _recording_warn(monkeypatch)
+    monkeypatch.setattr(_support, "fresh_resource", _exploding_fresh_resource)
+    expected = f"XRC rebuild failed for dialog {ids.SIMULATION_DLG!r}: OSError: {_EXPLODED}"
+
+    _support.load_dialog(_ResourceDouble(), ids.SIMULATION_DLG)
+
+    assert recorded == [expected]
+
+
+def test_load_menubar_given_a_rebuild_that_raises_records_the_warning_with_the_name(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The menubar seam names the menubar on that record too."""
+    recorded = _recording_warn(monkeypatch)
+    monkeypatch.setattr(_support, "fresh_resource", _exploding_fresh_resource)
+    expected = f"XRC rebuild failed for menubar {ids.MAIN_MENUBAR!r}: OSError: {_EXPLODED}"
+
+    _support.load_menubar(_ResourceDouble(), ids.MAIN_MENUBAR)
+
+    assert recorded == [expected]
+
+
+def test_fresh_resource_given_an_unreadable_xrc_records_the_warning_for_the_path(
+    wx_app: Any,  # noqa: ANN401, ARG001 -- taken for the real XRC build, not read
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A failed Load records the file it could not read."""
+    broken = tmp_path / "broken.xrc"
+    broken.write_text("", encoding="utf-8")
+    recorded = _recording_warn(monkeypatch)
+    _log_null = wx.LogNull()
+
+    _support.fresh_resource(xrc_dir=tmp_path)
+
+    assert recorded == [f"XRC load failed for {broken}"]
+
+
+# ------------------------------ XRC_WARN's own default sink
+#
+# The seam's default is what an app that installs nothing gets: the
+# launch's structured log when the running app carries one (F1's
+# ``app.log``), the stdlib log otherwise -- never a lost record.
+
+
+class _RecordingLog:
+    """A recording stand-in for ``Logging.warn``."""
+
+    def __init__(self) -> None:
+        """Start with nothing recorded."""
+        self.warnings: list[str] = []
+
+    def warn(self, msg: str) -> None:
+        """Record *msg* as the always-on warning it stands in for."""
+        self.warnings.append(msg)
+
+
+class _App:
+    """An app double carrying a structured log (or none at all)."""
+
+    def __init__(self, *, log: object | None = None) -> None:
+        """Attach *log* as ``app.log`` when it is given."""
+        if log is not None:
+            self.log = log
+
+
+def test_xrc_warn_defaults_to_the_app_log_then_the_stdlib_log_sink() -> None:
+    """The module-level seam ships the default sink."""
+    assert _support.XRC_WARN is _support._log_xrc_warning
+
+
+def test_log_xrc_warning_given_an_app_log_records_there(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """With a running app, the record lands in its NDJSON log."""
+    log = _RecordingLog()
+    monkeypatch.setattr(wx, "GetApp", lambda: _App(log=log))
+
+    _support._log_xrc_warning("XRC load failed for /tmp/broken.xrc")
+
+    assert log.warnings == ["XRC load failed for /tmp/broken.xrc"]
+
+
+@pytest.mark.parametrize(
+    "app",
+    [None, _App()],
+    ids=["no_app", "app_without_a_log"],
+)
+def test_log_xrc_warning_given_no_app_log_records_through_stdlib_logging(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+    app: object,
+) -> None:
+    """T-3 negative: with no ``app.log``, stdout logging records it."""
+    monkeypatch.setattr(wx, "GetApp", lambda: app)
+
+    with caplog.at_level(logging.WARNING):
+        _support._log_xrc_warning("XRC load failed for /tmp/broken.xrc")
+
+    assert [record.getMessage() for record in caplog.records] == [
+        "XRC load failed for /tmp/broken.xrc"
+    ]
 
 
 # ------------------- the real rebuild (a temporary xrc directory)

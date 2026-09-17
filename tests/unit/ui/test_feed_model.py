@@ -689,7 +689,8 @@ REVIEW_ISSUE_CASES = (
         "duplicate_held_flagged_team_overlap",
     ],
 )
-def test_review_issue_given_a_rows_flags_returns_its_review_reason(  # noqa: PLR0913, PLR0917 -- the four flags plus the reason
+# the four flags plus the reason
+def test_review_issue_given_a_rows_flags_returns_its_review_reason(  # noqa: PLR0913, PLR0917
     duplicate: bool,  # noqa: FBT001 -- parametrize passes the flags positionally
     flagged: bool,  # noqa: FBT001 -- parametrize passes the flags positionally
     team_overlap: bool,  # noqa: FBT001 -- parametrize passes the flags positionally
@@ -736,7 +737,8 @@ def test_review_issue_given_a_held_short_lap_reads_as_a_plain_short_lap() -> Non
     team_overlap=st.booleans(),
     held=st.booleans(),
 )
-def test_review_issue_given_any_flags_is_blank_exactly_when_clean(  # noqa: PLR0913 -- one argument per review flag
+# one argument per review flag
+def test_review_issue_given_any_flags_is_blank_exactly_when_clean(  # noqa: PLR0913
     *, duplicate: bool, flagged: bool, team_overlap: bool, held: bool
 ) -> None:
     """T-7: an issue shows iff one of the three review bits is set."""

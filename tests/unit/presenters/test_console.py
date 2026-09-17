@@ -83,7 +83,8 @@ from rivercrossing.ui.presenters.data_source import (
 
 def _dt(hour: int, minute: int = 0, second: int = 0) -> datetime:
     """Build a naive datetime on the fixed event day."""
-    return datetime(2026, 9, 20, hour, minute, second)  # noqa: DTZ001 -- naive by design, as RideConfig.planned_start
+    # naive by design, as RideConfig.planned_start
+    return datetime(2026, 9, 20, hour, minute, second)  # noqa: DTZ001
 
 
 def _config(*, min_lap_s: int = 1, hold_short_laps: bool = False) -> RideConfig:
@@ -369,7 +370,8 @@ def _make_presenter(
     return presenter
 
 
-def _assert_rejected(  # noqa: PLR0913 -- shared rejection assertion: view + notice/engine + two counts
+# shared rejection assertion: view + notice/engine + two counts
+def _assert_rejected(  # noqa: PLR0913
     view: FakeConsoleView,
     *,
     notice: str,
@@ -1708,7 +1710,8 @@ _GATE_CASE_IDS = (
     _GATE_CASES,
     ids=_GATE_CASE_IDS,
 )
-def test_refresh_console_gates_matches_start_stop_and_undo_enablement_rules(  # noqa: PLR0913 -- (state, crossings, stopped) + the three expected verdicts
+# (state, crossings, stopped) + the three expected verdicts
+def test_refresh_console_gates_matches_start_stop_and_undo_enablement_rules(  # noqa: PLR0913
     ride_state: RideStatus,
     crossings: int,
     *,
@@ -1814,7 +1817,8 @@ _REFRESH_STATE_IDS = ("draft", "running", "stopped", "finished", "reopened")
     _REFRESH_STATE_CASES,
     ids=_REFRESH_STATE_IDS,
 )
-def test_refresh_state_renders_the_ride_state_entry_lock_and_clock(  # noqa: PLR0913 -- the parametrize row's inputs + the two expected verdicts
+# the parametrize row's inputs + the two expected verdicts
+def test_refresh_state_renders_the_ride_state_entry_lock_and_clock(  # noqa: PLR0913
     ride_state: RideStatus,
     crossings: int,
     *,

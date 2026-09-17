@@ -2828,7 +2828,8 @@ class _RefusingResource:
         raise AssertionError("no dialog may be loaded")
 
 
-def _run_dialog_stub(_dialog: object, opener: object) -> int:  # noqa: ARG001 -- run_dialog's keyword
+# run_dialog's keyword
+def _run_dialog_stub(_dialog: object, opener: object) -> int:  # noqa: ARG001
     """Stub ``run_dialog``: return OK without showing a window."""
     return wx.ID_OK
 

@@ -66,10 +66,9 @@ from rivercrossing.ui.views.gauges import RaceClock, StopLight, go_bundle, stop_
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
-    from datetime import date, datetime
+    from datetime import date
     from pathlib import Path
 
-    from rivercrossing.roster import EntryMode
     from rivercrossing.store.backup import HourlyBackup
     from rivercrossing.ui.presenters.console import ConsolePresenter, Cue
     from rivercrossing.ui.presenters.data_source import (
@@ -518,7 +517,8 @@ class StartBlockedListModel(wx.dataview.DataViewIndexListModel):  # type: ignore
         """Return the wx variant type (plain text)."""
         return "string"
 
-    def GetValueByRow(self, row: int, col: int) -> Any:  # noqa: ANN401, ARG002 -- wx ships no stubs; one column
+    # wx ships no stubs; one column
+    def GetValueByRow(self, row: int, col: int) -> Any:  # noqa: ANN401, ARG002
         """Return the blocking issue at *row*."""
         return self._reasons[row]
 
@@ -675,7 +675,7 @@ class MainFrame(DialogFindMixin):  # _find: ui.views._support, over self.frame
     callback idiom; the app bootstrap calls it after construction.
     """
 
-    def __init__(  # noqa: PLR0913, PLR0915 -- constructor: (frame, data_source) + E4.4.2/E8.1.1 seams + every control it resolves
+    def __init__(  # noqa: PLR0913 -- constructor: (frame, data_source) + E4.4.2/E8.1.1 seams
         self,
         frame: wx.Frame,
         *,
@@ -712,16 +712,53 @@ class MainFrame(DialogFindMixin):  # _find: ui.views._support, over self.frame
                 :meth:`wire_console` drives from this frame's own
                 timer. ``None`` (a no-store bootstrap, or a test
                 construction) wires no backup timer at all.
+
+        The body is an ordered list of constructor steps, each in the
+        class's own ``_build_*``/``_bind_*`` idiom. The order is
+        load-bearing: every control before the gauges built into its
+        panel, geometry and layout before a sash position is read, and
+        the whole list before the first render.
         """
         self.frame = frame
         self.data_source = data_source
         self._on_layout_changed = on_layout_changed
         self._backup_scheduler = backup_scheduler
 
-        # Every name resolved below is also in module-level
-        # REQUIRED_CONTROLS, the Fault-B completeness contract
-        # ui.app._load_frame_verified verifies before this constructor
-        # runs. Keep the two in lockstep.
+        self._resolve_controls()
+        self._build_gauges()
+        self._init_list_state()
+        self._bind_feed_and_lists()
+        # LoadFrame does not honour main.xrc's <size> -- measured: the
+        # frame comes back at the sizer's own computed minimum
+        # (~429x373), not the canvas's 1100x700 -- hence an explicit
+        # size here (_apply_frame_geometry), which also fits the frame
+        # to its display.
+        self._apply_frame_geometry(initial_geometry)
+        self._bind_frame_commands()
+        self._init_feed_state()
+        self._init_render_seams()
+
+        # Reflow now that the size and every sizer item are final, so
+        # the splitter has its real client area before a sash position
+        # is read or restored.
+        self.frame.Layout()
+
+        self._bind_layout_persistence(initial_sash)
+        self._show_first_render()
+
+    # ------------------------------------------------ constructor steps
+
+    def _resolve_controls(self) -> None:
+        """Resolve every XRC control this view renders through.
+
+        Every name here is also in module-level
+        :data:`REQUIRED_CONTROLS`, the Fault-B completeness contract
+        ``ui.app._load_frame_verified`` verifies before this constructor
+        runs; keep the two in lockstep. The fixed-width labels -- both
+        clock readings, the Current Lap reading and the Status label --
+        are floored here too, with the controls they pin, because XRC
+        has no window-level minsize.
+        """
         self.crossings_list = self._find(ids.CROSSINGS_LIST, wx.dataview.DataViewCtrl)
         # Phase 4: the search row main.xrc declares above the list (the
         # rider editor's own label + wxSearchCtrl pair).
@@ -777,6 +814,27 @@ class MainFrame(DialogFindMixin):  # _find: ui.views._support, over self.frame
         # status word, so its fixed column never resizes on a state
         # change.
         _pin_status_label_width(self.ride_status_lbl)
+        # WS-H review notebook: the two DataView shells and their own
+        # review_btn / filter box (the Needs Review tab's local filter).
+        self.review_notebook = self._find(REVIEW_NOTEBOOK, wx.Notebook)
+        self.flagged_list = self._find(ids.FLAGGED_LIST, wx.dataview.DataViewCtrl)
+        self.review_btn = self._find(ids.REVIEW_BTN, wx.Button)
+        self.show_held_only_chk = self._find(ids.SHOW_HELD_ONLY_CHK, wx.CheckBox)
+        self.console_riders_list = self._find(CONSOLE_RIDERS_LIST, wx.dataview.DataViewCtrl)
+
+    def _build_gauges(self) -> None:
+        """Build the WS-D dials, the status lamp and the GO/STOP glyphs.
+
+        XRC cannot author a ``wx.Control`` subclass (its header
+        footnote), so the dials and the lamp are built code-side inside
+        main.xrc's placeholder panels. The bitmap buttons' glyphs and
+        labels are applied here too: the XRC bitmap-button handler
+        ignores ``<label>`` text (measured), and without them the
+        buttons would be icon-only and unnamed to assistive tech
+        (UX-DESKTOP section 7). Stop is disabled at rest as well, so a
+        construction never flashes an enabled Stop before the
+        presenter's first render (C2).
+        """
         self.elapsed_clock = self._build_clock_dial(self.elapsed_clock_panel, ELAPSED_CLOCK)
         self.remaining_clock = self._build_clock_dial(self.remaining_clock_panel, REMAINING_CLOCK)
         self.ride_status_light = StopLight(self.ride_status_panel)
@@ -787,10 +845,8 @@ class MainFrame(DialogFindMixin):  # _find: ui.views._support, over self.frame
         self.ride_status_panel.GetSizer().Insert(
             0, self.ride_status_light, 0, wx.ALIGN_CENTRE_VERTICAL | wx.RIGHT, 8
         )
-        # WS-D GO/STOP glyphs. The labels are re-applied because the
-        # XRC bitmap-button handler ignores <label> text (measured);
-        # without them the buttons would be icon-only and unnamed to
-        # assistive tech (UX-DESKTOP section 7).
+        # WS-D GO/STOP glyphs (the labels the XRC handler drops --
+        # _build_gauges' docstring).
         self.start_btn.SetBitmap(go_bundle().GetBitmapFor(self.start_btn))
         self.start_btn.SetLabel("Start ride")
         self.stop_btn.SetBitmap(stop_bundle().GetBitmapFor(self.stop_btn))
@@ -801,17 +857,15 @@ class MainFrame(DialogFindMixin):  # _find: ui.views._support, over self.frame
         # just avoids a flash before the first render.
         self.stop_btn.Enable(False)  # noqa: FBT003 -- wx API takes a positional bool
 
-        # WS-H review notebook: the two DataView shells, their
-        # columns, and the review_btn/open-rider wiring (both are pure
-        # view seams; the app wires open-entry-detail later).
-        self.review_notebook = self._find(REVIEW_NOTEBOOK, wx.Notebook)
-        self.flagged_list = self._find(ids.FLAGGED_LIST, wx.dataview.DataViewCtrl)
-        self.review_btn = self._find(ids.REVIEW_BTN, wx.Button)
-        # The Needs Review tab's own filter box: view-local state, never
-        # a presenter input. Toggling it re-filters the rows the last
-        # ``show_flagged`` handed over, rather than asking again.
-        self.show_held_only_chk = self._find(ids.SHOW_HELD_ONLY_CHK, wx.CheckBox)
-        self.console_riders_list = self._find(CONSOLE_RIDERS_LIST, wx.dataview.DataViewCtrl)
+    def _init_list_state(self) -> None:
+        """Build the two review/riders lists' columns, models and seams.
+
+        WS-H's review tab and W11's riders tab each own their columns,
+        their model and their activation seams; the seams are pure view
+        slots the app wires later (open-entry-detail, the review
+        decision, the credited lap's crossing detail), so a construction
+        that never wires one is inert rather than broken.
+        """
         self._flagged_columns = self._build_flagged_columns()
         self._riders_columns = self._build_riders_columns()
         self._flagged_model: FlaggedListModel | None = None
@@ -845,6 +899,15 @@ class MainFrame(DialogFindMixin):  # _find: ui.views._support, over self.frame
         # feed's own key-down hook, Ctrl+E from the frame accelerator.
         self._on_delete_crossing: Callable[[int], None] | None = None
         self._on_edit_plate_crossing: Callable[[int], None] | None = None
+
+    def _bind_feed_and_lists(self) -> None:
+        """Bind the feed's, riders' and review lists' own events.
+
+        View-local only: the feed's activation and header sort, the
+        search box above it (its text is forwarded to the presenter,
+        which owns the filter), the riders tab's activation and header
+        arrow, and the review tab's activation.
+        """
         self.review_btn.Bind(wx.EVT_BUTTON, lambda _event: self._on_review_clicked())
         self.show_held_only_chk.Bind(wx.EVT_CHECKBOX, self._on_show_held_only_changed)
         self.crossings_list.Bind(
@@ -872,21 +935,21 @@ class MainFrame(DialogFindMixin):  # _find: ui.views._support, over self.frame
         )
         self.flagged_list.Bind(wx.dataview.EVT_DATAVIEW_ITEM_ACTIVATED, self._on_flagged_activated)
 
-        # LoadFrame does not honour main.xrc's <size> -- measured: the
-        # frame comes back sized to the sizer's own computed minimum
-        # (~429x373), not the canvas's 1100x700. SetSize is what
-        # actually grows this window (and the splitter's client area)
-        # to the canvas's documented size right now; a persisted
-        # geometry (E8.1.1) replaces that default, so a relaunch opens
-        # where the operator left the frame. Either way the size and
-        # position then go through the screen fit (Phase 6), so a
-        # geometry saved on a larger display -- or on a display that is
-        # no longer attached -- comes back fully visible.
-        self._apply_frame_geometry(initial_geometry)
-        # Phase 6: a monitor change re-fits. wx fires this on the frame
-        # when the display arrangement changes, on both platforms.
-        self.frame.Bind(wx.EVT_DISPLAY_CHANGED, self._on_display_changed)
+    def _bind_frame_commands(self) -> None:
+        """Bind the frame's own commands and publish the console handle.
 
+        Phase 6: a monitor change re-fits the frame. Phase 6/7: F2,
+        Ctrl+D and Ctrl+E are frame-local command ids
+        (``wx.NewIdRef``) because no menu item owns them --
+        :meth:`accelerator_entries` also hands each entry to
+        ``app._apply_accelerators``, so the bootstrap's menubar-derived
+        table cannot drop them after construction. Delete is
+        feed-scoped rather than a frame accelerator: a frame row for the
+        bare key would swallow it before ``plate_input`` ever saw it, so
+        the list binds it and Ctrl+D stays the frame's route to the same
+        command.
+        """
+        self.frame.Bind(wx.EVT_DISPLAY_CHANGED, self._on_display_changed)
         # Phase 6: F2 opens the selected feed row's Crossing Detail.
         # The id is frame-local (wx.NewIdRef) because no menu item owns
         # this command; accelerator_entries() also hands the entry to
@@ -916,17 +979,30 @@ class MainFrame(DialogFindMixin):  # _find: ui.views._support, over self.frame
         # ``frame.presenter`` precedent (results_win.py).
         self.frame.console = self
 
+    def _init_feed_state(self) -> None:
+        """Build the feed's columns and its opening header sort.
+
+        Phase 4: the feed's current header sort, re-applied whenever the
+        model is rebuilt (a new model drops the control's sort key).
+        Unlike the riders tab, the feed always has one: Time descending,
+        so the newest crossing is the first row.
+        """
         self._total_column: Any = None
         self._lap_time_column: Any = None
         self._build_columns()
         self._crossings_model: CrossingsFeedModel | None = None
-        # Phase 4: the feed's current header sort, re-applied whenever
-        # the model is rebuilt (a new model drops the control's sort
-        # key). Unlike the riders tab, the feed always has one: Time
-        # ascending, so the oldest crossing is the first row.
         self._feed_sort_column: int = DEFAULT_FEED_SORT[0]
         self._feed_sort_ascending: bool = DEFAULT_FEED_SORT[1]
 
+    def _init_render_seams(self) -> None:
+        """Declare the state every later render and wiring call fills.
+
+        E7.2.1's menu-enablement binder seam, W5's presenter back-call
+        and D3's tick timer / plate-submit callback are all declared
+        here, before any wiring, so a construction that never wires them
+        (a test, or a console with no ride yet) renders without an
+        ``AttributeError``.
+        """
         # E7.2.1: the menu-enablement binder's seam. set_state fires it
         # on every ride-state change (the epic's "existing ride-state-
         # change seam"), and show_feed fires it too -- the console
@@ -958,22 +1034,29 @@ class MainFrame(DialogFindMixin):  # _find: ui.views._support, over self.frame
         # deliver each later event twice).
         self._wired = False
 
-        # Reflow now that the size and every sizer item are final, so
-        # the splitter has its real client area before a sash position
-        # is read or restored.
-        self.frame.Layout()
+    def _bind_layout_persistence(self, initial_sash: int | None) -> None:
+        """Wire and restore the persisted splitter/frame placement.
 
+        E8.1.1's disk-backed layout store, the second half: the sash is
+        restored now (the caller reflows first, so the splitter has its
+        real client area), and the frame's placement persists on
+        move/resize and on close. The close handler is bound ahead of
+        the app's own ``EVT_CLOSE`` handler, so a quitting frame saves
+        its final layout before that handler destroys it.
+        """
         self.main_splitter.Bind(wx.EVT_SPLITTER_SASH_POS_CHANGED, self._on_sash_changed)
         self._restore_sash_position(initial_sash)
-        # E8.1.1: persist the frame's placement on move/resize and on
-        # close -- the second half of the disk-backed layout store (the
-        # app wires on_layout_changed to the settings module). Bound
-        # here, ahead of the app's own EVT_CLOSE handler, so a quitting
-        # frame saves its final layout before that handler destroys it.
         self.frame.Bind(wx.EVT_MOVE, self._on_geometry_changed)
         self.frame.Bind(wx.EVT_SIZE, self._on_geometry_changed)
         self.frame.Bind(wx.EVT_CLOSE, self._on_frame_close)
 
+    def _show_first_render(self) -> None:
+        """Render every feed the data source answers, once (W1).
+
+        The construction's own first paint: the crossings feed and, from
+        the same rows, the review tab; then the riders list and the
+        counters. Every later render comes from the presenter.
+        """
         rows = self.data_source.feed_rows()
         self.show_feed(rows)
         self.show_flagged([row for row in rows if row.flagged or row.duplicate])
@@ -1228,7 +1311,7 @@ class MainFrame(DialogFindMixin):  # _find: ui.views._support, over self.frame
         new model, which drops the sort key the control was holding,
         so the arrow and the row order are restored from
         :attr:`_feed_sort_column`/:attr:`_feed_sort_ascending` (Time
-        ascending until an operator clicks a header). The
+        descending until an operator clicks a header). The
         ``UnsetAsSortKey`` first is the load-bearing macOS step
         :meth:`_apply_sort` documents: ``SetSortOrder`` is a no-op
         when the direction is unchanged, so without the clear the
@@ -1384,7 +1467,8 @@ class MainFrame(DialogFindMixin):  # _find: ui.views._support, over self.frame
             return
         event.Skip()
 
-    def _on_edit_crossing_accelerator(self, _event: Any) -> None:  # noqa: ANN401 -- wx ships no stubs
+    # wx ships no stubs
+    def _on_edit_crossing_accelerator(self, _event: Any) -> None:  # noqa: ANN401
         """Open the selected feed row's Crossing Detail on F2 (Phase 6).
 
         The keyboard twin of :meth:`_on_crossing_activated`: that
@@ -1478,6 +1562,12 @@ class MainFrame(DialogFindMixin):  # _find: ui.views._support, over self.frame
         """
         self._total_column.SetHidden(not show_total)
         self._lap_time_column.SetHidden(not show_lap)
+        # macOS hides a column through AppKit alone, and the outline
+        # view's last-column-only autoresizing then leaves a re-shown
+        # column at width 0 (measured: IsHidden() False, width 0), so
+        # re-pin the W9 widths after every toggle.
+        for index, width in enumerate(feed_model.COLUMN_WIDTHS):
+            self.crossings_list.GetColumn(index).SetWidth(width)
 
     # --------------------------------------------- frame size, splitter
 
@@ -1783,8 +1873,6 @@ class MainFrame(DialogFindMixin):  # _find: ui.views._support, over self.frame
         name: str,
         logo: Path | None,
         event_date: date,
-        planned_start: datetime,  # noqa: ARG002 -- kept for the app's one call shape
-        entry_mode: EntryMode,  # noqa: ARG002 -- kept for the app's one call shape
         venue: str,
         organizer: str,
         scorer: str,
@@ -1800,12 +1888,10 @@ class MainFrame(DialogFindMixin):  # _find: ui.views._support, over self.frame
 
         The date renders ISO (``event_date``'s own storage shape) and
         the lap length renders as ``str(lap_km)``; the values are never
-        typed into, so no other formatting is invented for them.
-
-        ``planned_start``/``entry_mode`` are deliberately not rendered
-        here -- the group shows name/date/venue/organizer/scorer/lap km
-        only -- but stay in the signature so the app's single header
-        seam and its recording fakes keep one call shape.
+        typed into, so no other formatting is invented for them. The
+        group shows name/date/venue/organizer/scorer/lap km only, so a
+        config fact it does not render (``planned_start``,
+        ``entry_mode``) is not accepted here.
         """
         self.ride_name_value.SetValue(name)
         self.ride_date_value.SetValue(event_date.isoformat())

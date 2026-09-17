@@ -392,7 +392,9 @@ class ConsoleView(Protocol):
         """
         ...
 
-    def confirm(  # noqa: PLR0913 -- (title, message) + 2 button labels + danger, mirroring std_dialogs.show_confirm
+    # (title, message) + 2 button labels + danger, mirroring
+    # std_dialogs.show_confirm
+    def confirm(  # noqa: PLR0913
         self,
         title: str,
         message: str,

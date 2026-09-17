@@ -175,7 +175,9 @@ class SimulatorDialog(DialogFindMixin):  # _find: ui.views._support
     # when the app threaded none in.
     on_new_ride: Callable[[], None] | None
 
-    def __init__(  # noqa: PLR0913 -- (dialog, engine, roster) + the seeds, the speed setting and the New Ride route
+    # (dialog, engine, roster) + the seeds, the speed setting and the
+    # New Ride route
+    def __init__(  # noqa: PLR0913
         self,
         dialog: wx.Dialog,
         *,
@@ -586,7 +588,8 @@ class SimRunningDialog(DialogFindMixin):  # _find: ui.views._support
     so the dialog stays responsive.
     """
 
-    def __init__(  # noqa: PLR0913 -- (dialog, engine, roster) + the race settings and G9's three counts
+    # (dialog, engine, roster) + the race settings and G9's three counts
+    def __init__(  # noqa: PLR0913
         self,
         dialog: wx.Dialog,
         *,

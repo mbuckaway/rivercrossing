@@ -14,8 +14,14 @@ in the build order (S3) and would tie this UI-only seam to modules
 several EPICs away.
 
 Pure Python -- no ``wx`` import may ever land here (R-71).
+
+:data:`WARN` is the module's injectable warning seam -- the same shape
+as ``console.FINISH_GATE`` -- used where a display helper must degrade
+to a blank cell rather than raise: the fallback is recorded instead of
+being silently swallowed.
 """
 
+import logging
 from dataclasses import dataclass
 from datetime import datetime
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
@@ -32,7 +38,7 @@ from rivercrossing.standings import (
 from rivercrossing.ui.rider_columns import SOLO_TEAM_TEXT
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Callable, Sequence
 
     from rivercrossing.cards import Card
     from rivercrossing.ride import Crossing, Event, PendingMiss, RideEngine
@@ -40,6 +46,7 @@ if TYPE_CHECKING:
 
 __all__ = [
     "CORRECTION_ACTIONS",
+    "WARN",
     "AuditRow",
     "Counters",
     "DataSource",
@@ -53,6 +60,13 @@ __all__ = [
     "format_duration",
     "has_correction_since",
 ]
+
+
+# The display helpers' warning sink: where a helper must render a blank
+# cell rather than raise (a malformed stored value), the refusal is
+# recorded here instead of being silently swallowed. Tests swap the seam
+# for a recorder.
+WARN: Callable[[str], None] = logging.getLogger(__name__).warning
 
 
 @dataclass(frozen=True, slots=True)
@@ -369,7 +383,9 @@ def _event_time(event: Event) -> str:
 
     Every ride-level event payload carries at least one ISO-8601
     timestamp key (crossed_at/actual_start/stopped_at/finished_at/
-    reopened_at); the audit row shows whichever applies, locally.
+    reopened_at); the audit row shows whichever applies, locally. A
+    value that is not ISO-8601 renders ``""`` and is recorded through
+    :data:`WARN` -- the cell degrades, the corruption is not lost.
     """
     for key in ("crossed_at", "actual_start", "stopped_at", "finished_at", "reopened_at"):
         value = event.payload.get(key)
@@ -377,6 +393,7 @@ def _event_time(event: Event) -> str:
             try:
                 return _feed_time(datetime.fromisoformat(value))
             except ValueError:
+                WARN(f"audit event {event.action!r} has a malformed {key} timestamp: {value!r}")
                 return ""
     return ""
 
@@ -1015,7 +1032,8 @@ class EmptyDataSource:
 
     def standings(
         self,
-        order: tuple[TieBreak, ...] = DEFAULT_TIEBREAK_ORDER,  # noqa: ARG002 -- DataSource's signature; empty state returns no rows
+        # DataSource's signature; empty state returns no rows
+        order: tuple[TieBreak, ...] = DEFAULT_TIEBREAK_ORDER,  # noqa: ARG002
     ) -> tuple[list[StandingsRow], list[StandingsRow]]:
         """Return empty teams and solo standings sections."""
         return [], []
@@ -1024,6 +1042,7 @@ class EmptyDataSource:
         """Return no audit trail rows."""
         return []
 
-    def results_stale(self, export_watermark: int | None) -> bool:  # noqa: ARG002 -- DataSource's signature; the empty state has no events
+    # DataSource's signature; the empty state has no events
+    def results_stale(self, export_watermark: int | None) -> bool:  # noqa: ARG002
         """Return False: no ride, no events, nothing to go stale."""
         return False

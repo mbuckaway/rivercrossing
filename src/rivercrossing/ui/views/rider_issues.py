@@ -89,7 +89,8 @@ def _card_check_text(card_check: CardCheck) -> str:
     if card_check.verdict == NOT_ENOUGH:
         return f"{summary} — NOT ENOUGH"
     if card_check.verdict == FAR_TOO_MANY:
-        return f"{summary} — far too many (2×+)"  # noqa: RUF001 -- the multiplication sign is the intended display glyph
+        # the multiplication sign is the intended display glyph
+        return f"{summary} — far too many (2×+)"  # noqa: RUF001
     return f"{summary} — OK"
 
 

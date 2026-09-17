@@ -270,12 +270,15 @@ def check_dataview_bold_row() -> str:
             self.flagged = {FLAGGED_ROW}
 
         def GetValueByRow(self, row: int, col: int) -> str:  # noqa: N802
+            """Return the text of the ``row``/``col`` feed cell."""
             return self.rows[row][col]
 
         def GetColumnCount(self) -> int:  # noqa: N802
+            """Return the number of feed columns."""
             return 2
 
         def GetCount(self) -> int:  # noqa: N802
+            """Return the number of feed rows."""
             return len(self.rows)
 
         def GetAttrByRow(  # noqa: N802
@@ -284,6 +287,7 @@ def check_dataview_bold_row() -> str:
             col: int,  # noqa: ARG002
             attr: wx.dataview.DataViewItemAttr,
         ) -> bool:
+            """Bold the cells of a short-lap-flagged row."""
             if row in self.flagged:
                 attr.SetBold(True)
                 return True

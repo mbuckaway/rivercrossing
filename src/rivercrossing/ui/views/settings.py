@@ -132,7 +132,8 @@ class SettingsDialog(DialogFindMixin):  # _find: ui.views._support
             publish_all_cards=self._settings.publish_all_cards,
         )
 
-    def _on_ok(self, event: Any) -> None:  # noqa: ANN401, ARG002 -- wx handler signature; EndModal is explicit, no Skip needed
+    # wx handler signature; EndModal is explicit, no Skip needed
+    def _on_ok(self, event: Any) -> None:  # noqa: ANN401, ARG002
         """Collect the controls, fire ``on_save``, then end the modal.
 
         Cancel needs no handler: wx binds Escape and a click on

@@ -846,7 +846,8 @@ def test_shoe_replay_total_mode_reproduces_the_budget_state(cycles: int) -> None
     cycles=st.integers(min_value=1, max_value=4),
     seed=st.integers(min_value=0, max_value=10**6),
 )
-def test_shoe_total_mode_never_deals_more_than_the_budget(  # noqa: PLR0913, PLR0917 -- 4 generated inputs
+# 4 generated inputs
+def test_shoe_total_mode_never_deals_more_than_the_budget(  # noqa: PLR0913, PLR0917
     decks: int, jokers_per_deck: int, cycles: int, seed: int
 ) -> None:
     """T-7 invariant: the ride-wide joker allowance is never exceeded.

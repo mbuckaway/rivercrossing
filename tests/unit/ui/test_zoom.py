@@ -208,11 +208,13 @@ class _FakeWx:
         self._top_level_windows = top_level_windows
         self.font_calls: list[_FakeScaledFont] = []
 
-    def GetTopLevelWindows(self) -> tuple[Any, ...]:  # noqa: N802 -- wx's own API name, what ZoomController.apply calls
+    # wx's own API name, what ZoomController.apply calls
+    def GetTopLevelWindows(self) -> tuple[Any, ...]:  # noqa: N802
         """Return the fixed open-window list."""
         return self._top_level_windows
 
-    def Font(self, *args: object) -> _FakeScaledFont:  # noqa: N802 -- wx's own factory name, what _scaled_font calls
+    # wx's own factory name, what _scaled_font calls
+    def Font(self, *args: object) -> _FakeScaledFont:  # noqa: N802
         """Record one font build and return its record."""
         font = _FakeScaledFont(args)
         self.font_calls.append(font)
@@ -228,7 +230,8 @@ class _FakeWindow:
         self._children = list(children)
         self.set_fonts: list[_FakeScaledFont] = []
 
-    def GetFont(self) -> _FakeBaseFont:  # noqa: N802 -- wx.Window's own API name, what _apply_fonts reads
+    # wx.Window's own API name, what _apply_fonts reads
+    def GetFont(self) -> _FakeBaseFont:  # noqa: N802
         """Return the fixed base font."""
         return self._base_font
 

@@ -60,7 +60,8 @@ _VALID_KWARGS: dict[str, object] = {
     "lap_km": 8.0,
     "organizer": "GORBA",
     "scorer": "K. Singh",
-    "planned_start": datetime(2026, 9, 20, 10, 0),  # noqa: DTZ001 -- naive local, RideConfig's own contract
+    # naive local, RideConfig's own contract
+    "planned_start": datetime(2026, 9, 20, 10, 0),  # noqa: DTZ001
     "planned_duration_s": 21600,
     "min_lap_s": 1080,
     "entry_mode": EntryMode.MIXED,

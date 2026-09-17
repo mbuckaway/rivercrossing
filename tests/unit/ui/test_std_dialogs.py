@@ -47,7 +47,6 @@ _CONFIRM_STYLE = wx.OK | wx.CANCEL | wx.CENTRE | wx.ICON_WARNING | wx.CANCEL_DEF
 _DANGER_STYLE = wx.OK | wx.CANCEL | wx.CENTRE | wx.ICON_ERROR | wx.CANCEL_DEFAULT
 _PROMPT_STYLE = wx.OK | wx.CANCEL | wx.CENTRE | wx.ICON_INFORMATION
 _THREE_CHOICE_STYLE = wx.YES_NO | wx.CANCEL | wx.CENTRE | wx.ICON_QUESTION | wx.CANCEL_DEFAULT
-_THREE_CHOICE_OK_DEFAULT_STYLE = wx.YES_NO | wx.CANCEL | wx.CENTRE | wx.ICON_QUESTION
 
 _OK_LABEL = "Delete ride"
 _CANCEL_LABEL = "Keep ride"
@@ -101,14 +100,6 @@ _CONFIRM_ICON_AND_DEFAULT_CASES = (
     (_PROMPT_ACT, wx.ICON_INFORMATION, False),
 )
 _CONFIRM_ICON_AND_DEFAULT_CASE_IDS = ("show_confirm", "show_danger", "show_prompt")
-
-# The three-outcome dialog: only Cancel is safe to reach by a reflex
-# Enter -- (default_cancel, expected style).
-_THREE_CHOICE_CANCEL_DEFAULT_CASES = (
-    (True, _THREE_CHOICE_STYLE),
-    (False, _THREE_CHOICE_OK_DEFAULT_STYLE),
-)
-_THREE_CHOICE_CANCEL_DEFAULT_CASE_IDS = ("cancel_default", "yes_no_default")
 
 # Every modal id the three-choice dialog can return.
 _THREE_CHOICE_RESULT_CASES = (wx.ID_YES, wx.ID_NO, wx.ID_CANCEL)
@@ -335,33 +326,18 @@ def test_show_three_choice_returns_the_operators_chosen_modal_id(
     assert created_dialogs[0].destroy_count == 1
 
 
-@pytest.mark.parametrize(
-    ("default_cancel", "expected_style"),
-    _THREE_CHOICE_CANCEL_DEFAULT_CASES,
-    ids=_THREE_CHOICE_CANCEL_DEFAULT_CASE_IDS,
-)
-def test_show_three_choice_cancel_flag_decides_the_default_button(
+def test_show_three_choice_given_three_labels_makes_cancel_the_default(
     created_dialogs: list[_FakeMessageDialog],
-    expected_style: int,
-    *,
-    default_cancel: bool,
 ) -> None:
-    """Cancel is the default button only when the caller asks for it."""
-    act = partial(_THREE_CHOICE_ACT, default_cancel=default_cancel)
+    """Cancel is always the default button, never a caller's choice.
 
-    act(_PARENT, _TITLE, _MESSAGE)
+    The one real caller (the held-card review prompt) asks a
+    destructive-or-void question with the same severity as every other
+    ``show_three_choice``, so the default button and the icon are fixed
+    here rather than parameterized.
+    """
+    _THREE_CHOICE_ACT(_PARENT, _TITLE, _MESSAGE)
 
     style = created_dialogs[0].style
-    assert style == expected_style
+    assert style == _THREE_CHOICE_STYLE
     assert style & (wx.YES_NO | wx.CANCEL) == wx.YES_NO | wx.CANCEL
-
-
-def test_show_three_choice_honours_a_non_question_icon(
-    created_dialogs: list[_FakeMessageDialog],
-) -> None:
-    """The default question icon steps aside for a sterner one."""
-    _THREE_CHOICE_ACT(_PARENT, _TITLE, _MESSAGE, icon=wx.ICON_WARNING)
-
-    style = created_dialogs[0].style
-    assert style & wx.ICON_WARNING == wx.ICON_WARNING
-    assert style & wx.ICON_QUESTION == 0

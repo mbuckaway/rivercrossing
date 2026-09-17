@@ -559,6 +559,23 @@ def _payload_dt(event: Event, key: str) -> datetime:
     return datetime.fromisoformat(str(event.payload[key]))
 
 
+def _payload_int(event: Event, key: str) -> int:
+    """Parse one integer payload value back into an int.
+
+    The corrections' ``seq``/``miss_seq`` keys are ints live but JSON
+    numbers-or-strings on disk, so the replay path reads them through
+    the same int-coercion every live call site used.
+
+    Args:
+        event: The event being replayed.
+        key: The payload key holding the integer.
+
+    Returns:
+        The parsed integer.
+    """
+    return int(str(event.payload[key]))
+
+
 def _format_elapsed(seconds: float) -> str:
     """Render *seconds* as the session's h:mm:ss reading (scope 6d).
 
@@ -1797,7 +1814,9 @@ class RideEngine:
 
     # --------------------------------- E7.1.1 audited corrections
 
-    def edit_crossing(  # noqa: PLR0913, PLR0917 -- (entry, seq, crossed_at, reason): the correction's four fixed fields
+    # (entry, seq, crossed_at, reason): the correction's four fixed
+    # fields
+    def edit_crossing(  # noqa: PLR0913, PLR0917
         self, entry_id: str, seq: int, crossed_at: datetime, reason: str
     ) -> Event:
         """Re-time one crossing without re-dealing its card (E7.1.1).
@@ -2779,14 +2798,14 @@ class RideEngine:
         elif action == "edit_crossing":
             self.edit_crossing(
                 str(event.payload["entry_id"]),
-                int(str(event.payload["seq"])),
+                _payload_int(event, "seq"),
                 _payload_dt(event, "crossed_at"),
                 reason=str(event.payload["reason"]),
             )
         elif action == "void_crossing":
             self.void_crossing(
                 str(event.payload["entry_id"]),
-                int(str(event.payload["seq"])),
+                _payload_int(event, "seq"),
                 reason=str(event.payload["reason"]),
             )
         elif action == "add_crossing_at":
@@ -2799,13 +2818,13 @@ class RideEngine:
             self.record_miss(_payload_dt(event, "crossed_at"), reason=str(event.payload["reason"]))
         elif action == "assign_plate_to_miss":
             self.assign_plate_to_miss(
-                int(str(event.payload["miss_seq"])),
+                _payload_int(event, "miss_seq"),
                 str(event.payload["new_plate"]),
                 reason=str(event.payload["reason"]),
             )
         elif action == "reassign":
             self.reassign_crossing(
-                int(str(event.payload["seq"])),
+                _payload_int(event, "seq"),
                 str(event.payload["new_plate"]),
                 reason=str(event.payload["reason"]),
             )
@@ -2853,7 +2872,7 @@ class RideEngine:
                 entry/seq -- an inconsistent event stream.
         """
         entry_id = str(event.payload["entry_id"])
-        seq = int(str(event.payload["seq"]))
+        seq = _payload_int(event, "seq")
         for crossing in self._crossings:
             if crossing.entry_id == entry_id and crossing.seq == seq:
                 return crossing

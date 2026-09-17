@@ -195,7 +195,8 @@ def _picked_time(time_picker: Any, base_date: date) -> datetime:  # noqa: ANN401
     )
 
 
-def _bind_reason_enable(dialog: Any, reason_input: Any) -> None:  # noqa: ANN401 -- wx ships no stubs
+# wx ships no stubs
+def _bind_reason_enable(dialog: Any, reason_input: Any) -> None:  # noqa: ANN401
     """Start OK disabled and enable it when the reason is non-blank.
 
     ``void_card_confirm_dlg`` is a scoring change: the operator must not
@@ -213,7 +214,8 @@ def _bind_reason_enable(dialog: Any, reason_input: Any) -> None:  # noqa: ANN401
     reason_input.Bind(wx.EVT_TEXT, _on_text)
 
 
-def _bind_reason_gate(reason_input: Any) -> Callable[[], bool]:  # noqa: ANN401 -- wx ships no stubs
+# wx ships no stubs
+def _bind_reason_gate(reason_input: Any) -> Callable[[], bool]:  # noqa: ANN401
     """Return a gate: True when reason is non-empty, else refocus.
 
     The returned callable decides whether an OK/Void click may close

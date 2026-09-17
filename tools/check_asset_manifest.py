@@ -35,7 +35,7 @@ Run it directly to check a tree without waiting for a build::
 ``main()`` checks all five manifests -- ``verify_assets``,
 ``verify_vectors``, ``verify_templates``, ``verify_pdf_fonts`` and
 ``verify_docs`` -- so a tree missing either the ``ui/`` assets, the
-two self-test vector CSVs, the five htmlexport template artifacts, the
+two self-test vector CSVs, the six htmlexport template artifacts, the
 three PDF report TTFs or any of the five docs fails this direct check
 the same way it would fail the real build.
 """

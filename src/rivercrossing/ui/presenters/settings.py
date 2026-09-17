@@ -11,9 +11,17 @@ SQLite schema stays untouched. The store is plain module functions
 locates the file, :func:`load_settings` reads it (never raising),
 :func:`save_settings` writes it atomically, and the dialog's view
 stays wx-free like every other presenter.
+
+A load that cannot read the file falls back to
+:func:`default_settings` -- and records why through :data:`WARN`, so an
+unreadable or corrupt file is never silently replaced by the next save
+(the E8.1.1 data-loss path). ``WARN`` is the injectable seam, the same
+shape as ``console.FINISH_GATE``: a module-level callable the app (or a
+test) may swap, defaulting to the stdlib logger.
 """
 
 import json
+import logging
 import math
 from dataclasses import dataclass
 from pathlib import Path
@@ -24,10 +32,11 @@ from platformdirs import user_config_dir
 from rivercrossing.ui.theme import ThemeMode
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping
+    from collections.abc import Callable, Mapping
 
 __all__ = [
     "DEFAULT_ZOOM_PERCENT",
+    "WARN",
     "ZOOM_LADDER",
     "AppSettings",
     "SettingsView",
@@ -50,6 +59,12 @@ DEFAULT_ZOOM_PERCENT = 100
 
 # The three ThemeMode spellings, as a tuple for membership tests.
 _THEME_SPELLINGS: tuple[str, ...] = tuple(mode.value for mode in ThemeMode)
+
+# The load path's warning sink (E8.1.1 data-loss guard): a file that
+# cannot be read or decoded falls back to the defaults and is recorded
+# here, so the operator can see why the next save replaced it. Tests
+# swap the seam for a recorder.
+WARN: Callable[[str], None] = logging.getLogger(__name__).warning
 
 # Plan §10's floor for the stored average rider speed: a 0 km/h (or
 # negative) value would make the card-sufficiency estimate's lap time
@@ -192,9 +207,10 @@ def load_settings(path: Path | None = None) -> AppSettings:
 
     A missing file, undecodable JSON, or a JSON value that is not an
     object all return :func:`default_settings` -- loading never
-    raises. Unknown keys, missing keys and wrong value types default
-    field-by-field, and ``zoom_percent`` is clamped onto
-    :data:`ZOOM_LADDER` (only the 90-150 rungs are valid).
+    raises, and the reason is recorded through :data:`WARN`. Unknown
+    keys, missing keys and wrong value types default field-by-field,
+    and ``zoom_percent`` is clamped onto :data:`ZOOM_LADDER` (only the
+    90-150 rungs are valid).
 
     Args:
         path: The settings file to read; ``None`` uses
@@ -206,9 +222,14 @@ def load_settings(path: Path | None = None) -> AppSettings:
     settings_path = path if path is not None else default_path()
     try:
         raw = json.loads(settings_path.read_text(encoding="utf-8"))
-    except OSError, ValueError:
+    except (OSError, ValueError) as exc:
+        WARN(
+            f"settings file {settings_path} could not be read"
+            f" ({type(exc).__name__}); using defaults"
+        )
         return default_settings()
     if not isinstance(raw, dict):
+        WARN(f"settings file {settings_path} is not a JSON object; using defaults")
         return default_settings()
     return _settings_from_mapping(raw)
 

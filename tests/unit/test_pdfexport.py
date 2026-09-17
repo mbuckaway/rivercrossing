@@ -210,7 +210,8 @@ def _ranked_solo(count: int) -> tuple[Placed, ...]:
     )
 
 
-def _render(  # noqa: PLR0913 -- (tmp_path, placed, opts, letter, created_at): the render() seam inputs
+# (tmp_path, placed, opts, letter, created_at): the render() seam inputs
+def _render(  # noqa: PLR0913
     tmp_path: Path,
     placed: tuple[Placed, ...],
     opts: ExportOptions,
@@ -259,7 +260,8 @@ def test_render_identical_inputs_produce_identical_bytes(tmp_path: Path) -> None
 
 def test_render_naive_created_at_raises_value_error(tmp_path: Path) -> None:
     """D14: a naive creation stamp bakes a local offset; reject it."""
-    naive = datetime(2026, 9, 20, 20, 7, 0)  # noqa: DTZ001 -- the test deliberately builds a naive stamp to prove the D14 guard
+    # the test deliberately builds a naive stamp to prove the D14 guard
+    naive = datetime(2026, 9, 20, 20, 7, 0)  # noqa: DTZ001
 
     with pytest.raises(ValueError, match=re.escape("created_at must be tz-aware")):
         _render(tmp_path, _placed_three(), golden_opts(), created_at=naive)
@@ -461,7 +463,8 @@ def test_render_full_field_team_only_field_omits_the_solo_section(tmp_path: Path
         ("Moss Ridge Riders", "team", None, "Moss Ridge Riders"),
     ],
 )
-def test_render_full_field_marks_the_sex_for_solo_entries_only(  # noqa: PLR0913, PLR0917 -- the parametrize row's four inputs
+# the parametrize row's four inputs
+def test_render_full_field_marks_the_sex_for_solo_entries_only(  # noqa: PLR0913, PLR0917
     tmp_path: Path, name: str, kind: str, sex: str | None, expected_cell: str
 ) -> None:
     """The full-field entry cell appends the sex for a solo only."""
@@ -900,7 +903,8 @@ def test_podium_poster_identical_inputs_produce_identical_bytes(tmp_path: Path) 
 
 def test_podium_poster_naive_created_at_raises_value_error(tmp_path: Path) -> None:
     """D14: a naive creation stamp bakes a local offset; reject it."""
-    naive = datetime(2026, 9, 20, 20, 7, 0)  # noqa: DTZ001 -- the test deliberately builds a naive stamp to prove the D14 guard
+    # the test deliberately builds a naive stamp to prove the D14 guard
+    naive = datetime(2026, 9, 20, 20, 7, 0)  # noqa: DTZ001
 
     with pytest.raises(ValueError, match=re.escape("created_at must be tz-aware")):
         _poster(tmp_path, _placed_three(), created_at=naive)
@@ -1047,7 +1051,8 @@ def test_raw_stream_span_without_a_length_entry_falls_back_to_the_keyword() -> N
         ("team", None, "Moss Ridge Riders", 11, "Team — Moss Ridge Riders · 11 laps"),
     ],
 )
-def test_poster_subtitle_formats_team_and_solo_lines(  # noqa: PLR0913, PLR0917 -- the parametrize row's five inputs
+# the parametrize row's five inputs
+def test_poster_subtitle_formats_team_and_solo_lines(  # noqa: PLR0913, PLR0917
     kind: str, sex: str | None, name: str, laps: int, expected: str
 ) -> None:
     """The poster's team/solo line renders kind, sex, name and laps."""

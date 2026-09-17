@@ -56,7 +56,7 @@ class Accelerator:
 ACCELERATOR_TABLE: tuple[Accelerator, ...] = (
     Accelerator(key="Enter", action="Record crossing for typed plate", menu_item_id=None),
     Accelerator(key="Ctrl+Z", action="Undo last crossing", menu_item_id="mi_undo_crossing"),
-    Accelerator(key="F5", action="Standings (Results window)", menu_item_id="mi_standings"),
+    Accelerator(key="F5", action="Standings window", menu_item_id="mi_standings"),
     Accelerator(key="F1", action="User guide", menu_item_id="mi_user_guide"),
     Accelerator(key="F2", action="Edit crossing (open detail)", menu_item_id=None),
     Accelerator(key="Delete", action="Delete selected crossing", menu_item_id=None),

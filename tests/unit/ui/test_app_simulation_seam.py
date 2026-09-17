@@ -57,7 +57,8 @@ if TYPE_CHECKING:
 _EVENT_DAY = date(2026, 9, 20)
 
 # The gun time the flow combines with that day.
-_PLANNED_START = datetime(2026, 9, 20, 10, 0)  # noqa: DTZ001 -- naive local, RideConfig's own contract
+# naive local, RideConfig's own contract
+_PLANNED_START = datetime(2026, 9, 20, 10, 0)  # noqa: DTZ001
 
 
 class _PresenterStub:

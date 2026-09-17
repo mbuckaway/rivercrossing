@@ -6,10 +6,10 @@ Four behaviours, none of which needs a display:
 - the **search row** ``main.xrc`` now declares above ``crossings_list``
   (a ``wxStaticText`` label + ``crossings_search``), read as XML;
 - the **column flags** every feed column is appended with (sortable and
-  resizable) and the two independent time-column handles
+  resizable), the two independent time-column handles
   ``_build_columns`` keeps (Total/Lap time) that ``set_time_columns``
-  toggles;
-- the **native header sort** -- the default Time-ascending arrow, the
+  toggles, and the W9 widths every toggle re-pins;
+- the **native header sort** -- the default Time-descending arrow, the
   remembered column re-applied after every ``show_feed`` rebuild, and
   ``CrossingsFeedModel.Compare``'s own per-column keys;
 - the **search forwarding** the view's ``_on_search_text`` handler does.
@@ -67,12 +67,18 @@ class _Column:
         self.ascending = ascending
         self.is_sort_key = is_sort_key
         self.hidden: bool | None = None
+        self.widths: list[int] = []
         self.sort_orders: list[bool] = []
         self.operations: list[str] = []
 
-    def SetHidden(self, hidden: bool) -> None:  # noqa: N802, FBT001 -- wx API name the double mirrors
+    # wx API name the double mirrors
+    def SetHidden(self, hidden: bool) -> None:  # noqa: N802, FBT001
         """Record the explicit hidden state the view applied."""
         self.hidden = hidden
+
+    def SetWidth(self, width: int) -> None:  # noqa: N802 -- wx API name the double mirrors
+        """Record one re-pinned width, in call order."""
+        self.widths.append(width)
 
     def GetModelColumn(self) -> int:  # noqa: N802 -- wx API name the double mirrors
         """Return the model column this header sorts."""
@@ -350,16 +356,26 @@ def test_set_time_columns_given_each_pair_of_flags_hides_each_column_independent
     show_total: bool,  # noqa: FBT001 -- parametrized test inputs
     show_lap: bool,  # noqa: FBT001 -- parametrized test inputs
 ) -> None:
-    """The Total and Lap-time columns hide/show independently (R-37)."""
-    total = _Column(feed_model.COL_TOTAL)
-    lap = _Column(feed_model.COL_LAP_TIME)
-    shell = _Shell(control=_CrossingsListControl())
-    shell._total_column = total
-    shell._lap_time_column = lap
+    """R-37: the columns toggle independently; widths re-pinned.
+
+    macOS hides a column through AppKit alone, and the outline view's
+    last-column-only autoresizing leaves a re-shown column at width 0
+    (measured ``IsHidden()`` ``False`` with width 0), so each toggle
+    re-pins every W9 ``COLUMN_WIDTHS`` entry afterwards.
+    """
+    control = _CrossingsListControl()
+    shell = _Shell(control=control)
+    main_frame.MainFrame._build_columns(shell)
 
     main_frame.MainFrame.set_time_columns(shell, show_total=show_total, show_lap=show_lap)
 
-    assert (total.hidden, lap.hidden) == (not show_total, not show_lap)
+    assert (shell._total_column.hidden, shell._lap_time_column.hidden) == (
+        not show_total,
+        not show_lap,
+    )
+    assert [control.GetColumn(index).widths for index in range(len(feed_model.COLUMN_LABELS))] == [
+        [width] for width in feed_model.COLUMN_WIDTHS
+    ]
 
 
 # ----------------------------------------------------- the default sort

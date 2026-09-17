@@ -413,7 +413,8 @@ class _FakeClock:
 
 def _dt(hour: int, minute: int = 0, second: int = 0) -> datetime:
     """Build a naive datetime on the fixed day, Sept 20, 2026."""
-    return datetime(2026, 9, 20, hour, minute, second)  # noqa: DTZ001 -- naive by design, as RideConfig's planned_start
+    # naive by design, as RideConfig's planned_start
+    return datetime(2026, 9, 20, hour, minute, second)  # noqa: DTZ001
 
 
 def _make_engine(
@@ -431,7 +432,8 @@ def _make_engine(
     return engine, clock
 
 
-def _record_crossings(  # noqa: PLR0913 -- seeded batch recorder: (engine, plate, count) + (start_at, step_s)
+# seeded batch recorder: (engine, plate, count) + (start_at, step_s)
+def _record_crossings(  # noqa: PLR0913
     engine: RideEngine, plate: str, count: int, *, start_at: datetime, step_s: float
 ) -> None:
     """Record *count* crossings for *plate*, *step_s* apart."""

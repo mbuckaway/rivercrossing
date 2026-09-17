@@ -44,6 +44,7 @@ it.
 from __future__ import annotations
 
 import gc
+import logging
 from functools import cache
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar
@@ -54,7 +55,7 @@ import wx.xrc  # submodule, not loaded by plain `import wx`
 from rivercrossing.ui.cards_imagelist import CardImageList, load_card_image_list
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Callable, Sequence
 
     from rivercrossing.ui.presenters.data_source import RiderRow
     from rivercrossing.ui.rider_columns import RiderColumn
@@ -62,6 +63,7 @@ if TYPE_CHECKING:
 __all__ = [
     "FIND_SETTLE_ATTEMPTS",
     "FRAME_SCREEN_MARGIN",
+    "XRC_WARN",
     "DialogFindMixin",
     "RiderRowListModel",
     "associate_model",
@@ -97,7 +99,8 @@ def clamp_to_display(width: int, height: int) -> tuple[int, int]:
     return (min(width, display_width), min(height, display_height))
 
 
-def fit_frame_to_screen(frame: Any, min_size: tuple[int, int]) -> None:  # noqa: ANN401 -- wx ships no stubs
+# wx ships no stubs
+def fit_frame_to_screen(frame: Any, min_size: tuple[int, int]) -> None:  # noqa: ANN401
     """Fit *frame* to the display it is on, and floor it at *min_size*.
 
     The one cross-platform, OS-branch-free fit (CODINGSTANDARDS-
@@ -309,6 +312,35 @@ _XRC_DIR = Path(__file__).resolve().parent.parent / "xrc"
 _rebuilt_resources: dict[Path, Any] = {}
 
 
+def _log_xrc_warning(message: str) -> None:
+    """Record *message*: the launch's log, or the stdlib log.
+
+    The always-on default behind :data:`XRC_WARN`. ``ui.app`` hangs
+    the launch's structured log on the app (``app.log``, F1 -- the
+    same lookup ``views.dialogs._active_log`` makes), so a running app
+    gets the record in its NDJSON file; a construction with no log (a
+    bare ``wx.App``, a route-level test, no app at all) still records
+    it through stdlib ``logging`` rather than dropping it. Neither path
+    raises: a failed write is stdlib logging's own error path
+    (``ui.logging``'s docstring), so nothing escapes into the wx
+    handler that called us.
+    """
+    log = getattr(wx.GetApp(), "log", None)
+    if log is not None:
+        log.warn(message)  # noqa: G010 -- Logging.warn is our own method
+        return
+    logging.getLogger(__name__).warning(message)
+
+
+# The always-on record for the XRC load/rebuild failures below, beside
+# the wx.LogWarning that only ever reaches stderr: an unreadable .xrc
+# or a rebuild that raises is exactly the degraded-load class an
+# operator must be able to hand a support session from the log alone.
+# A module-level seam, like ``presenters/console.py``'s FINISH_GATE, so
+# the app may install its own sink and a test can record the calls.
+XRC_WARN: Callable[[str], None] = _log_xrc_warning
+
+
 def _loaded_xrc_dir(xrc_dir: Path) -> Any:  # noqa: ANN401 -- wx ships no stubs
     """Return one private ``XmlResource`` loaded from *xrc_dir*.
 
@@ -331,6 +363,7 @@ def _loaded_xrc_dir(xrc_dir: Path) -> Any:  # noqa: ANN401 -- wx ships no stubs
             # missing subtree is the Fault-B degraded-load class this
             # module exists to work around.
             wx.LogWarning(f"XRC load failed for {path}")
+            XRC_WARN(f"XRC load failed for {path}")
     if not failed:
         _rebuilt_resources[xrc_dir] = resource
     return resource
@@ -380,8 +413,9 @@ def load_dialog(
     so a frozen degraded rebuild cannot answer ``None`` for the rest of
     the session; only a target no ``.xrc`` authors stays ``None``. A
     rebuild that raises (an ``OSError``, a parse error) is reported
-    through ``wx.LogWarning`` and also answers ``None``: this runs
-    inside a wx event handler, where an escaping exception is a crash.
+    through ``wx.LogWarning`` and :data:`XRC_WARN`, and also answers
+    ``None``: this runs inside a wx event handler, where an escaping
+    exception is a crash.
 
     *parent* is passed to both loads. It defaults to ``None`` -- the
     parentless load every menu route uses -- and the two sites that
@@ -401,6 +435,7 @@ def load_dialog(
             _rebuilt_resources.pop(_XRC_DIR, None)
     except Exception as exc:  # noqa: BLE001 -- a rebuild failure must not reach the wx handler
         wx.LogWarning(f"XRC rebuild failed: {type(exc).__name__}: {exc}")
+        XRC_WARN(f"XRC rebuild failed for dialog {name!r}: {type(exc).__name__}: {exc}")
         return None
     return None
 
@@ -413,7 +448,8 @@ def load_menubar(resource: Any, name: str) -> Any:  # noqa: ANN401 -- wx ships n
     :func:`fresh_resource`, evicting the memoized rebuild between them
     (the frozen-degraded-rebuild case :func:`load_dialog` documents),
     and a rebuild that raises is reported through ``wx.LogWarning`` and
-    answers ``None`` rather than escaping into the wx handler.
+    :data:`XRC_WARN`, and answers ``None`` rather than escaping into the
+    wx handler.
     """
     menubar = resource.LoadMenuBar(None, name)
     if menubar is not None:
@@ -426,6 +462,7 @@ def load_menubar(resource: Any, name: str) -> Any:  # noqa: ANN401 -- wx ships n
             _rebuilt_resources.pop(_XRC_DIR, None)
     except Exception as exc:  # noqa: BLE001 -- a rebuild failure must not reach the wx handler
         wx.LogWarning(f"XRC rebuild failed: {type(exc).__name__}: {exc}")
+        XRC_WARN(f"XRC rebuild failed for menubar {name!r}: {type(exc).__name__}: {exc}")
         return None
     return None
 

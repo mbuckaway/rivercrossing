@@ -238,7 +238,8 @@ ASCENDING_IDS = ("ascending", "descending")
 
 @pytest.mark.parametrize(("ascending", "expected"), ASCENDING_CASES, ids=ASCENDING_IDS)
 @pytest.mark.parametrize(("col", "lower", "higher"), ORDER_CASES, ids=ORDER_CASE_IDS)
-def test_audit_compare_given_two_rows_orders_by_the_column_text(  # noqa: PLR0913 -- the two rows, the column and the arrow
+# the two rows, the column and the arrow
+def test_audit_compare_given_two_rows_orders_by_the_column_text(  # noqa: PLR0913
     col: int, lower: AuditRow, higher: AuditRow, *, ascending: bool, expected: int
 ) -> None:
     """Every column sorts by its rendered text; the arrow flips it."""
@@ -265,7 +266,8 @@ def test_audit_compare_given_reversed_equal_key_rows_orders_by_position() -> Non
     """T-3: the tie-break follows the row index, not the item."""
     shell = _CompareShell([_row(when="10:00:00"), _row(when="10:00:00")])
 
-    result = AuditListModel.Compare(shell, 1, 0, COL_WHEN, True)  # noqa: FBT003 -- wx's positional bool
+    # wx's positional bool
+    result = AuditListModel.Compare(shell, 1, 0, COL_WHEN, True)  # noqa: FBT003
 
     assert result == 1
 
@@ -274,7 +276,8 @@ def test_audit_compare_given_the_reason_column_sorts_by_its_rendered_text() -> N
     """The cell's text is the key: what is drawn sorts the rows."""
     shell = _CompareShell([_row(reason="mis-keyed time"), _row(reason="")])
 
-    result = AuditListModel.Compare(shell, 0, 1, COL_REASON, True)  # noqa: FBT003 -- wx's positional bool
+    # wx's positional bool
+    result = AuditListModel.Compare(shell, 0, 1, COL_REASON, True)  # noqa: FBT003
 
     assert result == 1
 
@@ -344,13 +347,15 @@ class _SortControl:
 class _SortShell(AuditDialog):
     """A shell owning only what ``_apply_default_sort`` reads."""
 
-    def __init__(self, control: _SortControl, model: Any = None) -> None:  # noqa: ANN401 -- wx ships no stubs
+    # wx ships no stubs
+    def __init__(self, control: _SortControl, model: Any = None) -> None:  # noqa: ANN401
         """Own *control* and the current *model*."""
         self.audit_list = control
         self._model: Any = model
 
 
-def _sort_shell(*, column: _Column | None, model: Any) -> _SortShell:  # noqa: ANN401 -- wx ships no stubs
+# wx ships no stubs
+def _sort_shell(*, column: _Column | None, model: Any) -> _SortShell:  # noqa: ANN401
     """Return a shell over *column* and *model*."""
     return _SortShell(_SortControl(column), model)
 

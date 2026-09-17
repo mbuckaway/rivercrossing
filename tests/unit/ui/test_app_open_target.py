@@ -89,7 +89,8 @@ def test_open_target_given_standings_with_no_presenter_uses_the_empty_source(
     monkeypatch.setattr(app_module, "_apply_dialog_defaults", lambda _window, _route: None)
     from rivercrossing.ui.views import dialogs  # noqa: PLC0415 -- the patched modal seam
 
-    monkeypatch.setattr(dialogs, "run_dialog", lambda _dialog, opener: 0)  # noqa: ARG005 -- the SUT calls opener=; the stub ignores it
+    # the SUT calls opener=; the stub ignores it
+    monkeypatch.setattr(dialogs, "run_dialog", lambda _dialog, opener: 0)  # noqa: ARG005
     window = _FakeWindow()
     context = app_module._RouteContext(
         frame=_NoticeFrame(),

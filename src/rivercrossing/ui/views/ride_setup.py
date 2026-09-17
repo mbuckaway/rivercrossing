@@ -150,7 +150,8 @@ LOGO_PREVIEW_SIZE = (240, 240)
 LOGO_STATUS_NO_LOGO = "NO LOGO"
 
 
-def _fitted_image(image: Any, *, within: tuple[int, int]) -> Any:  # noqa: ANN401 -- wx ships no stubs
+# wx ships no stubs
+def _fitted_image(image: Any, *, within: tuple[int, int]) -> Any:  # noqa: ANN401
     """Return *image* scaled into the *within* box.
 
     The wx half of :func:`~rivercrossing.ui.views.team_editor.
@@ -617,11 +618,13 @@ class RideSetup(DialogFindMixin):  # _find: ui.views._support
         """
         self.jokers_spin.SetValue(count)
         if mode == JOKERS_MODE_TOTAL:
-            self.jokers_total_radio.SetValue(True)  # noqa: FBT003 -- wx API takes a positional bool
+            # wx API takes a positional bool
+            self.jokers_total_radio.SetValue(True)  # noqa: FBT003
             self.jokers_per_deck_radio.SetValue(False)  # noqa: FBT003 -- wx API, positional bool
         else:
             self.jokers_total_radio.SetValue(False)  # noqa: FBT003 -- wx API, positional bool
-            self.jokers_per_deck_radio.SetValue(True)  # noqa: FBT003 -- wx API takes a positional bool
+            # wx API takes a positional bool
+            self.jokers_per_deck_radio.SetValue(True)  # noqa: FBT003
 
     def show_max_cards(self, max_cards: int | None) -> None:
         """Render cap_choice; ``None`` selects "Disabled" (D2).
@@ -666,7 +669,8 @@ class RideSetup(DialogFindMixin):  # _find: ui.views._support
         self._logo_path = logo_path
         self._show_logo_preview(_preview_bitmap(image), status="")
 
-    def _show_logo_preview(self, bitmap: Any, *, status: str) -> None:  # noqa: ANN401 -- wx ships no stubs
+    # wx ships no stubs
+    def _show_logo_preview(self, bitmap: Any, *, status: str) -> None:  # noqa: ANN401
         """Render ``logo_preview_bmp`` and ``logo_status_lbl`` together.
 
         The two always move as a pair -- a preview is never shown

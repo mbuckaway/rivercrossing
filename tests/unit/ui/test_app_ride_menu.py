@@ -349,6 +349,10 @@ def test_handle_clear_ride_route_given_a_confirmed_danger_leaves_the_store_untou
         assert context.roster.team_logo_seed == app_module._SEEDED_TEAM_LOGO_SEED
         assert ("clear_presenter", None) in view.calls
         assert ("show_no_ride", None) in view.calls
+        # R-37: the cleared console keeps the persisted column choice --
+        # the presenter that carried it is gone, so the view is applied
+        # directly (the default settings: total hidden, lap time shown).
+        assert ("set_time_columns", (False, True)) in view.calls
         assert frame.notices == ["Ride removed from the screen"]
     finally:
         store.close()
@@ -681,8 +685,6 @@ def test_apply_edited_ride_rewrites_the_stored_ride_and_the_live_engine(
                 "name": "Renamed",
                 "logo": None,
                 "event_date": edited.event_date,
-                "planned_start": edited.planned_start,
-                "entry_mode": edited.entry_mode,
                 "venue": "New Venue",
                 "organizer": edited.organizer,
                 "scorer": edited.scorer,

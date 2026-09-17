@@ -23,7 +23,7 @@ without constructing any GUI (T-10: wx is the GUI I/O boundary).
 
 import base64
 from dataclasses import replace
-from datetime import date, datetime
+from datetime import date
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -209,8 +209,6 @@ def test_switch_console_to_ride_renders_name_and_draft_and_wires_append(
                 "name": "GORBA EPIC 2026",
                 "logo": None,
                 "event_date": date(2026, 9, 20),
-                "planned_start": datetime(2026, 9, 20, 10, 0),  # noqa: DTZ001 -- naive, by design
-                "entry_mode": EntryMode.MIXED,
                 "venue": "Sea to Sky Gondola",
                 "organizer": "GORBA",
                 "scorer": "K. Singh",

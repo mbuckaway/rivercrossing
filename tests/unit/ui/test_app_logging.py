@@ -75,7 +75,8 @@ class _NoticeFrame:
         """Record one status-bar notice."""
         self.notices.append(text)
 
-    def Bind(self, _event: object, handler: object, id: object = None) -> None:  # noqa: N802, A002 -- wx API names
+    # wx API names
+    def Bind(self, _event: object, handler: object, id: object = None) -> None:  # noqa: N802, A002
         """Record one bound handler under its resolved id."""
         self.binds.append((id, handler))
 
@@ -211,7 +212,8 @@ class _SettingsFrame(_NoticeFrame):
         """Return this frame as the menubar double."""
         return self
 
-    def Check(self, item_id: int, checked: bool) -> None:  # noqa: N802, FBT001 -- wx API name, positional bool
+    # wx API name, positional bool
+    def Check(self, item_id: int, checked: bool) -> None:  # noqa: N802, FBT001
         """Record one menu check sync."""
         self.checks.append((item_id, checked))
 
