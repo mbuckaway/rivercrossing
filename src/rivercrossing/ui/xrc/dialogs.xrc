@@ -833,8 +833,8 @@
        read-only copy too, in crossing_plate_lbl, so edit_btn, which
        says "Edit Plate", opens the §9 Plate prompt instead of an
        editable field here, and every correction re-renders this dialog
-       in place: the stock OK and Cancel are the controls that close it
-       (Delete closes it too, its crossing being gone).
+       in place: OK is the one control that closes it (Delete closes it
+       too, its crossing being gone).
 
        edit_btn, edit_time_btn, void_card_btn and delete_btn sit in a
        sibling wxBoxSizer beside the stock button sizer:
@@ -844,9 +844,11 @@
        opens edit_crossing_dlg in edit mode and void_card_btn voids the
        crossing's own credited card (Phase 2: the corrections the
        retired Reassign Plate…/Void Card… menu rows used to reach). The
-       stock sizer carries wxID_CANCEL beside wxID_OK, so wx keeps its
-       own Escape and click-cancel handling for the window and the view
-       needs no SetEscapeId override. -->
+       stock sizer carries wxID_OK alone: a Cancel beside it would be a
+       second control that closes the window, which the dialog is
+       deliberately not offering, so the view points Escape at OK with
+       SetEscapeId, wx's own Escape handling (measured) only ever
+       looking for wxID_CANCEL. -->
   <object class="wxDialog" name="crossing_detail_dlg">
     <title>Crossing Detail</title>
     <style>wxDEFAULT_DIALOG_STYLE|wxRESIZE_BORDER</style>
@@ -1127,12 +1129,6 @@
                   <label>OK</label>
                   <default>1</default>
                   <focused>1</focused>
-                </object>
-              </object>
-
-              <object class="button">
-                <object class="wxButton" name="wxID_CANCEL">
-                  <label>Cancel</label>
                 </object>
               </object>
             </object>
