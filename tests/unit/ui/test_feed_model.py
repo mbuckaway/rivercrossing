@@ -34,8 +34,8 @@ from rivercrossing.ui.feed_model import (
     card_text_or_blank,
     edited_row_indexes,
     entry_text,
-    flagged_row_indexes,
     flash_crossing_label,
+    held_duplicate_row_indexes,
     lap_text,
     review_issue,
 )
@@ -311,7 +311,13 @@ def test_card_text_or_blank_given_arbitrary_text_never_raises_and_returns_displa
     assert display == "" or display[-1] in {"♠", "♥", "♦", "♣"} or display == "JK★"
 
 
-# --- flagged_row_indexes -------------------------------------------
+# --- held_duplicate_row_indexes (the feed's bold channels) ----------
+# R-34 amended: the feed bolds a row while its card is *held* for review
+# (awaiting confirm/void) or the row is one half of a live duplicate
+# pair. ``flagged`` no longer bolds on its own -- it is recomputed from
+# the lap time on every render, so a short-lap row would stay bold after
+# the operator resolved its card. ``edited`` stays its own bold channel
+# (``edited_row_indexes``), untouched by this helper.
 
 
 def _feed_row(  # noqa: PLR0913 -- one keyword per feed field a test varies
@@ -357,54 +363,120 @@ def _feed_row(  # noqa: PLR0913 -- one keyword per feed field a test varies
     )
 
 
-FLAGGED_ROWS_CASES = (
+HELD_DUPLICATE_ROWS_CASES = (
     ((), frozenset()),
-    ((_feed_row(flagged=False),), frozenset()),
-    ((_feed_row(flagged=True),), frozenset({0})),
+    ((_feed_row(held=False, duplicate=False),), frozenset()),
+    ((_feed_row(held=True),), frozenset({0})),
+    ((_feed_row(duplicate=True),), frozenset({0})),
     (
         (
-            _feed_row(plate="1", flagged=False),
-            _feed_row(plate="2", flagged=False),
-            _feed_row(plate="45", flagged=True),
-            _feed_row(plate="4", flagged=False),
+            _feed_row(plate="1", held=True),
+            _feed_row(plate="2"),
+            _feed_row(plate="3", duplicate=True),
+            _feed_row(plate="4"),
         ),
-        frozenset({2}),
+        frozenset({0, 2}),
     ),
 )
 
 
-@pytest.mark.parametrize(("rows", "expected"), FLAGGED_ROWS_CASES)
-def test_flagged_row_indexes_given_rows_returns_the_flagged_positions(
+@pytest.mark.parametrize(("rows", "expected"), HELD_DUPLICATE_ROWS_CASES)
+def test_held_duplicate_row_indexes_given_rows_returns_the_bold_positions(
     rows: tuple[FeedRow, ...], expected: frozenset[int]
 ) -> None:
     """Boundary collection sizes (T-4): empty, single, many rows."""
-    assert flagged_row_indexes(rows) == expected
+    assert held_duplicate_row_indexes(rows) == expected
 
 
-def test_flagged_row_indexes_given_a_mixed_feed_marks_only_the_plate_45_row() -> None:
-    """Ties the flagged row to plate 45 -- never a bare row index."""
+@pytest.mark.parametrize(
+    ("held", "duplicate", "expected"),
+    [
+        (False, False, frozenset()),
+        (False, True, frozenset({0})),
+        (True, False, frozenset({0})),
+        (True, True, frozenset({0})),
+    ],
+    ids=["neither", "duplicate", "held", "both"],
+)
+def test_held_duplicate_row_indexes_given_the_two_bits_marks_the_row_for_either(
+    held: bool,  # noqa: FBT001 -- parametrize passes the flags positionally
+    duplicate: bool,  # noqa: FBT001 -- parametrize passes the flags positionally
+    expected: frozenset[int],
+) -> None:
+    """T-13: bold iff held or duplicate, never on ``flagged``."""
+    rows = (_feed_row(held=held, duplicate=duplicate),)
+
+    assert held_duplicate_row_indexes(rows) == expected
+
+
+def test_held_duplicate_row_indexes_given_a_credited_short_lap_leaves_the_row_out() -> None:
+    """The behaviour change: a resolved short lap is no longer bold.
+
+    ``flagged`` is recomputed from the lap time on every render, so
+    bolding on it would leave this row bold forever after the operator
+    resolved its card. The feed bolds a short lap only while its card
+    waits in the hold queue.
+    """
+    rows = (_feed_row(plate="12", flagged=True, held=False, card_status="credited"),)
+
+    assert held_duplicate_row_indexes(rows) == frozenset()
+
+
+def test_held_duplicate_row_indexes_given_a_voided_short_lap_leaves_the_row_out() -> None:
+    """Confirming or voiding clears the hold, so the row unbolds."""
+    rows = (_feed_row(plate="56", flagged=True, card_status="voided"),)
+
+    assert held_duplicate_row_indexes(rows) == frozenset()
+
+
+def test_held_duplicate_row_indexes_given_a_duplicate_voided_row_keeps_it_bold() -> None:
+    """T-3: the duplicate channel ignores the card's disposition."""
+    rows = (_feed_row(plate="78", card_status="voided", duplicate=True),)
+
+    assert held_duplicate_row_indexes(rows) == frozenset({0})
+
+
+def test_held_duplicate_row_indexes_given_an_edited_only_row_leaves_it_out() -> None:
+    """T-3: ``edited`` is a separate channel, not this one."""
+    rows = (_feed_row(plate="90", edited=True),)
+
+    assert held_duplicate_row_indexes(rows) == frozenset()
+
+
+def test_held_duplicate_row_indexes_given_a_miss_row_leaves_it_out() -> None:
+    """A pending miss holds no card and duplicates nothing."""
+    rows = (_feed_row(plate="-", entry="missed", missed=True),)
+
+    assert held_duplicate_row_indexes(rows) == frozenset()
+
+
+def test_held_duplicate_row_indexes_given_a_mixed_feed_marks_only_the_bold_rows() -> None:
+    """Ties the bold rows to plates -- never a bare row index."""
     rows = (
-        _feed_row(plate="123", flagged=False),
-        _feed_row(plate="77", flagged=False),
-        _feed_row(plate="45", flagged=True),
-        _feed_row(plate="212", flagged=False),
+        _feed_row(plate="123"),
+        _feed_row(plate="77", held=True, card_status="held"),
+        _feed_row(plate="45", flagged=True, card_status="credited"),
+        _feed_row(plate="212", duplicate=True),
     )
 
-    flagged = flagged_row_indexes(rows)
+    bold = held_duplicate_row_indexes(rows)
 
-    assert {rows[index].plate for index in flagged} == {"45"}
+    assert {rows[index].plate for index in bold} == {"77", "212"}
 
 
-@given(st.lists(st.booleans(), max_size=20))
-def test_flagged_row_indexes_given_arbitrary_flags_agrees_with_each_rows_own_bit(
-    flags: list[bool],
+@given(st.lists(st.tuples(st.booleans(), st.booleans()), max_size=20))
+def test_held_duplicate_row_indexes_given_arbitrary_bits_agrees_with_each_rows_own_flags(
+    bits: list[tuple[bool, bool]],
 ) -> None:
-    """Property: membership matches each row's own flagged bit."""
-    rows = [_feed_row(flagged=flag) for flag in flags]
+    """T-7: membership matches each row's own held-or-duplicate bits."""
+    rows = [_feed_row(held=held, duplicate=duplicate) for held, duplicate in bits]
 
-    indexes = flagged_row_indexes(rows)
+    indexes = held_duplicate_row_indexes(rows)
 
-    agrees = all((index in indexes) == rows[index].flagged for index in range(len(rows)))
+    agrees = all(
+        (index in indexes) == (rows[index].held or rows[index].duplicate)
+        for index in range(len(rows))
+    )
     assert agrees is True
 
 
@@ -544,13 +616,6 @@ def test_flash_crossing_label_given_any_natural_code_renders_the_matching_glyph(
     suffix = " (held)" if held else ""
     assert label.endswith(f"dealt {rank}{glyphs[suit]}{suffix}")
     assert label.startswith("✓ ")
-
-
-def test_flagged_row_indexes_given_a_credited_short_lap_still_marks_the_row() -> None:
-    """Always-deal: a short lap is bolded for review though not held."""
-    rows = (_feed_row(plate="12", flagged=True, held=False),)
-
-    assert flagged_row_indexes(rows) == frozenset({0})
 
 
 # --- missed rows (K: a pass whose number the scorer missed) ----------

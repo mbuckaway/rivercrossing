@@ -327,7 +327,7 @@ class CrossingsFeedModel(wx.dataview.DataViewIndexListModel):  # type: ignore[mi
 
     The wx-facing half of the crossings feed; ``ui/feed_model.py``
     holds the column layout and the decisions this class delegates to
-    (``card_cell_text``, ``entry_text``, the flagged-row lookup),
+    (``card_cell_text``, ``entry_text``, the bold-row lookup),
     so those stay testable without ``wx``
     (``tests/unit/ui/test_feed_model.py``). This class has exactly
     one consumer, :class:`MainFrame`, which is why it lives here
@@ -347,7 +347,7 @@ class CrossingsFeedModel(wx.dataview.DataViewIndexListModel):  # type: ignore[mi
         """Wrap *rows*, newest first."""
         super().__init__(len(rows))
         self._rows = tuple(rows)
-        self._flagged = feed_model.flagged_row_indexes(self._rows)
+        self._held_or_duplicate = feed_model.held_duplicate_row_indexes(self._rows)
         self._edited = feed_model.edited_row_indexes(self._rows)
 
     def GetColumnCount(self) -> int:
@@ -401,19 +401,26 @@ class CrossingsFeedModel(wx.dataview.DataViewIndexListModel):  # type: ignore[mi
         return result if ascending else -result
 
     def GetAttrByRow(self, row: int, col: int, attr: Any) -> bool:  # noqa: ANN401, ARG002
-        """Bold the whole row when its crossing is flagged or edited.
+        """Bold the whole row while its card is unresolved or edited.
 
-        The two bold channels share one render: a flagged crossing
-        (R-34, a short lap -- held or credited) and an edited crossing
-        (E7.2.2, one a correction touched -- spec §3 design 8c's
-        "edits highlighted in the feed") both bold the entire row.
+        Two bold channels share one render: (1) a crossing whose card
+        waits in the hold queue, or one half of a live duplicate pair
+        (R-34/Phase 3 -- ``feed_model.held_duplicate_row_indexes``),
+        and (2) an edited crossing (E7.2.2, one a correction touched --
+        spec §3 design 8c's "edits highlighted in the feed"). The
+        short-lap fact is deliberately *not* a channel of its own:
+        ``flagged`` is recomputed from the lap time on every render, so
+        bolding on it would keep a row bold after the operator resolved
+        its card. Confirming or voiding clears ``held`` and unbolds the
+        row; ``return_to_held`` re-sets it and re-bolds.
+
         *col* is unused: xrc-windows.md's code-side note bolds the
-        whole flagged row, not one cell. A DNF row is *not* a third
-        bold channel -- it carries a text marker instead
+        whole row, not one cell. A DNF row is *not* a third bold
+        channel -- it carries a text marker instead
         (``feed_model.entry_text``), so meaning never rides on weight
         or colour alone.
         """
-        if row not in self._flagged and row not in self._edited:
+        if row not in self._held_or_duplicate and row not in self._edited:
             return False
         attr.SetBold(True)  # noqa: FBT003 -- wx API takes a positional bool
         return True
@@ -427,8 +434,10 @@ class FlaggedListModel(wx.dataview.DataViewIndexListModel):  # type: ignore[misc
     resolves to ``Any`` and mypy refuses to subclass ``Any``.
 
     The review notebook's "Needs Review" tab: one row per short-lap
-    flag -- or duplicate pair -- (the rows the console feed bolds or
-    lists), showing Issue | Card | Plate | Lap | Lap time | Rider.
+    flag -- or duplicate pair -- showing Issue | Card | Plate | Lap |
+    Lap time | Rider. A resolved (credited or voided) short lap stays
+    listed even though the feed no longer bolds it, so "Return to
+    Held" stays reachable.
     Rows are supplied fresh each ``show_flagged``, exactly like
     :class:`CrossingsFeedModel`'s own rebuild-per-show pattern. The
     Issue column names why each row is here

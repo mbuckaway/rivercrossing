@@ -75,13 +75,17 @@ class FeedRow:
 
     ``flagged`` is the short-lap review channel: a row whose lap came
     in under ``config.min_lap_s`` flags in *both* card policies, which
-    is what bolds it in the feed and lists it in the console's Needs
-    Review tab. ``held`` is the card's disposition -- True only in hold
-    mode (R-34), where the card waits uncredited for a confirm/void
-    decision; an always-deal short lap flags while its card is credited
-    (``held`` False), so the review routing reads the two bits
-    separately. ``edited`` (E7.2.2)
-    is the same visual channel for a crossing a correction touched
+    is what lists it in the console's Needs Review tab. It does not
+    bold the feed row on its own -- the feed bolds while the card is
+    ``held`` or the row is half of a live duplicate pair -- so a
+    resolved (credited or voided) short lap lists for review at
+    regular weight. ``held`` is the card's disposition -- True only in
+    hold mode (R-34), where the card waits uncredited for a
+    confirm/void decision; an always-deal short lap flags while its
+    card is credited (``held`` False), so the review routing reads the
+    two bits separately. ``edited`` (E7.2.2)
+    is the independent visual channel for a crossing a correction
+    touched
     (spec §3 design 8c: "edits highlighted in the feed"). ``missed``
     (K) marks a pending miss: the row renders Plate ``-``, Name
     ``missed`` and blank Card/Lap/Lap-time/Total until the miss is

@@ -1075,6 +1075,11 @@ def _feed_row(  # noqa: PLR0913 -- one keyword per feed field a test varies
     team: str = "",
     lap: int = 1,
     card: str = "9H",
+    flagged: bool = False,
+    held: bool = False,
+    edited: bool = False,
+    duplicate: bool = False,
+    card_status: str = "",
     dnf: bool = False,
     missed: bool = False,
     elapsed_s: float = 0.0,
@@ -1091,6 +1096,11 @@ def _feed_row(  # noqa: PLR0913 -- one keyword per feed field a test varies
         lap_time="1:00",
         total="1:00",
         card=card,
+        flagged=flagged,
+        held=held,
+        edited=edited,
+        duplicate=duplicate,
+        card_status=card_status,
         dnf=dnf,
         missed=missed,
         elapsed_s=elapsed_s,
@@ -1102,3 +1112,154 @@ def _feed_row(  # noqa: PLR0913 -- one keyword per feed field a test varies
 def _model(*rows: FeedRow) -> main_frame.CrossingsFeedModel:
     """Build the real feed model over *rows*, in the given order."""
     return main_frame.CrossingsFeedModel(list(rows))
+
+
+# --------------------------- CrossingsFeedModel.GetAttrByRow
+# R-34 amended: the feed's bold channels are (1) a card held for review
+# or a live duplicate pair and (2) an edited crossing, each its own
+# channel. A flag resolved by confirm/void (a credited or voided short
+# lap) renders at regular weight -- ``flagged`` alone never bolds.
+
+
+class _Attr:
+    """A ``wx.DataViewItemAttr`` double recording each bold request."""
+
+    def __init__(self) -> None:
+        """Start with no bold request recorded."""
+        self.bold_calls: list[bool] = []
+
+    def SetBold(self, bold: bool) -> None:  # noqa: N802, FBT001 -- wx API name
+        """Record one ``SetBold`` call."""
+        self.bold_calls.append(bold)
+
+
+def test_get_attr_by_row_given_a_held_row_bolds_it() -> None:
+    """R-34: a card waiting in the hold queue bolds its whole row."""
+    model = _model(_feed_row(held=True, card_status="held"))
+    attr = _Attr()
+
+    result = model.GetAttrByRow(0, 0, attr)
+
+    assert (result, attr.bold_calls) == (True, [True])
+
+
+def test_get_attr_by_row_given_a_duplicate_row_bolds_it() -> None:
+    """Phase 3: either half of a live duplicate pair bolds."""
+    model = _model(_feed_row(duplicate=True))
+    attr = _Attr()
+
+    result = model.GetAttrByRow(0, 0, attr)
+
+    assert (result, attr.bold_calls) == (True, [True])
+
+
+def test_get_attr_by_row_given_an_edited_row_bolds_it() -> None:
+    """E7.2.2: a corrected crossing bolds independently of the card."""
+    model = _model(_feed_row(edited=True))
+    attr = _Attr()
+
+    result = model.GetAttrByRow(0, 0, attr)
+
+    assert (result, attr.bold_calls) == (True, [True])
+
+
+@pytest.mark.parametrize(
+    "flagged",
+    [True, False],
+    ids=["credited_short_lap", "credited_clean"],
+)
+def test_get_attr_by_row_given_a_credited_row_never_bolds_it(
+    flagged: bool,  # noqa: FBT001 -- a parametrize row's value
+) -> None:
+    """The behaviour change: a credited (resolved) row is not bold."""
+    model = _model(_feed_row(flagged=flagged, held=False, card_status="credited"))
+    attr = _Attr()
+
+    result = model.GetAttrByRow(0, 0, attr)
+
+    assert (result, attr.bold_calls) == (False, [])
+
+
+def test_get_attr_by_row_given_a_voided_short_lap_never_bolds_it() -> None:
+    """Confirm/void clears the hold, so the row unbolds."""
+    model = _model(_feed_row(flagged=True, held=False, card_status="voided"))
+    attr = _Attr()
+
+    result = model.GetAttrByRow(0, 0, attr)
+
+    assert (result, attr.bold_calls) == (False, [])
+
+
+def test_get_attr_by_row_given_a_plain_row_returns_false_without_setting_bold() -> None:
+    """T-3 negative: an ordinary crossing stays at regular weight."""
+    model = _model(_feed_row())
+    attr = _Attr()
+
+    result = model.GetAttrByRow(0, 0, attr)
+
+    assert (result, attr.bold_calls) == (False, [])
+
+
+def test_get_attr_by_row_given_a_miss_row_returns_false() -> None:
+    """A pending miss bolds on neither channel."""
+    model = _model(_feed_row(plate="-", entry="missed", missed=True))
+    attr = _Attr()
+
+    result = model.GetAttrByRow(0, 0, attr)
+
+    assert (result, attr.bold_calls) == (False, [])
+
+
+@pytest.mark.parametrize(
+    "column",
+    [0, feed_model.COL_TEAM, feed_model.COL_TOTAL],
+    ids=["time", "team", "total"],
+)
+def test_get_attr_by_row_given_any_column_bolds_the_whole_row(column: int) -> None:
+    """The attribute is row-wide: *col* is unused."""
+    model = _model(_feed_row(held=True, card_status="held"))
+    attr = _Attr()
+
+    result = model.GetAttrByRow(0, column, attr)
+
+    assert (result, attr.bold_calls) == (True, [True])
+
+
+@pytest.mark.parametrize(
+    ("held", "duplicate", "edited", "expected"),
+    [
+        (False, False, False, False),
+        (False, False, True, True),
+        (False, True, False, True),
+        (False, True, True, True),
+        (True, False, False, True),
+        (True, False, True, True),
+        (True, True, False, True),
+        (True, True, True, True),
+    ],
+    ids=[
+        "none",
+        "edited",
+        "duplicate",
+        "duplicate_edited",
+        "held",
+        "held_edited",
+        "held_duplicate",
+        "all",
+    ],
+)
+# the three flags plus the expected result
+def test_get_attr_by_row_given_the_three_bold_channels_bolds_on_either(  # noqa: PLR0913, PLR0917
+    held: bool,  # noqa: FBT001 -- parametrize passes the flags positionally
+    duplicate: bool,  # noqa: FBT001 -- parametrize passes the flags positionally
+    edited: bool,  # noqa: FBT001 -- parametrize passes the flags positionally
+    expected: bool,  # noqa: FBT001 -- a parametrize row's value
+) -> None:
+    """T-13: bold = held OR duplicate OR edited, for all eight rows."""
+    model = _model(_feed_row(held=held, duplicate=duplicate, edited=edited))
+    attr = _Attr()
+    expected_calls = [True] if expected else []
+
+    result = model.GetAttrByRow(0, 0, attr)
+
+    assert (result, attr.bold_calls) == (expected, expected_calls)
