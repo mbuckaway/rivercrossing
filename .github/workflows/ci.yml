@@ -81,6 +81,8 @@ jobs:
         run: lint-imports
       - name: ids.py drift vs .xrc (R-05)
         run: python tools/gen_ids.py --check
+      - name: asset manifest drift (bundle completeness)
+        run: python tools/check_asset_manifest.py
       - name: Install pinned Tailwind CLI (E6.2.1)
         run: npm ci
       - name: css artifacts drift vs templates (E6.2.1)

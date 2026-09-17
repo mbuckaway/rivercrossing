@@ -30,6 +30,7 @@ nox.options.sessions = [
     "importlint",
     "ids_drift",
     "css_drift",
+    "assets_drift",
     "unit",
 ]
 
@@ -161,6 +162,18 @@ def css_drift(session):
     _ensure_node_modules(session)
     session.install(DEV)
     session.run("python", str(GEN_CSS), "--check")
+
+
+@nox.session(python=PYTHON)
+def assets_drift(session):
+    """Fail if the tree lacks an asset the bundle must ship (E1.6.1).
+
+    installers/rivercrossing.spec fills its ``datas`` from this same
+    manifest, so this is the build's own completeness check without a
+    build.
+    """
+    session.install(DEV)
+    session.run("python", str(ROOT / "tools" / "check_asset_manifest.py"))
 
 
 @nox.session(python=PYTHON)
