@@ -795,9 +795,8 @@ def test_feed_rows_given_two_entries_at_one_instant_leaves_both_rows_clear() -> 
 # an R-34 hold waits for confirm/void, "credited" once the card is in
 # the entry's hand, "voided" when it is in neither. The feed derives
 # it by elimination -- held queue, then credited hand, else voided --
-# never from ``RideEngine._voided_cards``, which a card voided out of
-# the hold queue (``void_held``) never joins: the private set would
-# misreport that card as credited.
+# rather than from ``RideEngine._voided_cards``, which is the engine's
+# own card-level bookkeeping, not a per-crossing reading.
 
 
 def _half_a_second_on(instant: datetime) -> datetime:
@@ -834,10 +833,10 @@ def test_feed_rows_given_an_always_deal_short_lap_carries_the_credited_card_stat
 def test_feed_rows_given_a_voided_held_card_carries_the_voided_card_status() -> None:
     """Void discards the held card: held nowhere, credited nowhere.
 
-    The lap itself stays recorded, so its row must say "voided" -- the
-    one reading ``RideEngine._voided_cards`` cannot supply, because
-    ``void_held`` never adds to it (the card is dropped, not returned
-    to the shoe).
+    The lap itself stays recorded, so its row must say "voided". The
+    disposition is read by elimination -- the card is no longer in the
+    hold queue and in no hand -- not from ``RideEngine._voided_cards``,
+    which is the engine's own card-level bookkeeping.
     """
     roster = _pooled_team_roster()
     engine = _running_engine(roster)

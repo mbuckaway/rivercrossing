@@ -1476,6 +1476,26 @@ def test_void_held_returns_audit_event_and_hand_stays_empty() -> None:
     assert results["12"].hand == best_hand(())
 
 
+def test_void_held_records_the_card_in_the_voided_registry() -> None:
+    """The review panel's void retires the card like void_card does.
+
+    ``_voided_cards`` is the shared "out of the ride" registry the
+    reassign and return paths consult, so a void_held card must join it
+    -- otherwise a later reassign of the crossing re-credits the card
+    the operator already voided. Pokes the private marker deliberately,
+    as the un-retire test below does: the registry is what this test
+    pins, and it has no public reader.
+    """
+    engine, _ = _make_engine(config=_config(hold_short_laps=True))
+    engine.start()
+    engine.record_crossing("12", at=_dt(10, 0, 30))
+    held = engine.held_crossings()[0]
+
+    engine.void_held(held.crossing)
+
+    assert held.card in engine._voided_cards
+
+
 def test_confirm_held_already_credited_crossing_raises_illegal_state_error() -> None:
     """confirm_held on a non-held crossing raises (R-34 negative)."""
     engine, _ = _make_engine(config=_config(hold_short_laps=True))

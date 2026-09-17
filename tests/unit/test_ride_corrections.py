@@ -520,6 +520,29 @@ def test_reassign_crossing_voided_card_is_not_recredited_to_the_new_entry() -> N
     assert results["12"].cards == (first.card,)  # only the live card stays
 
 
+def test_reassign_crossing_void_held_card_is_not_recredited_to_the_new_entry() -> None:
+    """A review-panel void retires its card exactly as void_card does.
+
+    ``void_held`` records the card in the same ``_voided_cards``
+    registry ``void_card`` uses, so reassigning the crossing moves the
+    lap to the destination but never resurrects the voided card into
+    the destination entry's hand.
+    """
+    engine, _ = _make_engine(config=_config(hold_short_laps=True, min_lap_s=1080))
+    engine.start()
+    first = engine.record_crossing("12", at=_dt(10, 30))
+    engine.record_crossing("12", at=_dt(10, 0, 30))  # short lap -> held
+    held = engine.held_crossings()[0]
+    engine.void_held(held.crossing)
+
+    engine.reassign_crossing(2, "34", reason="mis-keyed plate")
+
+    results = {entry.plate: entry for entry in engine.snapshot()}
+    assert results["34"].laps == 1  # the crossing itself moved plates
+    assert results["34"].cards == ()  # but its voided card never re-credits
+    assert results["12"].cards == (first.card,)  # only the live card stays
+
+
 def test_reassign_crossing_empty_reason_is_refused() -> None:
     """A reassign with no reason is refused outright (R-33)."""
     engine, _ = _make_engine()
