@@ -37,6 +37,11 @@ keystrokes that get there) and resolve through the caller's roster
 (``Roster.resolve_plate``). Every refusal keeps the dialog open, focuses
 the offending field and says why on the dialog's own inline
 ``entry_lbl`` -- the consequence line directly under the plate field.
+``manual_deal_dlg`` types its plate too and takes the same
+``_bind_digits_only`` keystroke filter, but no gate beyond the reason
+one: it authors no ``entry_lbl`` for a target refusal to land on, and
+an unknown-but-numeric plate is left to the engine's own
+``UnknownPlateError`` refusal.
 
 The move-rider "team picker" has no XRC dialog (spec §15b authors
 none); :func:`run_move_rider` builds a small native picker in code.
@@ -471,7 +476,16 @@ def run_manual_deal(
     frame: Any,  # noqa: ANN401 -- wx ships no stubs
     plate: str,
 ) -> ManualDeal | None:
-    """Open ``manual_deal_dlg``; return the confirmed deal, or None."""
+    """Open ``manual_deal_dlg``; return the confirmed deal, or None.
+
+    *plate* is virtually always blank (the menu route passes nothing:
+    the operator types the plate), and ``plate_input`` carries the
+    digits-only keystroke filter (:func:`_bind_digits_only`) -- a plate
+    is a whole number, so no letter can land in the field. There is no
+    gate beyond the reason one: the dialog authors no ``entry_lbl`` for
+    a target refusal to land on, and an unknown-but-numeric plate stays
+    the engine's own ``UnknownPlateError`` refusal.
+    """
     dialog = load_dialog(resource, ids.MANUAL_DEAL_DLG)
     if dialog is None:
         return None
@@ -479,6 +493,7 @@ def run_manual_deal(
         plate_input = _find(dialog, ids.PLATE_INPUT)
         reason_input = _find(dialog, ids.REASON_INPUT)
         plate_input.SetValue(plate)
+        _bind_digits_only(plate_input)
         confirmed: ManualDeal | None = None
 
         def _commit() -> None:

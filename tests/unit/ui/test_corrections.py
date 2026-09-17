@@ -274,6 +274,15 @@ class _DnfDoubles(NamedTuple):
     ok_btn: _RecordingButton
 
 
+class _ManualDealDoubles(NamedTuple):
+    """The doubles one ``run_manual_deal`` run touches."""
+
+    dialog: _StubDialog
+    plate_input: _RecordingPlateInput
+    reason_input: _RecordingReasonInput
+    ok_btn: _RecordingButton
+
+
 # ------------------------------------------------------------- arrange
 #
 # logic-coverage-exempt: T-10 -- ``load_dialog`` and ``find_control``
@@ -909,6 +918,83 @@ def test_run_dnf_given_an_unauthored_dialog_returns_none(
     result = _open_dnf()
 
     assert result is None
+
+
+# ----------------------------------------------------- run_manual_deal
+#
+# Deal Bonus Card is the second form whose plate is typed in, so it
+# takes the DNF dialog's typing half: ``_bind_digits_only`` keeps a
+# stray letter out of the field. It takes no ``_bind_plate_gate`` --
+# the dialog authors no ``entry_lbl`` to write a refusal onto, and an
+# unknown-but-numeric plate stays the engine's own refusal.
+
+
+def _manual_deal_harness(
+    monkeypatch: pytest.MonkeyPatch, *, result: int = wx.ID_CANCEL, plate: str = ""
+) -> _ManualDealDoubles:
+    """Build the manual-deal dialog's doubles, wired into the runner.
+
+    The control map carries exactly the names the runner looks up, so
+    a lookup the dialog does not author (``entry_lbl``, the DNF gate's
+    refusal line) fails the test rather than passing silently.
+    ``_run_dialog`` is stubbed, so the recorded-defaults step never
+    looks a control up in the double; it clicks OK -- as the operator
+    would -- when *result* is ``wx.ID_OK`` and then answers *result*.
+    """
+    dialog = _StubDialog(ids.MANUAL_DEAL_DLG)
+    plate_input = _RecordingPlateInput(plate)
+    reason_input = _RecordingReasonInput()
+    ok_btn = _RecordingButton()
+    _patch_load(monkeypatch, dialog)
+    _patch_controls(
+        monkeypatch,
+        {
+            ids.PLATE_INPUT: plate_input,
+            ids.REASON_INPUT: reason_input,
+            "wxID_OK": ok_btn,
+        },
+    )
+
+    def _run(_dialog: object, _frame: object) -> int:
+        if result == wx.ID_OK:
+            ok_btn.click()
+        return result
+
+    monkeypatch.setattr(corrections, "_run_dialog", _run)
+    return _ManualDealDoubles(dialog, plate_input, reason_input, ok_btn)
+
+
+def _open_manual_deal() -> corrections.ManualDeal | None:
+    """Open the Deal Bonus Card dialog through the runner under test."""
+    return corrections.run_manual_deal(object(), frame=object(), plate="")
+
+
+def test_run_manual_deal_given_a_plate_binds_its_keystroke_filter_once(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The plate field filters keystrokes as the operator types."""
+    doubles = _manual_deal_harness(monkeypatch)
+
+    _open_manual_deal()
+
+    assert len(doubles.plate_input.char_handlers) == 1
+
+
+@pytest.mark.parametrize(
+    ("key_code", "expected"),
+    [(ord("5"), True), (ord("A"), False)],
+    ids=["digit_allowed", "letter_swallowed"],
+)
+def test_run_manual_deal_given_a_keystroke_lets_the_bound_filter_decide(
+    monkeypatch: pytest.MonkeyPatch, key_code: int, *, expected: bool
+) -> None:
+    """The bound handler skips a digit key, consumes the rest."""
+    doubles = _manual_deal_harness(monkeypatch)
+    _open_manual_deal()  # arrange: the runner binds the filter under test
+
+    event = doubles.plate_input.press(key_code)
+
+    assert event.skipped is expected
 
 
 # ------------------------------------- the restructured .xrc top
