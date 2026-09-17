@@ -108,6 +108,23 @@ class _SortEvent:
         self.skipped = True
 
 
+class _KeyEvent:
+    """A ``wx.KeyEvent`` double carrying the feed's pressed key."""
+
+    def __init__(self, key_code: int) -> None:
+        """Report *key_code* from ``GetKeyCode()``."""
+        self._key_code = key_code
+        self.skipped = False
+
+    def GetKeyCode(self) -> int:  # noqa: N802 -- wx API name the double mirrors
+        """Return the key the operator pressed."""
+        return self._key_code
+
+    def Skip(self) -> None:  # noqa: N802 -- wx API name the double mirrors
+        """Record that the handler let the event continue."""
+        self.skipped = True
+
+
 class _ResortModel:
     """A ``DataViewIndexListModel`` double recording its resorts."""
 
@@ -553,6 +570,10 @@ class _FeedModel:
 class _FeedShell:
     """A ``MainFrame`` double owning the feed handlers' own state."""
 
+    # The real delete handler, so ``_on_feed_key_down``'s routing is
+    # driven through the production code rather than a stub.
+    _on_delete_crossing_accelerator = main_frame.MainFrame._on_delete_crossing_accelerator
+
     def __init__(  # noqa: PLR0913 -- (selection, model) + the three feed seams
         self,
         *,
@@ -580,13 +601,15 @@ def test_on_edit_crossing_accelerator_given_a_selected_row_fires_the_seam() -> N
     assert fired == [3]
 
 
-def test_accelerator_entries_given_a_frame_id_returns_the_f2_entry() -> None:
-    """Phase 6: the frame's own entry is F2 -> its frame-local id.
+def test_accelerator_entries_given_a_frame_id_returns_the_three_code_side_rows() -> None:
+    """Phase 6/7: F2, Ctrl+D and Ctrl+E -> their frame-local ids.
 
     ``app._apply_accelerators`` appends this list to the harvested
-    menubar entries, so the key code and command are the app-facing
-    contract that keeps F2 alive after the bootstrap re-applies the
-    table.
+    menubar entries, so the key codes and commands are the app-facing
+    contract that keeps them alive after the bootstrap re-applies the
+    table. Delete is deliberately absent: it is feed-scoped (bound on
+    ``crossings_list``'s own ``EVT_KEY_DOWN``), never a frame
+    accelerator that could remap it away from ``plate_input``.
     """
     shell = object.__new__(main_frame.MainFrame)
     shell._edit_crossing_id = 4242
@@ -597,17 +620,16 @@ def test_accelerator_entries_given_a_frame_id_returns_the_f2_entry() -> None:
 
     assert [(entry.GetKeyCode(), entry.GetCommand()) for entry in entries] == [
         (wx.WXK_F2, 4242),
-        (wx.WXK_DELETE, 4343),
         (ord("D"), 4343),
         (ord("E"), 4444),
     ]
 
 
-def test_accelerator_entries_given_a_frame_id_modifies_delete_with_ctrl_only() -> None:
-    """The two Delete bindings differ in modifier, never in command id.
+def test_accelerator_entries_given_a_frame_id_keeps_only_the_ctrl_rows_modified() -> None:
+    """F2 stays a bare accelerator; the two commands now take Ctrl.
 
-    Delete and Ctrl+D run the same ``_delete_crossing_id`` command (one
-    bound id, two rows), while F2 stays a bare accelerator.
+    Ctrl+D is the one frame-level Delete, so the bare-Delete row that
+    used to shadow the key is gone.
     """
     shell = object.__new__(main_frame.MainFrame)
     shell._edit_crossing_id = 4242
@@ -618,7 +640,6 @@ def test_accelerator_entries_given_a_frame_id_modifies_delete_with_ctrl_only() -
 
     assert [(entry.GetFlags(), entry.GetCommand()) for entry in entries] == [
         (wx.ACCEL_NORMAL, 4242),
-        (wx.ACCEL_NORMAL, 4343),
         (wx.ACCEL_CTRL, 4343),
         (wx.ACCEL_CTRL, 4444),
     ]
@@ -634,11 +655,13 @@ def test_accelerator_entries_given_a_frame_id_modifies_delete_with_ctrl_only() -
     ids=["delete", "ctrl_d", "ctrl_e"],
 )
 def test_crossings_panel_hotkey_constants_bind_the_expected_keys(name: str, key: int) -> None:
-    """The three new frame accelerators' own key constants.
+    """The feed's own key constants.
 
-    wxPython exposes no ``WXK_D``/``WXK_E`` for letter keys, so the
-    Ctrl+D/Ctrl+E rows carry ``ord("D")``/``ord("E")`` -- the spelling
-    ``app._accelerator_entries``' own tests already use for Ctrl+Z.
+    Delete is read by ``_on_feed_key_down`` (feed-scoped); Ctrl+D and
+    Ctrl+E are frame accelerators. wxPython exposes no ``WXK_D``/
+    ``WXK_E`` for letter keys, so those two carry ``ord("D")``/
+    ``ord("E")`` -- the spelling ``app._accelerator_entries``' own
+    tests already use for Ctrl+Z.
     """
     assert getattr(main_frame, name) == key
 
@@ -686,9 +709,11 @@ def test_on_edit_crossing_accelerator_given_no_callback_resolves_but_opens_nothi
 
 # ------------------------- Delete / Ctrl+D / Ctrl+E (crossings panel)
 #
-# The three new frame accelerators are the F2 handler's own shape with
-# a different seam: the view resolves the feed's *selection* through
-# the model and fires the app's callback with the row index.
+# F2, Ctrl+D and Ctrl+E are the F2 handler's own shape with a different
+# seam: the view resolves the feed's *selection* through the model and
+# fires the app's callback with the row index. Delete reaches the same
+# handler from the feed's own key-down hook instead of the frame
+# accelerator table, so the key stays with ``crossings_list``.
 
 
 def test_set_on_delete_crossing_registers_the_callback() -> None:
@@ -760,6 +785,45 @@ def test_on_delete_crossing_accelerator_given_no_callback_resolves_but_deletes_n
     main_frame.MainFrame._on_delete_crossing_accelerator(shell, _SortEvent())
 
     assert (len(model.resolved), shell._on_delete_crossing) == (1, None)
+
+
+# ------------------------------------------- the feed's own Delete key
+#
+# Delete is not in the frame's accelerator table: a bare frame-level
+# Delete would remap the key away from ``plate_input``, which needs it
+# for text editing. ``crossings_list`` binds it instead, so it only
+# acts while the feed has focus.
+
+
+def test_on_feed_key_down_given_delete_routes_to_the_delete_flow() -> None:
+    """Delete runs the same delete flow the Ctrl+D accelerator fires."""
+    fired: list[int] = []
+    shell = _FeedShell(model=_FeedModel(row=3), delete_crossing=fired.append)
+
+    main_frame.MainFrame._on_feed_key_down(shell, _KeyEvent(wx.WXK_DELETE))
+
+    assert fired == [3]
+
+
+def test_on_feed_key_down_given_delete_consumes_the_key() -> None:
+    """The feed handles Delete, so it never reaches the control."""
+    shell = _FeedShell(model=_FeedModel(row=3))
+    event = _KeyEvent(wx.WXK_DELETE)
+
+    main_frame.MainFrame._on_feed_key_down(shell, event)
+
+    assert event.skipped is False
+
+
+def test_on_feed_key_down_given_a_non_delete_key_skips_the_event() -> None:
+    """Every other key falls through to the feed's own handling."""
+    fired: list[int] = []
+    shell = _FeedShell(model=_FeedModel(row=3), delete_crossing=fired.append)
+    event = _KeyEvent(ord("K"))
+
+    main_frame.MainFrame._on_feed_key_down(shell, event)
+
+    assert (event.skipped, fired) == (True, [])
 
 
 def test_on_edit_plate_crossing_accelerator_given_a_selected_row_fires_the_seam() -> None:

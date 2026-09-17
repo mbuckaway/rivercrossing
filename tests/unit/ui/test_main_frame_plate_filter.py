@@ -9,8 +9,9 @@ missed -- and nothing else. ``MainFrame.wire_entry`` binds
 - an **ASCII** digit or a miss symbol ``Skip()``s on to the control,
   so wx shows the character;
 - every control key ``Skip()``s too: ``GetUnicodeKey()`` reports
-  ``wx.WXK_NONE`` for Backspace, Enter and the arrows, and the field's
-  own ``wxTE_PROCESS_ENTER`` submit depends on Enter passing through;
+  ``wx.WXK_NONE`` for the arrows and function keys, while Backspace (8)
+  and Enter (13) arrive as non-printable characters -- the field's own
+  ``wxTE_PROCESS_ENTER`` submit depends on Enter passing through;
 - any other printable character is consumed -- no ``Skip()``, so it
   never reaches the control and wx never beeps at a mistyped key.
 
@@ -65,8 +66,8 @@ class _FakeWx:
     EVT_CHAR = "evt:char"
     EVT_TEXT_ENTER = "evt:text-enter"
     # wxPython 4.3.1 / wxWidgets 3.3.3: the value ``GetUnicodeKey()``
-    # reports for a key with no printable character -- Backspace,
-    # Enter, the arrows. Mirrored because the real handler reads it.
+    # reports for a key that carries no character at all -- the arrows
+    # and the function keys. Mirrored because the real handler reads it.
     WXK_NONE = 0
 
 
@@ -205,9 +206,30 @@ def test_on_plate_char_given_a_miss_symbol_skips_the_key(
 def test_on_plate_char_given_a_control_key_skips_the_key(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Backspace/Enter report ``WXK_NONE`` and pass through to wx."""
+    """A ``WXK_NONE`` key (an arrow, a function key) passes through."""
     console, fake_wx = _wire_entry(monkeypatch)
     event = _CharEvent(unicode_key=fake_wx.WXK_NONE)
+
+    _filter(console, fake_wx)(event)
+
+    assert event.skipped is True
+
+
+@pytest.mark.parametrize(
+    "unicode_key",
+    [pytest.param(8, id="backspace"), pytest.param(13, id="enter")],
+)
+def test_on_plate_char_given_a_non_printable_character_skips_the_key(
+    monkeypatch: pytest.MonkeyPatch, unicode_key: int
+) -> None:
+    """Backspace/Enter are non-printable, so they reach wx untouched.
+
+    Both report their own unicode value -- 8 and 13 -- not
+    ``WXK_NONE``, so the WXK_NONE guard alone would consume them and
+    break text editing and the field's ``wxTE_PROCESS_ENTER`` submit.
+    """
+    console, fake_wx = _wire_entry(monkeypatch)
+    event = _CharEvent(unicode_key=unicode_key)
 
     _filter(console, fake_wx)(event)
 
