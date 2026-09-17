@@ -17,10 +17,14 @@ crossing -- and is not a menu accelerator at all, so its
 code-side row: main.xrc has no menu item for "edit crossing", so the
 console binds it as a frame accelerator
 (``views.main_frame.MainFrame``) and its ``menu_item_id`` is ``None``
-too. The crossings feed's ``Delete``, ``Ctrl+D`` and ``Ctrl+E`` rows
-are the same shape again: no menu item exists for a Delete or an
-Edit Plate command, so ``MainFrame`` binds all three frame-side and
-this table only documents them.
+too. The crossings feed's ``Ctrl+D`` and ``Ctrl+E`` rows are the same
+shape again: no menu item exists for a Delete or an Edit Plate
+command, so ``MainFrame`` binds those two frame-side and this table
+only documents them. ``Delete`` is the odd one out -- it carries no
+``menu_item_id`` either, but it is not a frame accelerator: the frame
+remaps it away from ``plate_input``, so ``MainFrame`` binds it on
+``crossings_list`` itself (feed-scoped) and ``Ctrl+D`` is the frame's
+own route to the same command.
 """
 
 from dataclasses import dataclass
@@ -38,10 +42,10 @@ class Accelerator:
             to match this spelling exactly).
         action: The shortcuts dialog's own action text.
         menu_item_id: The ``mi_*`` name whose XRC ``<accel>`` this
-            row cross-checks, or ``None`` for the five code-side rows
-            (``Enter``, the console's default action; ``F2``, the
-            frame accelerator "edit crossing"; and the crossings
-            feed's ``Delete``/``Ctrl+D``/``Ctrl+E``).
+            row cross-checks, or ``None`` for the five code-side rows:
+            ``Enter`` (the console's default action), the frame
+            accelerators ``F2``/``Ctrl+D``/``Ctrl+E``, and the
+            feed-scoped ``Delete`` (bound on ``crossings_list``).
     """
 
     key: str

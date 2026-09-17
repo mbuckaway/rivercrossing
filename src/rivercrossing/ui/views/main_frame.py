@@ -206,11 +206,14 @@ EDIT_CROSSING_KEY = wx.WXK_F2
 
 # The crossings feed's own hotkeys (Phase 7): Delete and Ctrl+D remove
 # the selected row through the Crossing Detail delete confirm, Ctrl+E
-# retypes its plate through the Plate prompt. Like F2 they are
+# retypes its plate through the Plate prompt. Ctrl+D and Ctrl+E are
 # code-side frame accelerators -- main.xrc declares no menu item for
-# either command. wxPython exposes no WXK_D/WXK_E constants for letter
-# keys, so the two Ctrl rows carry the letter's own ordinal, the
-# spelling app._accelerator_entries' Ctrl+Z handling already uses.
+# either command -- while Delete is feed-scoped: it is bound on
+# crossings_list's own key-down hook, because a frame accelerator on
+# the bare key would remap Delete away from plate_input's text
+# editing. wxPython exposes no WXK_D/WXK_E constants for letter keys,
+# so the two Ctrl rows carry the letter's own ordinal, the spelling
+# app._accelerator_entries' Ctrl+Z handling already uses.
 DELETE_CROSSING_KEY = wx.WXK_DELETE
 DELETE_CROSSING_CTRL_KEY = ord("D")
 EDIT_PLATE_CROSSING_KEY = ord("E")
@@ -838,7 +841,8 @@ class MainFrame(DialogFindMixin):  # _find: ui.views._support, over self.frame
         # Delete/Ctrl+D removes the selected row through the Crossing
         # Detail delete confirm; Ctrl+E retypes its plate through the
         # Plate prompt. Separate slots because the app runs a
-        # different flow for each.
+        # different flow for each. Delete reaches its slot from the
+        # feed's own key-down hook, Ctrl+E from the frame accelerator.
         self._on_delete_crossing: Callable[[int], None] | None = None
         self._on_edit_plate_crossing: Callable[[int], None] | None = None
         self.review_btn.Bind(wx.EVT_BUTTON, lambda _event: self._on_review_clicked())
@@ -890,10 +894,8 @@ class MainFrame(DialogFindMixin):  # _find: ui.views._support, over self.frame
         # table cannot drop it after construction.
         self._edit_crossing_id = wx.NewIdRef()
         self.frame.Bind(wx.EVT_MENU, self._on_edit_crossing_accelerator, id=self._edit_crossing_id)
-        # Phase 7: Delete/Ctrl+D and Ctrl+E, bound the same frame-local
-        # way. Delete and Ctrl+D share one command id -- two keys, one
-        # delete flow -- so both rows in accelerator_entries() carry
-        # _delete_crossing_id.
+        # Phase 7: Ctrl+D and Ctrl+E, bound the same frame-local way as
+        # F2, each with its own row in accelerator_entries().
         self._delete_crossing_id = wx.NewIdRef()
         self.frame.Bind(
             wx.EVT_MENU, self._on_delete_crossing_accelerator, id=self._delete_crossing_id
@@ -902,6 +904,11 @@ class MainFrame(DialogFindMixin):  # _find: ui.views._support, over self.frame
         self.frame.Bind(
             wx.EVT_MENU, self._on_edit_plate_crossing_accelerator, id=self._edit_plate_crossing_id
         )
+        # Delete is feed-scoped, not a frame accelerator: a frame row
+        # for the bare key would swallow it before plate_input ever saw
+        # it, so the list binds it here and Ctrl+D remains the frame's
+        # own route to the same command.
+        self.crossings_list.Bind(wx.EVT_KEY_DOWN, self._on_feed_key_down)
         self.frame.SetAcceleratorTable(wx.AcceleratorTable(self.accelerator_entries()))
 
         # The console-view handle the app (and scenarios) reach the
@@ -1112,9 +1119,10 @@ class MainFrame(DialogFindMixin):  # _find: ui.views._support, over self.frame
         """Register the feed's delete seam (Phase 7).
 
         The app wires this to its delete-confirm flow; the console
-        fires ``callback(row)`` when Delete or Ctrl+D is pressed with
-        a feed row selected. *row* is the selected row's index into
-        the rendered feed model, resolved exactly like
+        fires ``callback(row)`` when Delete is pressed on the feed
+        (feed-scoped, bound on ``crossings_list``) or Ctrl+D is pressed
+        anywhere (the frame accelerator). *row* is the selected row's
+        index into the rendered feed model, resolved exactly like
         :meth:`set_on_open_crossing`'s.
         """
         self._on_delete_crossing = callback
@@ -1136,19 +1144,22 @@ class MainFrame(DialogFindMixin):  # _find: ui.views._support, over self.frame
         The three menu-backed shortcuts come from ``main.xrc``'s
         ``<accel>`` elements and are harvested by
         ``app._apply_accelerators``; the console's own commands -- F2
-        (edit crossing), the feed's Delete/Ctrl+D (delete the selected
-        crossing) and Ctrl+E (edit its plate) -- have no menu item to
-        harvest, so the console owns their entries here. The app
-        appends this list to the harvested ones when it re-applies the
-        frame's table at bootstrap -- without that, the frame-level
-        bindings made in ``__init__`` would be silently replaced.
+        (edit crossing), Ctrl+D (delete the selected crossing) and
+        Ctrl+E (edit its plate) -- have no menu item to harvest, so the
+        console owns their entries here. The app appends this list to
+        the harvested ones when it re-applies the frame's table at
+        bootstrap -- without that, the frame-level bindings made in
+        ``__init__`` would be silently replaced.
 
-        Delete and Ctrl+D are two rows for one command, so both carry
-        :attr:`_delete_crossing_id`; only their modifier differs.
+        A bare ``Delete`` row is deliberately absent: a frame
+        accelerator consumes the key wherever focus sits, which would
+        take Delete away from ``plate_input``. Delete is feed-scoped
+        instead -- ``crossings_list`` binds it in ``__init__``
+        (:meth:`_on_feed_key_down`) -- so only ``Ctrl+D`` reaches the
+        ``_delete_crossing_id`` command from the frame.
         """
         return [
             wx.AcceleratorEntry(wx.ACCEL_NORMAL, EDIT_CROSSING_KEY, self._edit_crossing_id),
-            wx.AcceleratorEntry(wx.ACCEL_NORMAL, DELETE_CROSSING_KEY, self._delete_crossing_id),
             wx.AcceleratorEntry(wx.ACCEL_CTRL, DELETE_CROSSING_CTRL_KEY, self._delete_crossing_id),
             wx.AcceleratorEntry(
                 wx.ACCEL_CTRL, EDIT_PLATE_CROSSING_KEY, self._edit_plate_crossing_id
@@ -1357,6 +1368,21 @@ class MainFrame(DialogFindMixin):  # _find: ui.views._support, over self.frame
             return
         if self._on_open_crossing is not None:
             self._on_open_crossing(row)
+
+    def _on_feed_key_down(self, event: Any) -> None:  # noqa: ANN401 -- wx ships no stubs
+        """Route the feed's own Delete key to the delete flow.
+
+        Delete is not a frame accelerator: a frame-level row consumes
+        the key wherever focus sits, which would remap it away from
+        ``plate_input``. Bound on ``crossings_list`` instead, it reaches
+        the same :meth:`_on_delete_crossing_accelerator` handler that
+        ``Ctrl+D`` fires -- and is consumed here, so the key never
+        travels further. Every other key is left to the control.
+        """
+        if event.GetKeyCode() == DELETE_CROSSING_KEY:
+            self._on_delete_crossing_accelerator(event)
+            return
+        event.Skip()
 
     def _on_edit_crossing_accelerator(self, _event: Any) -> None:  # noqa: ANN401 -- wx ships no stubs
         """Open the selected feed row's Crossing Detail on F2 (Phase 6).
@@ -1882,9 +1908,11 @@ class MainFrame(DialogFindMixin):  # _find: ui.views._support, over self.frame
         consumed rather than ``Skip()``ed: it never reaches the
         control and wx never beeps at it. Every other key ``Skip()``s
         on as usual -- the digits and miss symbols, and every control
-        key, which reports ``wx.WXK_NONE`` from ``GetUnicodeKey()``
-        (Backspace, Enter and the arrows included, so the field's own
-        ``wxTE_PROCESS_ENTER`` submit still fires).
+        key: the arrows and function keys report ``wx.WXK_NONE`` from
+        ``GetUnicodeKey()``, while Backspace and Enter arrive as their
+        own non-printable characters (8 and 13), so each must be
+        ``Skip()``ed explicitly or the field could not be edited and
+        its own ``wxTE_PROCESS_ENTER`` submit would never fire.
 
         The digit arm pins ASCII deliberately: plain
         ``str.isdigit()`` would admit ``٣`` and ``²``.
@@ -1894,6 +1922,9 @@ class MainFrame(DialogFindMixin):  # _find: ui.views._support, over self.frame
             event.Skip()
             return
         character = chr(key)
+        if not character.isprintable():
+            event.Skip()
+            return
         if (character.isascii() and character.isdigit()) or character in MISS_SYMBOLS:
             event.Skip()
 
