@@ -3,11 +3,12 @@
 
 ``ConsolePresenter.on_start`` routes a ``StartBlockedError`` to a
 custom XRC dialog instead of the W5 native warning: one line per
-blocking issue, an OK button, and the ride left in DRAFT. Two halves
-are checked here, both cheap and headless:
+blocking issue, a stock OK + Cancel button row, and the ride left in
+DRAFT. Two halves are checked here, both cheap and headless:
 
 - the XRC itself, read as pure XML from ``riders.xrc`` (name, title,
-  the list control, the single stock OK button);
+  the list control, the two stock buttons -- Cancel is what gives
+  Escape a route, R-76);
 - the code-side ``StartBlockedListModel``, built and queried directly
   -- a ``DataViewIndexListModel`` needs no ``wx.App``, so the one
   column and its per-row value are unit-testable without a window.
@@ -40,6 +41,7 @@ XRC_DIR = Path(__file__).resolve().parents[3] / "src" / "rivercrossing" / "ui" /
 START_BLOCKED_DLG = "start_blocked_dlg"
 START_BLOCKED_LIST = "start_blocked_list"
 WX_ID_OK = "wxID_OK"
+WX_ID_CANCEL = "wxID_CANCEL"
 
 
 def _dialog() -> Element:
@@ -63,6 +65,11 @@ def _text(element: Element, tag: str) -> str:
     return child.text if child is not None and child.text is not None else ""
 
 
+def _buttons() -> list[Element]:
+    """Return the dialog's ``wxButton`` objects in document order."""
+    return [obj for obj in _dialog().iter("object") if obj.get("class") == "wxButton"]
+
+
 def _sizeritem_for(name: str) -> Element:
     """Return the ``sizeritem`` object holding the control named *name*.
 
@@ -75,6 +82,15 @@ def _sizeritem_for(name: str) -> Element:
         if item.get("class") == "sizeritem"
         and any(child.get("name") == name for child in item.iter("object"))
     )
+
+
+def _std_button_sizer_of(name: str) -> list[Element]:
+    """Return the std button sizers wrapping the control ``name``."""
+    return [
+        obj
+        for obj in _sizeritem_for(name).iter("object")
+        if obj.get("class") == "wxStdDialogButtonSizer"
+    ]
 
 
 # ------------------------------------------------------------- the XRC
@@ -108,13 +124,21 @@ def test_start_blocked_dlg_expands_the_issue_list_inside_a_vertical_box() -> Non
 
 
 def test_start_blocked_dlg_has_a_single_ok_button_in_the_stock_sizer() -> None:
-    """The one button is stock ``wxID_OK``, labelled OK."""
-    dialog = _dialog()
-    buttons = [obj for obj in dialog.iter("object") if obj.get("class") == "wxButton"]
+    """One stock ``wxID_OK``, labelled OK, in the std sizer."""
+    ok_buttons = [button for button in _buttons() if button.get("name") == WX_ID_OK]
 
-    assert [button.get("name") for button in buttons] == [WX_ID_OK]
-    assert _text(buttons[0], "label") == "OK"
-    assert _sizeritem_for(WX_ID_OK).find(".//object[@class='wxStdDialogButtonSizer']") is not None
+    assert len(ok_buttons) == 1
+    assert _text(ok_buttons[0], "label") == "OK"
+    assert len(_std_button_sizer_of(WX_ID_OK)) == 1
+
+
+def test_start_blocked_dlg_authors_a_stock_cancel_button_beside_ok() -> None:
+    """Stock ``wxID_CANCEL`` gives a click-Cancel and Escape (R-76)."""
+    cancel_buttons = [button for button in _buttons() if button.get("name") == WX_ID_CANCEL]
+
+    assert len(cancel_buttons) == 1
+    assert _text(cancel_buttons[0], "label") == "Cancel"
+    assert len(_std_button_sizer_of(WX_ID_CANCEL)) == 1
 
 
 # ------------------------------------------------------- the list model

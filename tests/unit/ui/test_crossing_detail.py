@@ -15,8 +15,9 @@ all without a display:
   a stub resource), ``_on_edit_time`` and ``_on_void_card``: each
   commits through the engine and then re-renders the dialog **in
   place**, so a correction returns to the detail window rather than
-  closing it. ``_on_ok`` is the crossing mode's only exit; miss mode's
-  OK assigns the plate Edit's own prompt stored. ``_on_delete`` is the
+  closing it. ``_on_ok`` is the crossing mode's commit-and-close; the
+  stock Cancel beside it dismisses the same window, and miss mode's OK
+  assigns the plate Edit's own prompt stored. ``_on_delete`` is the
   one correction that still closes -- its crossing is gone. All are
   driven against recording widget doubles built with ``object.__new__``
   (``test_dialogs_positioning.py``'s precedent).
@@ -641,6 +642,30 @@ def test_crossing_detail_dlg_given_its_correction_row_labels_the_four_buttons() 
         ids.VOID_CARD_BTN: "Void Card…",
     }
     assert labels.get(ids.DELETE_BTN) == "Delete"
+
+
+def test_crossing_detail_dlg_given_the_stock_row_authors_a_cancel_button() -> None:
+    """R-76: the stock Cancel gives Escape and click-cancel for free."""
+    labels = _crossing_detail_button_labels()
+
+    assert {name: labels.get(name) for name in ("wxID_OK", "wxID_CANCEL")} == {
+        "wxID_OK": "OK",
+        "wxID_CANCEL": "Cancel",
+    }
+
+
+def test_crossing_detail_dlg_given_the_stock_row_places_cancel_beside_ok() -> None:
+    """Measured: a std sizer places only the stock ids it recognises."""
+    sizer = next(
+        element
+        for element in _crossing_detail_controls()
+        if element.get("class") == "wxStdDialogButtonSizer"
+    )
+
+    assert [button.find("object").get("name") for button in sizer.findall("object")] == [
+        "wxID_OK",
+        "wxID_CANCEL",
+    ]
 
 
 def test_ids_given_the_removed_plate_field_declares_no_plate_input_constant() -> None:
