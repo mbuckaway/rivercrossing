@@ -3053,7 +3053,13 @@ def _persist_simulator_changes(context: _RouteContext, view: Any) -> None:  # no
     engine's own status, the same read
     :func:`_record_export_completion` refreshes with, enables them on
     the spot; a GO the engine refused leaves it DRAFT, so the menu
-    never claims a ride that never started.
+    never claims a ride that never started. The console needs the same
+    treatment for the same reason: with no ride-state change fired it
+    still shows its pre-GO render (entry row, clock and lamp), so the
+    live presenter is refreshed here too --
+    :meth:`~rivercrossing.ui.presenters.console.ConsolePresenter.
+    refresh_state`, which re-reads state, lock and clock from the
+    engine.
 
     The settings write is not gated on the presenter. A view with no
     presenter is the dialog's own no-ride open
@@ -3104,6 +3110,7 @@ def _persist_simulator_changes(context: _RouteContext, view: Any) -> None:  # no
     presenter = context.presenter
     if presenter is not None:
         _apply_menu_state(context, presenter.engine.state)
+        presenter.refresh_state()
 
 
 def _open_rider_editor_for(context: _RouteContext, plate: str) -> None:
@@ -3453,9 +3460,10 @@ def _show_crossing_detail_dialog(
     try:
         zoom.apply_to(window)
         if isinstance(target, PendingMiss):
-            # Both modes take the roster: the miss's plate prompt
-            # resolves the typed number to its entry before OK assigns
-            # it, exactly like the crossing mode's.
+            # Both modes take the roster: the miss mode's own Plate
+            # prompt stores the typed number and renders the rider and
+            # team it names, and the engine resolves that number when
+            # OK assigns it -- the dialog itself never does.
             MissDetailView(window, miss=target, roster=context.roster, engine=engine)
         else:
             CrossingDetailView(window, crossing=target, roster=context.roster, engine=engine)

@@ -26,11 +26,13 @@ E4.4.1-E4.4.3 behavior (spec §10/§13, R-31/32/34/35/37):
 
 - ``on_plate_entered`` records through the engine. Accepted (or
   flagged) crossings refresh the feed/counters, flash the row, play
-  the RECORDED (or FLAGGED) cue, clear the field and refocus.
-  Rejections (``unknown_plate`` / not running / stopped) play the
-  ERROR cue, post a notice, and **keep the field** -- R-31's "focus
-  stays in the entry field" means a mistyped plate is corrected in
-  place, never wiped.
+  the RECORDED (or FLAGGED) cue, post their own notice (the flagged
+  copy names the short lap), clear the field and refocus. Rejections
+  (``unknown_plate`` / not running / stopped) play the ERROR cue,
+  post a notice, and **keep the field** -- R-31's "focus stays in the
+  entry field" means a mistyped plate is corrected in place, never
+  wiped. Every entry posts a notice, so the status line always
+  describes the entry just made, never the one before it.
 - ``on_undo``/``on_stop_confirmed``/``on_start``/``on_finish`` drive
   the engine's write side; engine refusals surface as notices, never
   crashes.
@@ -57,6 +59,13 @@ gone):
   roster gets a native warning (no Stop dialog at all), a RUNNING
   ride gets the native confirm (``view.confirm``), and a confirmed OK
   runs the unchanged ``on_stop_confirmed`` act-3 flow.
+- ``refresh_state`` is the one ride-state render the console's own
+  transitions and the app's write routes share -- ``on_start``'s
+  success render, and the simulator's close-persist
+  (``app._persist_simulator_changes``), which must re-render a console
+  a direct engine write left behind. It reads the state, R-35's entry
+  lock and the clock off the engine, so the lock is never a
+  remembered verdict.
 
 W6 adds the stopped-clock display freeze; C3 extends it to closed
 rides:
@@ -461,8 +470,11 @@ class ConsolePresenter:
         reaches ``record_crossing`` (K). Otherwise the plate goes to
         ``engine.record_crossing``: accepted crossings refresh the feed
         and counters, flash the new row, play RECORDED (or FLAGGED for
-        a short lap, R-34), clear the field and refocus; refusals play
-        ERROR, post a notice, and keep the field (R-31 -- pin).
+        a short lap, R-34), post the recorded-plate notice -- the
+        flagged copy names the review flag -- clear the field and
+        refocus; refusals play ERROR, post a notice, and keep the field
+        (R-31 -- pin). Every entry posts a notice, so the status line
+        always describes the entry just made.
         """
         plate = text.strip()
         if not plate:
@@ -479,6 +491,11 @@ class ConsolePresenter:
             return
         self.refresh_feed()
         self._refresh_counters()
+        self.view.show_notice(
+            f"Recorded plate {plate} — short lap flagged for review"
+            if result.flagged
+            else f"Recorded plate {plate}"
+        )
         self.view.flash_crossing(self.source.feed_rows()[0])
         self.view.play(Cue.FLAGGED if result.flagged else Cue.RECORDED)
         self.view.clear_entry()
@@ -556,15 +573,15 @@ class ConsolePresenter:
         """Handle Start Ride (start_btn / Ride ▸ Start Ride).
 
         ``engine.start()`` covers both DRAFT -> RUNNING and continue-
-        after-stop; on success the console reflects RUNNING, unlocks
-        the entry row and posts a notice. On continue the same call
-        re-renders the clock (W6): the stop freeze clears and the
-        display jumps to the live wall-clock elapsed without waiting
-        for the next tick. A start the engine blocks
-        because the ride is not ready (:class:`StartBlockedError`)
-        opens the blocked-start issues dialog, one row per reason
-        (Phase 5); a state-machine refusal (finished ride) stays a
-        status notice.
+        after-stop; on success :meth:`refresh_state` reflects RUNNING
+        and unlocks the entry row, with the notice posted after it. On
+        continue the same call re-renders the clock (W6): the stop
+        freeze clears and the display jumps to the live wall-clock
+        elapsed without waiting for the next tick. A start the engine
+        blocks because the ride is not ready
+        (:class:`StartBlockedError`) opens the blocked-start issues
+        dialog, one row per reason (Phase 5); a state-machine refusal
+        (finished ride) stays a status notice.
         """
         try:
             self.engine.start()
@@ -574,12 +591,31 @@ class ConsolePresenter:
         except StartBlockedError as exc:
             self.view.show_start_blocked(list(exc.reasons))
             return
+        self.refresh_state()
+        self.view.show_notice("Ride started")
+
+    def refresh_state(self) -> None:
+        """Re-render the console from the engine (W5).
+
+        The one ride-state render the console shares with the app's
+        write routes: ``on_start``'s success render, and the
+        simulator's close-persist, whose GO drives the engine directly
+        and so raises no console ride-state change of its own. Feed and
+        counters first (their renders re-apply the button gates), then
+        the lifecycle state, the R-35 entry lock and the clock.
+
+        The lock is read off the engine, never remembered: only a live
+        RUNNING ride (not stopped) unlocks the entry row, so a stopped,
+        closed or not-yet-started ride re-locks it however the console
+        was last rendered.
+        """
         self.refresh_feed()
         self._refresh_counters()
         self.view.set_state(self.engine.state, stopped=self.engine.stopped)
-        self.view.set_entry_locked(locked=False)
-        self._refresh_clock()  # W6: continue unfreezes and shows live elapsed now
-        self.view.show_notice("Ride started")
+        self.view.set_entry_locked(
+            locked=not (self.engine.state is RideStatus.RUNNING and not self.engine.stopped)
+        )
+        self._refresh_clock()
 
     def on_stop_requested(self) -> None:
         """Handle a Stop request: stop_btn or Ride ▸ Stop Ride… (W5).

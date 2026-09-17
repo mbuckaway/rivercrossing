@@ -17,6 +17,9 @@ code-side behaviour:
   and ``new_ride_btn`` -- the dialog's one live action -- routes to
   the app's New Ride flow and closes the dialog. With a ride already
   open that button has nothing to do, so it is disabled and unbound.
+  A race the engine refuses to start comes back as
+  ``SimOutcome.blocked``: GO reports those reasons on ``sim_infobar``
+  and stays open, so the refusal is read on the dialog that fixes it.
 * :class:`SimRunningDialog` owns the progress gauge and the status
   line, and pumps the event loop so the gauge repaints and Cancel is
   dispatched while the race runs.
@@ -535,7 +538,17 @@ class SimulatorDialog(DialogFindMixin):  # _find: ui.views._support
         self.dialog.EndModal(wx.ID_OK)
 
     def _on_go(self, _event: wx.CommandEvent) -> None:
-        """Validate the race settings, then run the race."""
+        """Validate the race settings, run the race, close on success.
+
+        A refused setting lands on ``sim_infobar`` and keeps the dialog
+        open (plan §2's own Check precedent). When the race runs, its
+        outcome decides the same way: a run the engine would not start
+        (``SimOutcome.blocked``, one reason per blocking issue) shows
+        those reasons on ``sim_infobar`` and returns without closing --
+        the operator is standing on the dialog that must be fixed, and
+        a close would hide the refusal. Otherwise the spins are
+        snapshotted and the modal ends.
+        """
         laps = self.laps_spin.GetValue()
         interval_minutes = self.interval_spin.GetValue()
         refusal = self.presenter.validate(laps=laps, interval_minutes=interval_minutes)
@@ -554,7 +567,11 @@ class SimulatorDialog(DialogFindMixin):  # _find: ui.views._support
             lapped=lapped,
             team_stop=team_stop,
         )
-        running.run()
+        outcome = running.run()
+        if outcome is not None and outcome.blocked:
+            self.sim_infobar.ShowMessage("; ".join(outcome.blocked), wx.ICON_WARNING)
+            self.dialog.Layout()
+            return
         self._snapshot_sim_values()
         self.dialog.EndModal(wx.ID_OK)
 
