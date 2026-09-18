@@ -3644,13 +3644,15 @@ def _show_crossing_detail_dialog(
         zoom.apply_to(window)
         if isinstance(target, PendingMiss):
             # Both modes take the roster: the miss mode's own Plate
-            # prompt is its commit -- Edit hands the number the
-            # operator types to RideEngine.assign_plate_to_miss (which
-            # records the crossing and deals its card at the miss's own
-            # instant) and then closes on OK's own id, while OK on its
-            # own only closes. The build_resolved_miss_fields resolver
-            # that once rendered the plate's rider and team here is
-            # gone.
+            # prompt is its action -- Edit hands the number the operator
+            # types to RideEngine.assign_plate_to_miss (which records
+            # the crossing and deals its card at the miss's own instant)
+            # and the dialog then re-renders as that crossing's detail
+            # instead of closing, while OK on its own only closes (the
+            # crossing's and the miss's corrections both live on the
+            # shared view base now). The build_resolved_miss_fields
+            # resolver that once rendered the plate's rider and team
+            # here is gone.
             MissDetailView(window, miss=target, roster=context.roster, engine=engine)
         else:
             CrossingDetailView(window, crossing=target, roster=context.roster, engine=engine)

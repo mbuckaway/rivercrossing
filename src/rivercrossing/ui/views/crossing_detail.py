@@ -45,10 +45,14 @@ shows (Plate ``-``, Name ``missed``). Its Edit opens the same Plate
 prompt, blank (a miss has no plate to correct), and commits the number
 it saves through
 :meth:`~rivercrossing.ride.RideEngine.assign_plate_to_miss`, which
-records the crossing and deals its card at the miss's own instant, then
-closes; a blank field and an assign the engine refuses both leave the
-dialog open with the refusal shown. Delete is not offered: a miss is
-not ``engine.crossings[-1]`` and cannot be undone.
+records the crossing and deals its card at the miss's own instant. The
+dialog then **stays open** and becomes that crossing's own detail --
+full crossing mode, so Edit now reassigns its plate and Edit Time, Void
+Card and Delete are offered -- never a close: scoring a miss is not an
+exit. A blank field and an assign the engine refuses both leave the
+dialog open with the refusal shown. Delete is not offered while the
+miss stands: a miss is not ``engine.crossings[-1]`` and cannot be
+undone.
 
 A refusal surfaces on a code-side ``wxInfoBar``
 (:data:`CROSSING_DETAIL_INFOBAR`) and leaves the dialog open to fix:
@@ -68,7 +72,7 @@ the engine on its own 1 s tick.
 """
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 import wx
 import wx.xrc  # submodule, not loaded by plain `import wx`
@@ -537,13 +541,34 @@ class _DetailDialogView(DialogFindMixin):  # _find: ui.views._support
     The crossing mode (:class:`CrossingDetailView`) and the miss mode
     (:class:`MissDetailView`) decorate the same frozen dialog, so the
     nine value boxes, the four correction buttons, the stock OK, the
-    code-side info bar and Escape all live here. Each subclass supplies
-    what differs: the view-model it renders and what Edit does (both
-    open the §9 Plate prompt, on the crossing's own plate and on a
-    blank field respectively, and only the miss's commits). OK itself
-    is :meth:`_on_ok` -- the one control that closes the window -- so
-    no subclass overrides it.
+    code-side info bar and Escape all live here -- and so does every
+    correction, because the two modes are one dialog that can change
+    mode: scoring a miss records a crossing, which this view then shows
+    in full crossing mode (:meth:`_on_edit`). A subclass supplies only
+    what its mode opens with, the view-model it renders
+    (:meth:`_render_crossing` / :meth:`_render_miss`, through its own
+    one-line ``render``). Binding every button here, once, is what keeps
+    a duplicate ``wx.Bind`` from delivering an event twice. OK itself is
+    :meth:`_on_ok` -- the one ordinary control that closes the window --
+    so no subclass overrides it.
     """
+
+    # The crossing this dialog shows, or ``None`` while it is in miss
+    # mode. A class-level default, not an ``__init__``-only attribute:
+    # the white-box tests build views with ``object.__new__`` and never
+    # run ``__init__`` (test_crossing_detail._view / _miss_view).
+    crossing: Crossing | None = None
+
+    # The pending miss this dialog scores, set by MissDetailView's own
+    # ``__init__``. Read only while ``crossing`` is ``None``, and
+    # dropped by the hand-off that scores it. Declared here because
+    # :meth:`_score_miss` and :meth:`_render_miss` are the base's.
+    miss: PendingMiss
+
+    # The ride's in-memory roster, set by both modes' ``__init__``: the
+    # read side of every correction's own naming, as the base's
+    # handlers do it.
+    roster: Roster
 
     def __init__(self, dialog: wx.Dialog, engine: RideEngine) -> None:
         """Find the frozen controls, build the info bar and lay it out.
@@ -575,11 +600,24 @@ class _DetailDialogView(DialogFindMixin):  # _find: ui.views._support
         self.crossing_detail_infobar = self._build_infobar()
         self._apply_min_size()
 
-        # edit_btn is bound by each subclass, whose own _on_edit it is
-        # (the Plate prompt on the crossing's plate, on a blank field
-        # for a miss): binding it here would name a method this class
-        # does not have.
+        # Each button is bound here, once, whatever the mode: one
+        # ``Bind`` per control, because a duplicate binding delivers
+        # every later event twice (view/main_frame.py's measured
+        # duplicate-Bind note) -- and the subclasses' own ``ok_btn``
+        # binding, which they used to add, would fire ``EndModal``
+        # twice now that the base binds it.
         #
+        # ``_on_ok`` never Skips: it alone decides whether the dialog
+        # closes (ride_setup._on_ok's measured note), and a Skip would
+        # let wx's stock OK close the window before the handler ran.
+        # The corrections do Skip, so nothing else about their events is
+        # swallowed.
+        self.dialog.Bind(wx.EVT_BUTTON, self._on_ok, self.ok_btn)
+        self.dialog.Bind(wx.EVT_BUTTON, self._on_edit, self.edit_btn)
+        self.dialog.Bind(wx.EVT_BUTTON, self._on_edit_time, self.edit_time_btn)
+        self.dialog.Bind(wx.EVT_BUTTON, self._on_void_card, self.void_card_btn)
+        self.dialog.Bind(wx.EVT_BUTTON, self._on_delete, self.delete_btn)
+
         # Escape points at OK: the window authors no wxID_CANCEL, and
         # wx's own Escape handling only ever looks for that id
         # (measured -- dialogs.wire_close_button's docstring), so
@@ -643,6 +681,53 @@ class _DetailDialogView(DialogFindMixin):  # _find: ui.views._support
         self.crossing_card_lbl.SetValue(fields.card)
         self.crossing_held_lbl.SetValue(fields.held)
 
+    def _render_crossing(self) -> None:
+        """Write :func:`build_fields`' values onto the nine entry boxes.
+
+        The crossing mode's whole render, and the one a scored miss is
+        handed over to. The button gates live here too: Edit (the Plate
+        prompt) and Edit Time are always offered; Delete -- either
+        correction, whichever this crossing is -- only while the ride is
+        RUNNING or REOPENED; and Void Card when this crossing's own card
+        is **credited** (a held card is the review surface's, a voided
+        one is already out of the ride) or when this crossing is one
+        half of a duplicate pair, whose held card is voidable here
+        because deleting one twin is the correction it needs (Phase 3).
+        """
+        fields = build_fields(self._shown_crossing(), self.roster, self.engine)
+        self._render_fields(fields)
+        self.edit_btn.Enable(True)  # noqa: FBT003 -- wx API takes a positional bool
+        self.edit_time_btn.Enable(True)  # noqa: FBT003 -- wx API takes a positional bool
+        self.void_card_btn.Enable(self._card_is_credited() or self._is_duplicate())
+        self.delete_btn.Enable(self.engine.state in (RideStatus.RUNNING, RideStatus.REOPENED))
+
+    def _render_miss(self) -> None:
+        """Write :func:`build_miss_fields` onto the boxes and gates.
+
+        Edit -- the Plate prompt the typed number comes from -- is the
+        miss's one action. Delete, Edit Time and Void Card are all
+        disabled: a miss has no ``undo_last``, no clock time and no
+        card, and each handler behind them reads :attr:`crossing` (the
+        XRC authors the three buttons enabled, so this gate is what
+        keeps a miss's window safe).
+        """
+        self._render_fields(build_miss_fields(self.miss))
+        self.edit_btn.Enable(True)  # noqa: FBT003 -- wx API takes a positional bool
+        self.edit_time_btn.Enable(False)  # noqa: FBT003 -- wx API takes a positional bool
+        self.void_card_btn.Enable(False)  # noqa: FBT003 -- wx API takes a positional bool
+        self.delete_btn.Enable(False)  # noqa: FBT003 -- wx API takes a positional bool
+
+    def _shown_crossing(self) -> Crossing:
+        """Return the crossing this dialog shows.
+
+        The crossing-only paths' one read of :attr:`crossing`. A
+        miss-mode view holds none until its Edit scores the miss and the
+        hand-off fills one in -- which is exactly when those paths
+        become reachable -- so the cast only narrows the optional
+        attribute for mypy.
+        """
+        return cast("Crossing", self.crossing)
+
     def show_refusal(self, message: str) -> None:
         """Show *message* on :data:`CROSSING_DETAIL_INFOBAR`."""
         self.crossing_detail_infobar.ShowMessage(message, wx.ICON_WARNING)
@@ -661,124 +746,71 @@ class _DetailDialogView(DialogFindMixin):  # _find: ui.views._support
         """
         self.dialog.EndModal(wx.ID_OK)
 
-
-class CrossingDetailView(_DetailDialogView):
-    """Code-side behaviour for ``crossing_detail_dlg`` (J2).
-
-    A read-only detail view with four corrections, not a
-    presenter-backed form: it renders :func:`build_fields` once at
-    construction and forwards its buttons straight to the engine
-    (``views/rider_issues.py``'s presenter-inside-the-view shape, minus
-    the presenter -- there is no view logic here to put in one). The
-    Edit and Delete corrections are the console's own reassign/undo; the
-    Phase 2 Edit Time and Void Card buttons reach the same
-    ``edit_crossing_dlg`` / ``void_card_confirm_dlg`` runners the
-    retired Reassign Plate…/Void Card… menu rows used.
-
-    Every correction re-renders this dialog in place once the engine has
-    taken it, so the scorer stays on the crossing and can keep working
-    (OK is the one button that closes it; Delete, whose crossing is
-    gone, is the other exit).
-    """
-
-    def __init__(  # noqa: PLR0913 -- (dialog, crossing, roster, engine)
-        self,
-        dialog: wx.Dialog,
-        *,
-        crossing: Crossing,
-        roster: Roster,
-        engine: RideEngine,
-    ) -> None:
-        """Decorate an already-loaded ``crossing_detail_dlg`` window.
-
-        Args:
-            dialog: The ``wx.Dialog`` the app bootstrap loaded from
-                ``dialogs.xrc``.
-            crossing: The live crossing this dialog shows.
-            roster: The ride's in-memory roster, for the rider and team
-                names.
-            engine: The ride's live engine -- the read side of every
-                field and the write side of every correction.
-        """
-        super().__init__(dialog, engine)
-        self.crossing = crossing
-        self.roster = roster
-
-        # OK alone decides whether the dialog closes, without a Skip
-        # (ride_setup._on_ok's measured note): a Skip would let wx's
-        # stock OK close the dialog before this handler ran.
-        self.dialog.Bind(wx.EVT_BUTTON, self._on_edit, self.edit_btn)
-        self.dialog.Bind(wx.EVT_BUTTON, self._on_ok, self.ok_btn)
-        self.dialog.Bind(wx.EVT_BUTTON, self._on_delete, self.delete_btn)
-        self.dialog.Bind(wx.EVT_BUTTON, self._on_edit_time, self.edit_time_btn)
-        self.dialog.Bind(wx.EVT_BUTTON, self._on_void_card, self.void_card_btn)
-
-        self.render()
-
-    def render(self) -> None:
-        """Write :func:`build_fields`' values onto the nine entry boxes.
-
-        The button gates live here too: Edit (the Plate prompt) and Edit
-        Time are always offered; Delete -- either correction, whichever
-        this crossing is -- only while the ride is RUNNING or REOPENED;
-        and Void Card when this crossing's own card is **credited** (a
-        held card is the review surface's, a voided one is already out
-        of the ride) or when this crossing is one half of a duplicate
-        pair, whose held card is voidable here because deleting one twin
-        is the correction it needs (Phase 3).
-        """
-        fields = build_fields(self.crossing, self.roster, self.engine)
-        self._render_fields(fields)
-        self.edit_btn.Enable(True)  # noqa: FBT003 -- wx API takes a positional bool
-        self.edit_time_btn.Enable(True)  # noqa: FBT003 -- wx API takes a positional bool
-        self.void_card_btn.Enable(self._card_is_credited() or self._is_duplicate())
-        self.delete_btn.Enable(self.engine.state in (RideStatus.RUNNING, RideStatus.REOPENED))
-
-    def _is_duplicate(self) -> bool:
-        """Return whether this crossing is one half of a duplicate pair.
-
-        Void Card's second gate (Phase 3): a duplicate is shown
-        :data:`_DUPLICATE_STATUS` precisely so the operator deletes one
-        of its two twins, so a **held** card on one must stay voidable
-        here (a credited one already is, via :meth:`_card_is_credited`).
-        """
-        return _is_duplicate(self.engine, self.crossing)
-
-    def _card_is_credited(self) -> bool:
-        """Return whether this crossing's dealt card is credited.
-
-        The Void Card gate: a held card (R-34) is the review surface's
-        domain and a voided card is already out of the ride, so only a
-        card in the entry's credited hand is voidable here.
-        """
-        crossing = self.crossing
-        held = self.engine.held_card_for(crossing)
-        credited = self.engine.card_for(crossing) in self.engine.credited_cards(crossing.entry_id)
-        return held is None and credited
-
     def _on_edit(self, event: Any) -> None:  # noqa: ANN401 -- wx ships no stubs
-        """Handle ``edit_btn``: prompt for a plate, then reassign.
+        """Handle ``edit_btn``: prompt for a plate, then commit it.
 
-        §9: the crossing mode's Edit is the Save/Cancel Plate prompt
-        (:func:`run_plate_dialog`) prefilled with this crossing's
-        current plate (the dialog's own plate is read-only copy). Save
-        hands the typed plate straight to
+        One button, two commits, chosen by :attr:`crossing`. With a
+        crossing, §9's Save/Cancel Plate prompt
+        (:func:`run_plate_dialog`) opens prefilled with the plate this
+        dialog shows (its own plate is read-only copy); Save hands the
+        typed plate straight to
         :meth:`~rivercrossing.ride.RideEngine.reassign_crossing` -- the
         engine resolves the plate and refuses a blank or unknown one --
         and a committed reassign re-renders this dialog on the moved
-        crossing, so the correction returns here. A refusal lands on
-        :data:`CROSSING_DETAIL_INFOBAR` and leaves the dialog open;
-        Cancel does nothing.
+        crossing. With none, the dialog is in miss mode and the prompt
+        opens blank: the number it saves is the miss's own commit
+        (:meth:`_score_miss`). Either way the dialog stays open, a
+        refusal lands on :data:`CROSSING_DETAIL_INFOBAR`, and Cancel
+        does nothing.
         """
         event.Skip()
+        crossing = self.crossing
+        if crossing is None:
+            self._score_miss()
+            return
         new_plate = run_plate_dialog(
             wx.xrc.XmlResource.Get(),
             opener=self.dialog,
-            plate=self.crossing.rider_plate or self.crossing.entry_id,
+            plate=crossing.rider_plate or crossing.entry_id,
         )
         if new_plate is None:
             return
         self._commit_plate(new_plate)
+
+    def _score_miss(self) -> None:
+        """Score the pending miss at :attr:`miss` onto the typed plate.
+
+        The miss mode's one action: a miss has no plate to correct, only
+        one to enter, so the §9 prompt opens blank and the number it
+        saves goes to
+        :meth:`~rivercrossing.ride.RideEngine.assign_plate_to_miss`,
+        which records the crossing and deals its card at the miss's own
+        instant. The dialog then **stays open** as that crossing's own
+        detail -- :attr:`crossing` takes the record's last entry, the
+        assignment being an append, and the miss is dropped -- so the
+        scorer keeps working on the crossing instead of losing the
+        window. A blank field stays open with its own refusal, as does
+        an assign the engine refuses (an unknown plate, a ride that is
+        not RUNNING or REOPENED); Cancel does nothing.
+        """
+        new_plate = run_plate_dialog(wx.xrc.XmlResource.Get(), opener=self.dialog, plate="")
+        if new_plate is None:
+            return
+        if not new_plate:
+            # assign_plate_to_miss would refuse this as an unknown
+            # plate; the operator is told what to do instead.
+            self.show_refusal("Enter a plate to assign to this miss.")
+            return
+        try:
+            self.engine.assign_plate_to_miss(
+                self.miss.miss_seq, new_plate, reason=MISS_EDIT_REASON
+            )
+        except RideEngineError as exc:
+            self.show_refusal(f"Could not assign: {exc}")
+            return
+        self.crossing = self.engine.crossings[-1]
+        del self.miss
+        self._render_crossing()
 
     def _commit_plate(self, new_plate: str) -> bool:
         """Commit *new_plate* as this crossing's plate; report success.
@@ -790,21 +822,40 @@ class CrossingDetailView(_DetailDialogView):
         :data:`CROSSING_DETAIL_INFOBAR` and reports ``False``, leaving
         the dialog as it was. On success the view re-points at the
         crossing the reassign moved -- ``Crossing`` is frozen, so the
-        engine's replacement is the live one, found by the plate it now
-        carries and the instant it keeps -- and re-renders it in place.
+        engine's replacement is the live one, and ``reassign_crossing``
+        removes then appends, so it is the record's **last** entry: a
+        plate/instant lookup would instead find the older twin of a
+        documented duplicate pair -- and re-renders it in place.
         """
-        original = self.crossing
-        refusal = reassign_crossing_plate(self.engine, original, new_plate)
+        refusal = reassign_crossing_plate(self.engine, self._shown_crossing(), new_plate)
         if refusal is not None:
             self.show_refusal(refusal)
             return False
-        self.crossing = next(
-            crossing
-            for crossing in self.engine.crossings
-            if crossing.rider_plate == new_plate and crossing.crossed_at == original.crossed_at
-        )
-        self.render()
+        self.crossing = self.engine.crossings[-1]
+        self._render_crossing()
         return True
+
+    def _is_duplicate(self) -> bool:
+        """Return whether this crossing is one half of a duplicate pair.
+
+        Void Card's second gate (Phase 3): a duplicate is shown
+        :data:`_DUPLICATE_STATUS` precisely so the operator deletes one
+        of its two twins, so a **held** card on one must stay voidable
+        here (a credited one already is, via :meth:`_card_is_credited`).
+        """
+        return _is_duplicate(self.engine, self._shown_crossing())
+
+    def _card_is_credited(self) -> bool:
+        """Return whether this crossing's dealt card is credited.
+
+        The Void Card gate: a held card (R-34) is the review surface's
+        domain and a voided card is already out of the ride, so only a
+        card in the entry's credited hand is voidable here.
+        """
+        crossing = self._shown_crossing()
+        held = self.engine.held_card_for(crossing)
+        credited = self.engine.card_for(crossing) in self.engine.credited_cards(crossing.entry_id)
+        return held is None and credited
 
     def _on_edit_time(self, event: Any) -> None:  # noqa: ANN401 -- wx ships no stubs
         """Handle ``edit_time_btn``: retime this crossing (Phase 2).
@@ -828,13 +879,14 @@ class CrossingDetailView(_DetailDialogView):
         refused the same way, before either.
         """
         event.Skip()
+        crossing = self._shown_crossing()
         edit = corrections.run_edit_crossing(
             wx.xrc.XmlResource.Get(),
             frame=self.dialog,
             adding=False,
-            plate=self.crossing.rider_plate or self.crossing.entry_id,
-            time=_local_time(self.crossing.crossed_at),
-            seq=self.crossing.seq,
+            plate=crossing.rider_plate or crossing.entry_id,
+            time=_local_time(crossing.crossed_at),
+            seq=crossing.seq,
             base_date=self.engine.config.event_date,
             title="Edit Time",
             read_only_plate=True,
@@ -846,7 +898,7 @@ class CrossingDetailView(_DetailDialogView):
             # submission always carries an instant; the guard only
             # narrows CrossingEdit's optional field for mypy.
             return
-        seq = edit.seq if edit.seq is not None else self.crossing.seq
+        seq = edit.seq if edit.seq is not None else crossing.seq
         ordinal = self._ordinal()
         if ordinal is None:
             self.show_refusal(f"Could not edit crossing: {_STALE_CROSSING}")
@@ -883,7 +935,7 @@ class CrossingDetailView(_DetailDialogView):
     def _rerender_at(self, ordinal: int) -> None:
         """Point this view at *ordinal*'s crossing and re-render it."""
         self.crossing = self.engine.crossings[ordinal - 1]
-        self.render()
+        self._render_crossing()
 
     def _on_void_card(self, event: Any) -> None:  # noqa: ANN401 -- wx ships no stubs
         """Handle ``void_card_btn``: void this crossing's dealt card.
@@ -904,8 +956,9 @@ class CrossingDetailView(_DetailDialogView):
         different physical card and would slip past the guard.
         """
         event.Skip()
-        card = self.engine.card_for(self.crossing)
-        entry = build_fields(self.crossing, self.roster, self.engine)
+        crossing = self._shown_crossing()
+        card = self.engine.card_for(crossing)
+        entry = build_fields(crossing, self.roster, self.engine)
         # xrc-windows.md pins this confirm's label to "the entry the
         # card was dealt to" ("45 · J. Okafor"), and fields.team reads
         # "solo" for a solo rider, so the name comes from the rider
@@ -914,7 +967,7 @@ class CrossingDetailView(_DetailDialogView):
         void = corrections.run_void_card(
             wx.xrc.XmlResource.Get(),
             frame=self.dialog,
-            entry_id=self.crossing.entry_id,
+            entry_id=crossing.entry_id,
             card=card.code(),
             entry=f"{entry.plate} · {entry.rider}",
         )
@@ -925,7 +978,7 @@ class CrossingDetailView(_DetailDialogView):
         except RideEngineError as exc:
             self.show_refusal(f"Could not void card: {exc}")
             return
-        self.render()
+        self._render_crossing()
 
     def _on_delete(self, event: Any) -> None:  # noqa: ANN401 -- wx ships no stubs
         """Handle ``delete_btn``: remove this crossing, confirmed.
@@ -939,7 +992,7 @@ class CrossingDetailView(_DetailDialogView):
         event.Skip()
         if confirm_delete_crossing(
             self.dialog,
-            self.crossing,
+            self._shown_crossing(),
             self.roster,
             self.engine,
             on_refusal=self.show_refusal,
@@ -947,19 +1000,69 @@ class CrossingDetailView(_DetailDialogView):
             self.dialog.EndModal(wx.ID_OK)
 
 
+class CrossingDetailView(_DetailDialogView):
+    """Code-side behaviour for ``crossing_detail_dlg`` (J2).
+
+    A read-only detail view with four corrections, not a
+    presenter-backed form: it renders :func:`build_fields` at
+    construction and forwards its buttons straight to the engine
+    (``views/rider_issues.py``'s presenter-inside-the-view shape, minus
+    the presenter -- there is no view logic here to put in one). The
+    Edit and Delete corrections are the console's own reassign/undo; the
+    Phase 2 Edit Time and Void Card buttons reach the same
+    ``edit_crossing_dlg`` / ``void_card_confirm_dlg`` runners the
+    retired Reassign Plate…/Void Card… menu rows used.
+
+    Every correction re-renders this dialog in place once the engine has
+    taken it, so the scorer stays on the crossing and can keep working
+    (OK is the one button that closes it; Delete, whose crossing is
+    gone, is the other exit).
+    """
+
+    def __init__(  # noqa: PLR0913 -- (dialog, crossing, roster, engine)
+        self,
+        dialog: wx.Dialog,
+        *,
+        crossing: Crossing,
+        roster: Roster,
+        engine: RideEngine,
+    ) -> None:
+        """Decorate an already-loaded ``crossing_detail_dlg`` window.
+
+        Args:
+            dialog: The ``wx.Dialog`` the app bootstrap loaded from
+                ``dialogs.xrc``.
+            crossing: The live crossing this dialog shows.
+            roster: The ride's in-memory roster, for the rider and team
+                names.
+            engine: The ride's live engine -- the read side of every
+                field and the write side of every correction.
+        """
+        super().__init__(dialog, engine)
+        self.crossing = crossing
+        self.roster = roster
+        self.render()
+
+    def render(self) -> None:
+        """Render this crossing's nine fields and its button gates."""
+        self._render_crossing()
+
+
 class MissDetailView(_DetailDialogView):
     """Code-side behaviour for the dialog in miss mode (K2).
 
     Opened on a pending miss feed row: it renders
-    :func:`build_miss_fields` once at construction and offers exactly
-    one action -- score the miss. Its Edit opens the same §9 Plate
-    prompt the crossing mode uses, blank (a miss has no plate to
-    correct), and commits the number it saves through
+    :func:`build_miss_fields` at construction and offers exactly one
+    action -- score the miss. Its Edit opens the same §9 Plate prompt
+    the crossing mode uses, blank (a miss has no plate to correct), and
+    commits the number it saves through
     :meth:`~rivercrossing.ride.RideEngine.assign_plate_to_miss`, which
-    records the crossing and deals its card at the miss's own instant,
-    then closes. Delete is not bound: the button stays disabled,
-    because a miss is not ``engine.crossings[-1]`` and cannot be
-    ``undo_last``.
+    records the crossing and deals its card at the miss's own instant:
+    the dialog then **stays open** and re-renders as that crossing's
+    detail -- full crossing mode, so Edit now reassigns its plate and
+    Edit Time, Void Card and Delete are offered. Delete is not offered
+    while the miss stands: the button stays disabled, because a miss is
+    not ``engine.crossings[-1]`` and cannot be ``undo_last``.
     """
 
     def __init__(  # noqa: PLR0913 -- (dialog, miss, roster, engine)
@@ -976,65 +1079,16 @@ class MissDetailView(_DetailDialogView):
             dialog: The ``wx.Dialog`` the app bootstrap loaded from
                 ``dialogs.xrc``.
             miss: The pending miss this dialog scores.
-            roster: The ride's in-memory roster (the crossing mode's
-                own attribute; this mode reads none of it).
+            roster: The ride's in-memory roster, read once the miss has
+                been scored and the dialog shows the crossing.
             engine: The ride's live engine -- the read side of the
                 miss's instant and the write side of the assignment.
         """
         super().__init__(dialog, engine)
         self.miss = miss
         self.roster = roster
-
-        # OK alone decides whether the dialog closes, without a Skip
-        # (ride_setup._on_ok's measured note): a Skip would let wx's
-        # stock OK close the dialog before the commit ran.
-        self.dialog.Bind(wx.EVT_BUTTON, self._on_edit, self.edit_btn)
-        self.dialog.Bind(wx.EVT_BUTTON, self._on_ok, self.ok_btn)
-
         self.render()
 
     def render(self) -> None:
-        """Write :func:`build_miss_fields` onto the boxes and gates.
-
-        Edit -- the Plate prompt the typed number comes from -- is the
-        miss's one action. Delete, Edit Time and Void Card are all
-        disabled: a miss has no ``undo_last``, no clock time and no
-        card.
-        """
-        self._render_fields(build_miss_fields(self.miss))
-        self.edit_btn.Enable(True)  # noqa: FBT003 -- wx API takes a positional bool
-        self.edit_time_btn.Enable(False)  # noqa: FBT003 -- wx API takes a positional bool
-        self.void_card_btn.Enable(False)  # noqa: FBT003 -- wx API takes a positional bool
-        self.delete_btn.Enable(False)  # noqa: FBT003 -- wx API takes a positional bool
-
-    def _on_edit(self, event: Any) -> None:  # noqa: ANN401 -- wx ships no stubs
-        """Handle ``edit_btn``: prompt for the plate this miss needs.
-
-        The same §9 Plate prompt the crossing mode opens, on a blank
-        field: a miss has no plate to correct, only one to enter. The
-        number it saves is this mode's commit -- Edit is its one action
-        -- so it goes straight to
-        :meth:`~rivercrossing.ride.RideEngine.assign_plate_to_miss`,
-        which records the crossing and deals its card at the miss's own
-        instant, and the dialog then closes on OK's own id. A blank
-        field stays open with its own refusal, as does an assign the
-        engine refuses (an unknown plate, a ride that is not RUNNING or
-        REOPENED); Cancel does nothing.
-        """
-        event.Skip()
-        new_plate = run_plate_dialog(wx.xrc.XmlResource.Get(), opener=self.dialog, plate="")
-        if new_plate is None:
-            return
-        if not new_plate:
-            # assign_plate_to_miss would refuse this as an unknown
-            # plate; the operator is told what to do instead.
-            self.show_refusal("Enter a plate to assign to this miss.")
-            return
-        try:
-            self.engine.assign_plate_to_miss(
-                self.miss.miss_seq, new_plate, reason=MISS_EDIT_REASON
-            )
-        except RideEngineError as exc:
-            self.show_refusal(f"Could not assign: {exc}")
-            return
-        self.dialog.EndModal(wx.ID_OK)
+        """Render the miss's placeholder fields and its button gates."""
+        self._render_miss()
