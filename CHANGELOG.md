@@ -6,6 +6,8 @@ All notable changes to RiverCrossing are recorded here. The format follows
 
 ## [Unreleased]
 
+## [1.0.21] - 2026-09-17
+
 ### Changed
 
 - **Standings dialog** — the results dialog is now captioned **Standings** (the frozen window name,
@@ -13,8 +15,9 @@ All notable changes to RiverCrossing are recorded here. The format follows
 - **Crossings list default sort** — the feed now opens sorted by Time **descending**, so the newest
   crossing is at the top of the list (it opened Time ascending).
 - **Crossing Detail** — OK only closes; the window still offers no Cancel, and Escape maps to OK. A
-  miss is scored through Edit, whose Save assigns the plate immediately, and the dialog opens with a
-  taller floor so a refusal and the content both fit.
+  miss is scored through Edit, whose Save assigns the plate and hands the same window over to the
+  crossing the miss became — the dialog stays open in crossing mode and only OK exits — and the
+  dialog opens with a taller floor so a refusal and the content both fit.
 - **Needs Review columns** — now Issue | Card | Plate | Lap | Lap time | Rider: the lap-time column
   is restored at 48 px and the Team column is dropped.
 
@@ -26,6 +29,10 @@ All notable changes to RiverCrossing are recorded here. The format follows
   variant), so a stale "Unknown plate" notice no longer lingers.
 - **Rider Simulator** — a GO the engine blocks now shows the reasons instead of closing silently,
   and the console re-renders to RUNNING/STOPPED when the run ends rather than staying on DRAFT.
+- **Scoring a miss no longer closes the Crossing Detail** — saving the Edit Plate dialog in miss
+  mode left the window open on the crossing the miss became (crossing mode, so Edit reassigns and
+  Edit Time, Void Card and Delete are offered) instead of closing it; and a corrected plate now
+  re-points at the crossing the correction recorded rather than an earlier same-code twin.
 
 ## [1.0.20] - 2026-09-16
 
