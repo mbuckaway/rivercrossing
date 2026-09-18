@@ -559,6 +559,23 @@ def _payload_dt(event: Event, key: str) -> datetime:
     return datetime.fromisoformat(str(event.payload[key]))
 
 
+def _payload_int(event: Event, key: str) -> int:
+    """Parse one integer payload value back into an int.
+
+    The corrections' ``seq``/``miss_seq`` keys are ints live but JSON
+    numbers-or-strings on disk, so the replay path reads them through
+    the same int-coercion every live call site used.
+
+    Args:
+        event: The event being replayed.
+        key: The payload key holding the integer.
+
+    Returns:
+        The parsed integer.
+    """
+    return int(str(event.payload[key]))
+
+
 def _format_elapsed(seconds: float) -> str:
     """Render *seconds* as the session's h:mm:ss reading (scope 6d).
 
@@ -831,10 +848,11 @@ class RideEngine:
       held, never by ride state: the review surface stays usable while
       RUNNING, and FINISHED's corrections flow routes through REOPENED
       for timing changes (undo), not card disposition.
-      ``return_to_held`` is the disposition seam back: whichever
-      accounting a dealt card currently has -- credited, retired by
-      ``void_card``, or discarded by ``void_held`` -- it returns to
-      the hold queue under that same state-irrelevant gate.
+      ``return_to_held`` is the disposition seam back: a credited card
+      re-enters the hold queue under that same state-irrelevant gate,
+      while a voided card -- retired by ``void_card`` or discarded by
+      ``void_held`` -- stays voided and the crossing is dealt a fresh
+      card instead, which needs the shoe open (RUNNING or REOPENED).
     - **Short-lap policy (W4).** ``RideConfig.hold_short_laps`` gates
       whether that hold path runs at all. The True default is the W4
       product decision -- hold short-lap cards for review -- so the
@@ -939,7 +957,17 @@ class RideEngine:
       sequence into a private voided record (crossing + card) and
       voids its card -- the schema's ``crossing.voided`` and
       ``card.state`` columns in memory. It never restitutes the card:
-      restitution stays ``undo_last``'s job.
+      restitution stays ``undo_last``'s job. The voided-card registry
+      is keyed by the card's *identity* (``id(card)``), never by
+      value: ``Card`` is a frozen value dataclass and the shoe builds
+      a distinct-but-value-equal ``Card`` per deck, so under the
+      default of eight decks two physical cards share one code and a
+      value key would alias them -- a void on one entry could suppress
+      a same-code re-credit on another. One residual remains, recorded
+      in ``__init__``: a void of two same-code cards credited to the
+      *same* entry cannot name a physical card (``_hand`` carries no
+      crossing id), so the engine voids the first value match; live
+      and replay pick the same one, so equivalence holds.
     - **Renumber on removal.** ``void_crossing`` and
       ``reassign_crossing`` both remove one of an entry's laps; the
       entry's later live crossings renumber (seq - 1) so the per-entry
@@ -1072,7 +1100,20 @@ class RideEngine:
         # voided cards. Compensating writes, never deletes -- the live
         # lap sequence drops the crossing, the record keeps it.
         self._voided: list[tuple[Crossing, Card]] = []
-        self._voided_cards: set[Card] = set()
+        # Voided cards, keyed by id(card) -- object *identity*, never
+        # value: Card is a frozen value dataclass, the shoe builds a
+        # distinct-but-equal Card per deck, and the default of eight
+        # decks therefore holds eight physical cards per code. Keying
+        # by value aliased them -- a void on one entry could suppress a
+        # same-code re-credit on another. The dict's *values* keep every
+        # registered card alive, so no later object can inherit a
+        # retired id (a bare set[int] would be unsafe). One residual:
+        # _hand carries no crossing id, so a void of two same-code
+        # cards credited to one entry cannot name a physical card --
+        # _discard_credited removes the first value match and its own
+        # object is what gets marked. Live and replay pick the same
+        # one, so replay equivalence holds.
+        self._voided_cards: dict[int, Card] = {}
 
     @property
     def state(self) -> RideStatus:
@@ -1616,8 +1657,12 @@ class RideEngine:
 
         The operator's "that short lap was a double-entry" action: the
         card is voided out of the system -- not returned to the shoe,
-        not added to any hand. The lap itself stays recorded. Audited.
-        Gated only by the card being held.
+        not added to any hand -- and recorded in the voided-card
+        registry, the same one ``void_card``/``void_crossing`` use, so
+        every later reassign or return path reads it as already voided.
+        The card recorded is the engine's own dealt object, which is
+        what the registry's identity key needs. The lap itself stays
+        recorded. Audited. Gated only by the card being held.
 
         Args:
             crossing: A crossing currently in :meth:`held_crossings`.
@@ -1631,6 +1676,7 @@ class RideEngine:
         card = self._held.pop(crossing, None)
         if card is None:
             raise IllegalStateError("crossing's card is not held")
+        self._mark_voided(card)
         return self._append(
             Event(
                 action="void_held",
@@ -1645,13 +1691,16 @@ class RideEngine:
     def return_to_held(self, crossing: Crossing) -> Event:
         """Put *crossing*'s dealt card back into the hold queue (R-34).
 
-        The operator's "that card needs another look" action: the card
-        leaves wherever it currently sits -- the entry's credited hand,
-        a ``void_card`` retirement, or a previous ``void_held`` discard
-        -- and re-enters the hold queue, awaiting ``confirm_held`` or
-        ``void_held`` again. Audited. Gated only by the card not
-        already being held: ride state is irrelevant to card
-        disposition, exactly as for the other two hold-queue moves.
+        The operator's "that card needs another look" action, in two
+        dispositions. A *credited* card leaves the entry's hand and
+        re-enters the hold queue under the same state-irrelevant gate
+        ``confirm_held``/``void_held`` use. A *voided* card
+        (``void_card``/``void_held``) never comes back -- it stays in
+        the voided-card registry, which ``_is_voided`` reads by
+        identity, out of the ride -- so the crossing is given a fresh
+        card dealt from the shoe instead, which needs the shoe open:
+        RUNNING or REOPENED. Either way the card awaits
+        ``confirm_held`` or ``void_held`` again. Audited.
 
         Args:
             crossing: A crossing this engine dealt a card for.
@@ -1660,14 +1709,20 @@ class RideEngine:
             The appended ``return_to_held`` audit event.
 
         Raises:
-            IllegalStateError: *crossing*'s card is already held.
+            IllegalStateError: *crossing*'s card is already held, or it
+                was voided and the ride is not RUNNING or REOPENED.
             KeyError: *crossing* was never dealt by this engine.
         """
         if crossing in self._held:
             raise IllegalStateError("crossing's card is already held")
         card = self.card_for(crossing)
-        self._voided_cards.discard(card)
-        self._discard_credited(crossing.entry_id, card)
+        if self._is_voided(card):
+            if self._state not in (RideStatus.RUNNING, RideStatus.REOPENED):
+                raise IllegalStateError(f"cannot re-deal a voided card from {self._state}")
+            card = self._deal_card()
+            self._dealt[crossing] = card
+        else:
+            self._discard_credited(crossing.entry_id, card)
         self._held[crossing] = card
         return self._append(
             Event(
@@ -1712,7 +1767,7 @@ class RideEngine:
         card = self._dealt.pop(last)
         self._held.pop(last, None)
         self._discard_credited(last.entry_id, card)
-        self._voided_cards.discard(card)
+        self._unmark_voided(card)
         # REOPENED after Finish: the shoe is re-opened (spec §15), so
         # this restitution succeeds and returns the card to the front --
         # the next correction deal (deal_manual, add_crossing_at)
@@ -1797,7 +1852,9 @@ class RideEngine:
 
     # --------------------------------- E7.1.1 audited corrections
 
-    def edit_crossing(  # noqa: PLR0913, PLR0917 -- (entry, seq, crossed_at, reason): the correction's four fixed fields
+    # (entry, seq, crossed_at, reason): the correction's four fixed
+    # fields
+    def edit_crossing(  # noqa: PLR0913, PLR0917
         self, entry_id: str, seq: int, crossed_at: datetime, reason: str
     ) -> Event:
         """Re-time one crossing without re-dealing its card (E7.1.1).
@@ -1892,7 +1949,7 @@ class RideEngine:
         card = self._dealt.pop(crossing)
         self._held.pop(crossing, None)
         self._discard_credited(crossing.entry_id, card)
-        self._voided_cards.add(card)
+        self._mark_voided(card)
         self._remove_crossing(crossing)
         self._voided.append((crossing, card))
         self._renumber_later(crossing.entry_id, crossing.seq)
@@ -2109,7 +2166,7 @@ class RideEngine:
         self._dealt[replacement] = card
         if held is not None:
             self._held[replacement] = held
-        elif card not in self._voided_cards:
+        elif not self._is_voided(card):
             self._credit(entry.plate, card, replacement.rider_plate)
         return self._append(
             Event(
@@ -2176,9 +2233,13 @@ class RideEngine:
         persisted ``dnf`` event: *rider* True records the member's own
         plate in the per-rider set, False writes the entry's status.
         Both scopes audit the same payload shape -- the plate, the
-        entry it belongs to, the scope and the reason -- so replay
-        rebuilds the identical state without re-deriving the scope from
-        the roster.
+        entry it belongs to, the scope, the reason and the marked
+        target's human display -- so replay rebuilds the identical
+        state without re-deriving the scope from the roster.
+        ``display`` is for the audit trail alone (the trail names the
+        rider, never the internal entry id): :meth:`apply` reads the
+        other four keys and re-derives a display of its own, so the
+        extra key can never move the state it replays onto.
         """
         if rider:
             self._dnf_riders.add(plate)
@@ -2187,6 +2248,12 @@ class RideEngine:
             # (module docstring), and the member must be a real StrEnum
             # -- the store's save_roster reads ``entry.status.value``.
             entry.status = type(entry.status)("dnf")
+        # The marked rider's own plate and name, or -- for a whole-entry
+        # mark, whose riders may carry no plate at all (S1) -- the
+        # entry's. The same "plate · name" sentence the DNF dialog names
+        # its target with (ui.views.dialogs.dnf_message).
+        member = next((item for item in entry.riders if item.plate == plate), None)
+        name = member.full_name if member is not None else entry.display_name
         return self._append(
             Event(
                 action="dnf",
@@ -2195,6 +2262,7 @@ class RideEngine:
                     "plate": plate,
                     "rider": rider,
                     "reason": reason,
+                    "display": f"{plate} · {name}",
                 },
             )
         )
@@ -2205,10 +2273,17 @@ class RideEngine:
         The operator's "wrong card off the line" correction: *card*
         leaves the entry's credited hand and its state becomes voided
         (spec §2 ``card.state``), while the crossing that dealt it --
-        and therefore the lap -- stays recorded. A held card is
-        refused: the short-lap hold is the review surface's domain
-        (``confirm_held``/``void_held``), never this command. RUNNING
-        or REOPENED only.
+        and therefore the lap -- stays recorded. The voided object is
+        the engine's own dealt card, which is the one
+        ``_discard_credited`` removed: *card* itself may be a fresh,
+        value-equal ``Card`` (replay builds one with ``Card.parse``),
+        so marking the caller's object would
+        leave the dealt card live. A held card is refused: the
+        short-lap hold is the review surface's domain
+        (``confirm_held``/``void_held``), never this command -- the
+        guard compares identity, so a same-code card in the hold queue
+        never blocks the void of a different physical card. RUNNING or
+        REOPENED only.
 
         Args:
             entry_id: The entry whose card to void.
@@ -2231,12 +2306,13 @@ class RideEngine:
             raise IllegalStateError(f"cannot void card from {self._state}")
         entry = self._require_entry(entry_id)
         for crossing, held_card in self._held.items():
-            if crossing.entry_id == entry.plate and held_card == card:
+            if crossing.entry_id == entry.plate and held_card is card:
                 msg = "card is held; confirm or void it through the review panel"
                 raise IllegalStateError(msg)
-        if not self._discard_credited(entry.plate, card):
+        removed = self._discard_credited(entry.plate, card)
+        if removed is None:
             raise IllegalStateError(f"no dealt card {card.code()} credited to {entry.plate}")
-        self._voided_cards.add(card)
+        self._mark_voided(removed)
         return self._append(
             Event(
                 action="void_card",
@@ -2566,22 +2642,72 @@ class RideEngine:
         """
         self._hand.setdefault(entry_id, []).append((card, rider_plate))
 
-    def _discard_credited(self, entry_id: str, card: Card) -> bool:
+    def is_card_voided(self, card: Card) -> bool:
+        """Return whether this engine voided *card* (E7.1.1, R-34).
+
+        The public read of the voided-card registry, for every consumer
+        that is not the engine's own correction paths. Identity, never
+        value: ``Card`` is a frozen value dataclass, so a value test
+        would report a same-code card -- a different physical card --
+        as voided too. Only the engine's own dealt object can be in the
+        registry, so a caller's fresh ``Card.parse`` copy reads
+        ``False`` by design: ask
+        :meth:`card_for` for the object the engine dealt.
+        """
+        return self._is_voided(card)
+
+    def _is_voided(self, card: Card) -> bool:
+        """Return whether *card* is this engine's own voided object.
+
+        The identity rule ``void_card``'s hold guard,
+        ``reassign_crossing``'s gate and ``return_to_held`` all share:
+        the registry is keyed by ``id(card)``, never by value, because
+        the shoe builds a distinct-but-equal ``Card`` per deck.
+        """
+        return id(card) in self._voided_cards
+
+    def _mark_voided(self, card: Card) -> None:
+        """Register *card* -- the engine's own dealt object -- voided.
+
+        The dict stores the card itself, not just its id, so the
+        registry keeps every voided card alive and no later object can
+        be handed a retired ``id``.
+        """
+        self._voided_cards[id(card)] = card
+
+    def _unmark_voided(self, card: Card) -> None:
+        """Drop *card* from the voided registry; absent is a no-op.
+
+        ``undo_last`` reverses a void by un-voiding the card it has
+        just taken back, and most undone cards were never voided, so a
+        missing entry is the normal case, not an error.
+        """
+        self._voided_cards.pop(id(card), None)
+
+    def _discard_credited(self, entry_id: str, card: Card) -> Card | None:
         """Remove one *card* from *entry_id*'s credited hand.
 
         The undo/void/reassign reversal of :meth:`_credit`: the first
-        credited entry matching *card* leaves the hand. Returns whether
-        one was found, so ``void_card``'s own refusal can name the
-        missing card.
+        credited card matching *card* leaves the hand and is returned
+        -- the engine's own object, which is what the void paths mark
+        with :meth:`_mark_voided`. ``None`` when no credited card
+        matches, so ``void_card``'s own refusal can name the missing
+        card.
+
+        The match is by *value*, deliberately, next to the registry's
+        identity rule: ``_hand`` carries no crossing id, so two
+        same-code cards credited to one entry cannot be told apart here
+        and the first match goes. Live and replay credit in the same
+        order, so both pick the same card and equivalence holds.
         """
         hand = self._hand.get(entry_id)
         if hand is None:
-            return False
+            return None
         for index, (credited, _rider_plate) in enumerate(hand):
             if credited == card:
                 del hand[index]
-                return True
-        return False
+                return credited
+        return None
 
     def _laps_for(self, entry_id: str) -> tuple[Crossing, ...]:
         """Return *entry_id*'s live crossings, earliest crossing first.
@@ -2779,14 +2905,14 @@ class RideEngine:
         elif action == "edit_crossing":
             self.edit_crossing(
                 str(event.payload["entry_id"]),
-                int(str(event.payload["seq"])),
+                _payload_int(event, "seq"),
                 _payload_dt(event, "crossed_at"),
                 reason=str(event.payload["reason"]),
             )
         elif action == "void_crossing":
             self.void_crossing(
                 str(event.payload["entry_id"]),
-                int(str(event.payload["seq"])),
+                _payload_int(event, "seq"),
                 reason=str(event.payload["reason"]),
             )
         elif action == "add_crossing_at":
@@ -2799,13 +2925,13 @@ class RideEngine:
             self.record_miss(_payload_dt(event, "crossed_at"), reason=str(event.payload["reason"]))
         elif action == "assign_plate_to_miss":
             self.assign_plate_to_miss(
-                int(str(event.payload["miss_seq"])),
+                _payload_int(event, "miss_seq"),
                 str(event.payload["new_plate"]),
                 reason=str(event.payload["reason"]),
             )
         elif action == "reassign":
             self.reassign_crossing(
-                int(str(event.payload["seq"])),
+                _payload_int(event, "seq"),
                 str(event.payload["new_plate"]),
                 reason=str(event.payload["reason"]),
             )
@@ -2814,7 +2940,9 @@ class RideEngine:
             # by plate like every other replayed subject, but whether
             # the mark was a rider's or the entry's is never re-derived
             # from the roster: a rider DNF has no roster column to come
-            # back from, and a member may have changed teams since.
+            # back from, and a member may have changed teams since. The
+            # payload's audit-only ``display`` is never read either: the
+            # replayed event re-derives its own.
             self._record_dnf(
                 self._require_entry(str(event.payload["entry_id"])),
                 plate=str(event.payload["plate"]),
@@ -2853,7 +2981,7 @@ class RideEngine:
                 entry/seq -- an inconsistent event stream.
         """
         entry_id = str(event.payload["entry_id"])
-        seq = int(str(event.payload["seq"]))
+        seq = _payload_int(event, "seq")
         for crossing in self._crossings:
             if crossing.entry_id == entry_id and crossing.seq == seq:
                 return crossing

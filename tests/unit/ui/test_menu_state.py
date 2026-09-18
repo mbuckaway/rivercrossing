@@ -302,7 +302,8 @@ def test_enablement_table_standings_needs_no_ride() -> None:
     ],
     ids=["none", "html_only", "pdf_only", "both"],
 )
-def test_enablement_table_preview_rows_follow_their_own_format_export(  # noqa: PLR0913 -- the decision-table rows
+# the decision-table rows
+def test_enablement_table_preview_rows_follow_their_own_format_export(  # noqa: PLR0913
     *, html_exported: bool, pdf_exported: bool, expected_html: bool, expected_pdf: bool
 ) -> None:
     """Part D: each Preview row reads only its own export flag."""

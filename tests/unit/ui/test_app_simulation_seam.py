@@ -22,19 +22,23 @@ so on the status bar instead; the trimmed open is handed the same
 settings seeds as the ride-open one, so the close-persist below writes
 back the operator's own counts rather than the XRC's authored
 defaults. The dialog's own close-persist is pinned here too: the
-settings write runs whichever form the dialog opened in, and only a
-loaded, changed roster reaches the store.
+settings write runs whichever form the dialog opened in, only a
+loaded, changed roster reaches the store, and a live console presenter
+is refreshed (its pre-GO render would otherwise stand until the next
+tick).
 """
 
 from __future__ import annotations
 
 from dataclasses import replace
 from datetime import date, datetime
+from types import SimpleNamespace
 from typing import TYPE_CHECKING, cast
 
 import pytest
 
 from conftest import gorba_config
+from rivercrossing.ride import RideStatus
 from rivercrossing.roster import EntryMode, PlateModel, Roster
 from rivercrossing.store import Store
 from rivercrossing.ui import app as app_module
@@ -53,15 +57,21 @@ if TYPE_CHECKING:
 _EVENT_DAY = date(2026, 9, 20)
 
 # The gun time the flow combines with that day.
-_PLANNED_START = datetime(2026, 9, 20, 10, 0)  # noqa: DTZ001 -- naive local, RideConfig's own contract
+# naive local, RideConfig's own contract
+_PLANNED_START = datetime(2026, 9, 20, 10, 0)  # noqa: DTZ001
 
 
 class _PresenterStub:
-    """A console-presenter stub: the live engine, nothing else."""
+    """A console-presenter stub: the engine and the close refresh."""
 
     def __init__(self, engine: object) -> None:
-        """Store the engine the dialog is built over."""
+        """Store the engine and start unrefreshed."""
         self.engine = engine
+        self.refreshes = 0
+
+    def refresh_state(self) -> None:
+        """Record one console refresh (the close-persist's own call)."""
+        self.refreshes += 1
 
 
 class _DialogRecorder:
@@ -160,6 +170,13 @@ class _FrozenDate:
     def today() -> date:
         """Answer the frozen calendar day."""
         return _EVENT_DAY
+
+
+class _NoMenuBarFrame:
+    """A frame stand-in with no menubar: §15's re-apply is a no-op."""
+
+    def GetMenuBar(self) -> None:  # noqa: N802 -- wx API name the SUT calls
+        """Answer no menubar, so the menu walk stops there."""
 
 
 def _patch_simulator_dialog(monkeypatch: pytest.MonkeyPatch) -> list[_DialogRecorder]:
@@ -371,6 +388,26 @@ def test_persist_simulator_changes_given_a_changed_roster_saves_the_roster(
     app_module._persist_simulator_changes(context, _RideOpenViewStub(roster_changed=True))
 
     assert store.saved == [(5, context.roster)]
+
+
+def test_persist_simulator_changes_given_a_presenter_refreshes_the_console(
+    tmp_path: Path,
+) -> None:
+    """Plan §2: the close re-renders the console the GO left behind.
+
+    GO drives the engine directly, so the console's own ride-state
+    change seam never fires and the main screen keeps its pre-GO
+    render -- state, entry lock and clock alike. The close-persist
+    re-applies §15's menu and refreshes the console, so the screen
+    matches the engine the moment the modal is gone.
+    """
+    presenter = _PresenterStub(engine=SimpleNamespace(state=RideStatus.RUNNING))
+    context = _context(presenter=presenter, frame=_NoMenuBarFrame())
+    context.settings_path = tmp_path / "settings.json"
+
+    app_module._persist_simulator_changes(context, _NoRideViewStub())
+
+    assert presenter.refreshes == 1
 
 
 def test_create_simulator_test_ride_given_no_store_posts_the_no_store_notice() -> None:

@@ -49,7 +49,7 @@
 
   <object class="wxDialog" name="results_dlg">
     <style>wxDEFAULT_DIALOG_STYLE|wxRESIZE_BORDER</style>
-    <title>Results</title>
+    <title>Standings</title>
 
     <object class="wxBoxSizer">
       <orient>wxVERTICAL</orient>

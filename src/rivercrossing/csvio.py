@@ -1729,7 +1729,8 @@ def _write_csv_rows(path: Path, header: Sequence[str], rows: Sequence[Sequence[s
         writer.writerow([_neutralise_formula_cell(cell) for cell in header])
         for row in rows:
             writer.writerow([_neutralise_formula_cell(cell) for cell in row])
-    os.replace(tmp, path)  # noqa: PTH105 -- R-52 mandates the os.replace atomic swap; tests patch it
+    # R-52 mandates the os.replace atomic swap; tests patch it
+    os.replace(tmp, path)  # noqa: PTH105
 
 
 def _stats_values(placed: Placed) -> list[str]:

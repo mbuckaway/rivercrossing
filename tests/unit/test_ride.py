@@ -413,7 +413,8 @@ class _FakeClock:
 
 def _dt(hour: int, minute: int = 0, second: int = 0) -> datetime:
     """Build a naive datetime on the fixed day, Sept 20, 2026."""
-    return datetime(2026, 9, 20, hour, minute, second)  # noqa: DTZ001 -- naive by design, as RideConfig's planned_start
+    # naive by design, as RideConfig's planned_start
+    return datetime(2026, 9, 20, hour, minute, second)  # noqa: DTZ001
 
 
 def _make_engine(
@@ -431,7 +432,56 @@ def _make_engine(
     return engine, clock
 
 
-def _record_crossings(  # noqa: PLR0913 -- seeded batch recorder: (engine, plate, count) + (start_at, step_s)
+# The identity-keyed void tests below need two physically different
+# cards sharing one code. A two-deck shoe under this seed deals the
+# same code on two consecutive deals (deals 6 and 7), which the
+# eight-deck seed above repeats no code early enough to be worth using.
+_IDENTITY_SEED = 20260901
+
+
+def _make_identity_engine(config: RideConfig) -> tuple[RideEngine, _FakeClock]:
+    """Build a DRAFT engine whose shoe deals a repeated code early.
+
+    *config* must carry the two-deck / one-joker shape that repeated
+    deal belongs to (deals 6 and 7 are the same code); the shoe is
+    seeded with :data:`_IDENTITY_SEED`. The roster carries the three
+    solo entries the cross-entry alias tests need.
+    """
+    shoe = Shoe(
+        decks=config.deck_count,
+        jokers_per_deck=config.jokers_per_deck,
+        seed=_IDENTITY_SEED,
+    )
+    roster = _roster_with_entries("12", "34", "56")
+    clock = _FakeClock(config.planned_start)
+    engine = RideEngine(config=config, shoe=shoe, clock=clock, roster=roster)
+    return engine, clock
+
+
+def _record_alias_pair(  # noqa: PLR0913 -- (engine, plate, second_plate) + second_at
+    engine: RideEngine, plate: str, second_plate: str, *, second_at: datetime
+) -> tuple[Card, Card]:
+    """Record six crossings for *plate*, then one for *second_plate*.
+
+    Under :data:`_IDENTITY_SEED` the shoe's sixth and seventh deals are
+    one code on two distinct ``Card`` objects, so the ride's last two
+    crossings hold a value-equal, identity-distinct pair -- the alias
+    the identity-keyed registry must never confuse. *second_at* is the
+    later crossing's own instant, which each caller picks so the lap
+    policy gives the disposition it needs. Passing *plate* again as
+    *second_plate* makes the pair same-entry.
+
+    Returns:
+        The two aliased cards, first dealt then second -- the engine's
+        own objects, as :meth:`RideEngine.card_for` returns them.
+    """
+    _record_crossings(engine, plate, 6, start_at=_dt(10, 0, 2), step_s=2)
+    engine.record_crossing(second_plate, at=second_at)
+    return engine.card_for(engine.crossings[5]), engine.card_for(engine.crossings[6])
+
+
+# seeded batch recorder: (engine, plate, count) + (start_at, step_s)
+def _record_crossings(  # noqa: PLR0913
     engine: RideEngine, plate: str, count: int, *, start_at: datetime, step_s: float
 ) -> None:
     """Record *count* crossings for *plate*, *step_s* apart."""
@@ -1474,6 +1524,25 @@ def test_void_held_returns_audit_event_and_hand_stays_empty() -> None:
     assert results["12"].hand == best_hand(())
 
 
+def test_void_held_records_the_card_in_the_voided_registry() -> None:
+    """The review panel's void retires the card like void_card does.
+
+    The voided-card registry is the shared "out of the ride" record the
+    reassign and return paths consult, so a void_held card must join it
+    -- otherwise a later reassign of the crossing re-credits the card
+    the operator already voided. ``void_held`` holds the engine's own
+    dealt object, so the registry's identity key finds it.
+    """
+    engine, _ = _make_engine(config=_config(hold_short_laps=True))
+    engine.start()
+    engine.record_crossing("12", at=_dt(10, 0, 30))
+    held = engine.held_crossings()[0]
+
+    engine.void_held(held.crossing)
+
+    assert engine.is_card_voided(held.card) is True
+
+
 def test_confirm_held_already_credited_crossing_raises_illegal_state_error() -> None:
     """confirm_held on a non-held crossing raises (R-34 negative)."""
     engine, _ = _make_engine(config=_config(hold_short_laps=True))
@@ -1517,44 +1586,70 @@ def test_return_to_held_moves_a_credited_card_into_the_hold_queue() -> None:
     assert engine.held_crossings() == (HeldCrossing(crossing=crossing, card=result.card),)
 
 
-def test_return_to_held_re_holds_a_void_held_card() -> None:
-    """return_to_held re-holds a card the review panel voided (R-34)."""
+def test_return_to_held_on_a_void_held_card_deals_a_fresh_card() -> None:
+    """return_to_held replaces a void_held card with a fresh deal."""
     engine, _ = _make_engine(config=_config(hold_short_laps=True))
     engine.start()
-    result = engine.record_crossing("12", at=_dt(10, 0, 30))
+    engine.record_crossing("12", at=_dt(10, 0, 30))
     crossing = engine.held_crossings()[0].crossing
     engine.void_held(crossing)
+    old = engine.card_for(crossing)
     assert engine.held_crossings() == ()
+    dealt_before = engine._shoe.dealt
 
     event = engine.return_to_held(crossing)
 
+    fresh = engine.card_for(crossing)
+    assert engine.held_card_for(crossing) == fresh
+    assert fresh != old
+    # Private read deliberately: the shoe's deal count is exactly what
+    # the fresh deal is judged by, and it has no public reader.
+    assert engine._shoe.dealt == dealt_before + 1
+    assert engine.is_card_voided(old) is True
     assert event == Event(
         action="return_to_held",
-        payload={"entry_id": "12", "seq": 1, "card": result.card.code()},
+        payload={"entry_id": "12", "seq": 1, "card": fresh.code()},
     )
-    assert engine.held_crossings() == (HeldCrossing(crossing=crossing, card=result.card),)
 
 
-def test_return_to_held_clears_a_void_card_marker_and_re_holds_the_card() -> None:
-    """return_to_held un-retires a void_card'd card into the hold."""
+def test_return_to_held_on_a_void_card_deals_a_fresh_card() -> None:
+    """return_to_held replaces a void_card'd card with a fresh deal."""
     engine, _ = _make_engine(config=_config(min_lap_s=1))
     engine.start()
     engine.record_crossing("12", at=_dt(10, 30))
     second = engine.record_crossing("12", at=_dt(10, 32))
     crossing = engine.crossings[1]
     engine.void_card("12", second.card, reason="wrong card dealt")
-    # Pokes the private marker deliberately: the void/un-void
-    # bookkeeping is what this test pins, and it has no public reader.
-    assert second.card in engine._voided_cards
+    dealt_before = engine._shoe.dealt
 
     event = engine.return_to_held(crossing)
 
+    fresh = engine.card_for(crossing)
+    assert engine.held_card_for(crossing) == fresh
+    assert fresh != second.card
+    assert engine._shoe.dealt == dealt_before + 1
+    assert engine.is_card_voided(second.card) is True
     assert event == Event(
         action="return_to_held",
-        payload={"entry_id": "12", "seq": 2, "card": second.card.code()},
+        payload={"entry_id": "12", "seq": 2, "card": fresh.code()},
     )
-    assert second.card not in engine._voided_cards
-    assert engine.held_card_for(crossing) == second.card
+
+
+def test_return_to_held_voided_card_in_reopened_deals_a_fresh_card() -> None:
+    """Reopen re-opens the shoe, so a voided card is re-dealt."""
+    engine, _ = _make_engine(config=_config(hold_short_laps=True))
+    engine.start()
+    engine.record_crossing("12", at=_dt(10, 0, 30))
+    crossing = engine.held_crossings()[0].crossing
+    engine.void_held(crossing)
+    old = engine.card_for(crossing)
+    engine.finish()
+    engine.reopen()
+
+    engine.return_to_held(crossing)
+
+    assert engine.held_card_for(crossing) == engine.card_for(crossing)
+    assert engine.card_for(crossing) != old
 
 
 def test_return_to_held_given_an_already_held_card_raises_illegal_state_error() -> None:
@@ -1578,8 +1673,23 @@ def test_return_to_held_given_a_never_dealt_crossing_raises_key_error() -> None:
         engine.return_to_held(crossing)
 
 
+def test_return_to_held_voided_card_after_finish_raises_illegal_state_error() -> None:
+    """Re-dealing a voided card needs an open shoe: FINISHED refuses."""
+    engine, _ = _make_engine(config=_config(hold_short_laps=True))
+    engine.start()
+    engine.record_crossing("12", at=_dt(10, 0, 30))
+    crossing = engine.held_crossings()[0].crossing
+    engine.void_held(crossing)
+    engine.finish()
+
+    with pytest.raises(
+        IllegalStateError, match=re.escape("cannot re-deal a voided card from finished")
+    ):
+        engine.return_to_held(crossing)
+
+
 def test_return_to_held_after_finish_re_holds_the_card_and_keeps_the_state() -> None:
-    """Card disposition is state-irrelevant: FINISHED still re-holds."""
+    """A credited card is state-irrelevant: FINISHED still re-holds."""
     engine, _ = _make_engine()
     engine.start()
     result = engine.record_crossing("12", at=_dt(10, 30))
@@ -1654,6 +1764,135 @@ def test_snapshot_excludes_held_and_voided_cards_from_the_hand() -> None:
     assert results["12"].cards == (normal.card,)
     assert results["12"].hand == best_hand((normal.card,))
     assert len(engine.held_crossings()) == 1
+
+
+# -------------------------------- voided-card identity (E7.1.1, R-34)
+# The voided-card registry is keyed by object identity, never by value:
+# ``Card`` is a frozen value dataclass and the shoe builds a
+# distinct-but-equal ``Card`` per deck, so one code names several
+# physical cards and a value key would alias them. Each test below
+# starts from the alias pair :func:`_record_alias_pair` deals and pins
+# that voiding one card never touches its same-code sibling.
+
+
+def test_void_card_on_a_same_entry_alias_voids_only_the_removed_card() -> None:
+    """A void of one of two aliased cards never voids both.
+
+    The dialog and the replay name a card by code (``Card.parse``), so
+    the engine voids the object ``_discard_credited`` actually removed
+    -- its own card, the first credited value match -- never the code:
+    the surviving alias stays credited and never reads as voided.
+    """
+    engine, _ = _make_identity_engine(_config(deck_count=2, jokers_per_deck=1, min_lap_s=1))
+    engine.start(at=_dt(10, 0))
+    first, second = _record_alias_pair(engine, "12", "12", second_at=_dt(10, 1))
+    assert first == second  # one code ...
+    assert first is not second  # ... on two physical cards
+
+    engine.void_card("12", Card.parse(first.code()), reason="wrong card dealt")
+
+    assert engine.is_card_voided(first) is True
+    assert engine.is_card_voided(second) is False
+    results = {entry.plate: entry for entry in engine.snapshot()}
+    assert results["12"].laps == 7
+    assert results["12"].cards[-1] is second
+
+
+def test_return_to_held_after_a_void_keeps_a_same_code_sibling_credited() -> None:
+    """The surviving alias takes the credited branch, no fresh deal.
+
+    Its code is the voided code but the voided object is the other
+    card, so ``return_to_held`` re-holds this card exactly as it
+    stands: it leaves the credited hand into the hold queue, and the
+    shoe deals nothing.
+    """
+    engine, _ = _make_identity_engine(_config(deck_count=2, jokers_per_deck=1, min_lap_s=1))
+    engine.start(at=_dt(10, 0))
+    first, second = _record_alias_pair(engine, "12", "12", second_at=_dt(10, 1))
+    assert first == second
+    assert first is not second
+    engine.void_card("12", first, reason="wrong card dealt")
+    dealt_before = engine._shoe.dealt
+
+    engine.return_to_held(engine.crossings[6])
+
+    assert engine.held_card_for(engine.crossings[6]) is second
+    assert len(engine.credited_cards("12")) == 5
+    # Private read deliberately: the shoe's deal count is exactly what
+    # tells the credited branch from a fresh deal, and it has no public
+    # reader.
+    assert engine._shoe.dealt == dealt_before
+
+
+def test_reassign_recredits_a_same_code_card_of_another_entry_after_a_void() -> None:
+    """A void on one entry never suppresses another entry's re-credit.
+
+    Entries 12 and 34 hold value-equal cards. Voiding 12's card retires
+    only *that* object, so reassigning 34's crossing re-credits its own
+    card into the destination entry; under value keying the gate saw a
+    voided code and silently dropped the destination's credit.
+    """
+    engine, _ = _make_identity_engine(_config(deck_count=2, jokers_per_deck=1, min_lap_s=1))
+    engine.start(at=_dt(10, 0))
+    shared_12, shared_34 = _record_alias_pair(engine, "12", "34", second_at=_dt(10, 1))
+    assert shared_12 == shared_34
+    assert shared_12 is not shared_34
+    engine.void_card("12", shared_12, reason="wrong card dealt")
+
+    engine.reassign_crossing(len(engine.crossings), "56", reason="mis-keyed plate")
+
+    assert engine.credited_cards("34") == ()
+    assert engine.credited_cards("56") == (shared_34,)
+
+
+def test_return_to_held_on_another_entrys_alias_takes_the_credited_branch() -> None:
+    """The other entry's card is not voided, so it re-holds unchanged.
+
+    Its code matches the card voided on entry 12, but the registry is
+    identity-keyed: this card leaves 34's credited hand into the hold
+    queue and no card is dealt in its place.
+    """
+    engine, _ = _make_identity_engine(_config(deck_count=2, jokers_per_deck=1, min_lap_s=1))
+    engine.start(at=_dt(10, 0))
+    shared_12, shared_34 = _record_alias_pair(engine, "12", "34", second_at=_dt(10, 1))
+    assert shared_12 == shared_34
+    assert shared_12 is not shared_34
+    engine.void_card("12", shared_12, reason="wrong card dealt")
+    dealt_before = engine._shoe.dealt
+
+    engine.return_to_held(engine.crossings[6])
+
+    assert engine.held_card_for(engine.crossings[6]) is shared_34
+    assert engine.credited_cards("34") == ()
+    # Private read deliberately, as above: the deal count is the only
+    # reader that separates re-holding from re-dealing.
+    assert engine._shoe.dealt == dealt_before
+
+
+def test_void_card_ignores_a_held_same_code_sibling_and_voids_the_credited_card() -> None:
+    """The held-card guard names the card, never the code.
+
+    Entry 12's sixth crossing holds its card (a short lap) and its
+    seventh credits a card of the same code. Voiding the credited one
+    must succeed: the guard reads identity, so a held sibling in the
+    hold queue blocks only a void of the held card itself.
+    """
+    engine, _ = _make_identity_engine(_config(deck_count=2, jokers_per_deck=1, min_lap_s=60))
+    engine.start(at=_dt(10, 0))
+    _record_crossings(engine, "12", 5, start_at=_dt(10, 1), step_s=60)
+    engine.record_crossing("12", at=_dt(10, 5, 30))  # 30 s lap -> held
+    engine.record_crossing("12", at=_dt(10, 7, 30))  # 120 s lap -> credited
+    held = engine.card_for(engine.crossings[5])
+    credited = engine.card_for(engine.crossings[6])
+    assert held == credited
+    assert held is not credited
+
+    engine.void_card("12", credited, reason="wrong card dealt")
+
+    assert engine.is_card_voided(credited) is True
+    assert engine.is_card_voided(held) is False
+    assert engine.held_card_for(engine.crossings[5]) is held
+    assert len(engine.credited_cards("12")) == 5
 
 
 # --------------------------------------------- E4.2 undo (R-33)
@@ -1748,6 +1987,31 @@ def test_undo_last_voided_crossing_returns_its_card_to_the_shoe() -> None:
 
     redo = engine.record_crossing("12", at=_dt(10, 0, 45))
     assert redo.card == held.card
+
+
+def test_return_to_held_after_undo_re_holds_the_unvoided_card() -> None:
+    """Undo un-voids the card, so the crossing re-holds it, no deal.
+
+    The undone card was restituted to the shoe, so the crossing the
+    next deal gives it is live again: the voided-card registry is what
+    ``return_to_held`` reads, and it must have dropped the card, or the
+    crossing would be handed a fresh deal instead of the card itself.
+    """
+    engine, _ = _make_engine(config=_config(hold_short_laps=True, min_lap_s=60))
+    engine.start()
+    engine.record_crossing("12", at=_dt(10, 0, 30))  # 30 s lap -> held
+    engine.void_held(engine.held_crossings()[0].crossing)
+    engine.undo_last()
+    redo = engine.record_crossing("12", at=_dt(10, 1, 30))  # 90 s -> credited
+    assert engine.is_card_voided(redo.card) is False
+    dealt_before = engine._shoe.dealt
+
+    engine.return_to_held(engine.crossings[-1])
+
+    assert engine.held_card_for(engine.crossings[-1]) is redo.card
+    # Private read deliberately: the deal count is the only reader that
+    # separates re-holding from re-dealing.
+    assert engine._shoe.dealt == dealt_before
 
 
 def test_undo_last_with_zero_crossings_raises_illegal_state_error() -> None:
@@ -2592,10 +2856,19 @@ def test_apply_return_to_held_event_re_holds_the_credited_card() -> None:
 def test_apply_replay_return_to_held_reproduces_the_re_held_disposition() -> None:
     """Replaying a return_to_held log rebuilds the live held queue.
 
-    The live ride ends with every dealt card back in the hold queue --
-    one released from the credited hand, one un-retired from
-    ``void_card`` -- so the replayed engine must agree on the snapshot,
-    the hold queue and the voided-card record.
+    The live ride ends with three crossings held -- the short lap's card
+    dealt held, one released from the credited hand, and one voided card
+    replaced by a fresh deal -- plus one card left voided on its own
+    crossing. Replay walks the same states and the seeded shoe deals the
+    same replacement, so the replayed engine must agree on the snapshot,
+    the hold queue, the voided-card record and the shoe's deal count.
+
+    The voided-card registry is keyed by object identity, so two engines
+    can never share an ``==`` reading of it. Equivalence is behavioural,
+    read through ``is_card_voided``: each engine reports its own voided
+    card as voided -- which is what proves the replayed ``void_card``
+    marked the engine's own object, not the fresh ``Card.parse`` its
+    event carries -- and the other engine's equal-by-value card as live.
     """
     live, _ = _make_engine(config=_config(hold_short_laps=True))
     live.start(at=_dt(10, 0))
@@ -2605,6 +2878,9 @@ def test_apply_replay_return_to_held_reproduces_the_re_held_disposition() -> Non
     live.void_card("12", third.card, reason="wrong card dealt")
     live.return_to_held(live.crossings[1])
     live.return_to_held(live.crossings[2])
+    live.record_crossing("12", at=_dt(11, 30))  # credited
+    fifth = live.record_crossing("12", at=_dt(12, 0))  # credited -> voided
+    live.void_card("12", fifth.card, reason="wrong card dealt")
     replayed, _ = _make_engine(config=_config(hold_short_laps=True))
     # logic-coverage-exempt: T-8 -- the loop is pure Arrange
     # (re-applying the recorded log); assertions run after the loop.
@@ -2613,8 +2889,13 @@ def test_apply_replay_return_to_held_reproduces_the_re_held_disposition() -> Non
 
     assert replayed.snapshot() == live.snapshot()
     assert replayed.held_crossings() == live.held_crossings()
-    assert replayed._voided_cards == live._voided_cards
     assert replayed._shoe.dealt == live._shoe.dealt
+    live_voided = live.card_for(live.crossings[4])
+    replayed_voided = replayed.card_for(replayed.crossings[4])
+    assert live_voided == replayed_voided
+    assert live.is_card_voided(live_voided) is True
+    assert replayed.is_card_voided(replayed_voided) is True
+    assert live.is_card_voided(replayed_voided) is False
 
 
 def test_apply_undo_event_reverses_the_last_crossing() -> None:

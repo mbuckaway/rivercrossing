@@ -198,7 +198,8 @@ def _shuffled_sequence(  # noqa: PLR0913 -- decks/jokers/seed + the mode flag
         if jokers_total
         else _per_deck_cards(decks, jokers_per_deck)
     )
-    random.Random(seed).shuffle(cards)  # noqa: S311 -- deterministic Fisher-Yates by design, not crypto
+    # deterministic Fisher-Yates by design, not crypto
+    random.Random(seed).shuffle(cards)  # noqa: S311
     return cards
 
 

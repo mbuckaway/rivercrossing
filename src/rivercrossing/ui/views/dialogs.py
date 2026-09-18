@@ -410,6 +410,12 @@ def run_dialog(dialog: Any, opener: Any) -> int:  # noqa: ANN401 -- wx ships no 
     XRC-loaded parentage exactly as authored (H1's measured
     regression).
 
+    The light-mode tint is applied once, at open time, and never
+    re-applied: a dialog is modal and short-lived, and the theme radio
+    is unreachable while one is up
+    (:func:`theme.apply_light_mode_panel_bg`'s own docstring records
+    the modeless-frame exception).
+
     Args:
         dialog: A loaded, not-yet-shown ``wx.Dialog``.
         opener: The control that is about to open *dialog* and
@@ -419,20 +425,10 @@ def run_dialog(dialog: Any, opener: Any) -> int:  # noqa: ANN401 -- wx ships no 
         ``ShowModal``'s return value.
     """
     wire_close_button(dialog)
-    # ux-polish: dialogs are modal and short-lived, so applying the
-    # light-mode panel tint at open time is sufficient -- the theme
-    # radio is unreachable while a modal is up, so no live re-apply
-    # can ever be needed mid-show (theme.apply_light_mode_panel_bg's
-    # own docstring records the modeless-frame exception).
+    # ux-polish: the light-mode tint, once (see the docstring).
     theme.apply_light_mode_panel_bg(dialog)
-    # Every XRC dialog loads parentless, so it would be placed by the
-    # platform (top-left on MSW) and could hide behind the console.
-    # Centre over the opener's own top-level window: measured,
-    # CentreOnParent centres a parentless dialog on the *screen*, not
-    # over the console, so the position is computed explicitly.
-    # Deliberately no Reparent here: a wx.Dialog must stay a top-level
-    # window, and re-parenting it to the frame renders its controls
-    # inside the frame on Cocoa -- an empty-looking dialog.
+    # Centre over the opener's top-level window, never re-parent (see
+    # the docstring).
     top = opener.GetTopLevelParent()
     if top is not None:
         area = top.GetScreenRect()

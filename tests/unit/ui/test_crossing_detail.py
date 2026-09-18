@@ -12,13 +12,16 @@ all without a display:
   card/held are asserted directly.
 * **The view's handlers** -- ``_on_edit`` (the §9 Plate prompt, whose
   own loader :func:`crossing_detail.run_plate_dialog` is pinned against
-  a stub resource), ``_on_edit_time`` and ``_on_void_card``: each
-  commits through the engine and then re-renders the dialog **in
-  place**, so a correction returns to the detail window rather than
-  closing it. ``_on_ok`` is the crossing mode's only exit; miss mode's
-  OK assigns the plate Edit's own prompt stored. ``_on_delete`` is the
-  one correction that still closes -- its crossing is gone. All are
-  driven against recording widget doubles built with ``object.__new__``
+  a stub resource), ``_on_edit_time`` and ``_on_void_card``. In
+  crossing mode each commits through the engine and then re-renders the
+  dialog **in place**, so a correction returns to the detail window
+  rather than closing it; in miss mode Edit is the commit, and the same
+  dialog is handed over to the crossing the miss became rather than
+  closing. ``_on_ok`` is the one control that ends the dialog, in both
+  modes,
+  with Escape pointed at the same button. ``_on_delete`` is the one
+  correction that still closes -- its crossing is gone. All are driven
+  against recording widget doubles built with ``object.__new__``
   (``test_dialogs_positioning.py``'s precedent).
 * **The dialog's authored shape** -- ``dialogs.xrc``'s
   ``crossing_detail_dlg`` declares no ``edit_plate_input`` row (the
@@ -49,7 +52,7 @@ from xrc_fixtures import pin_no_authored_window
 
 from conftest import _pooled_team_roster, gorba_config
 from rivercrossing.cards import Card, Shoe
-from rivercrossing.ride import Crossing, PendingMiss, RideEngine, RideStatus
+from rivercrossing.ride import Crossing, Event, PendingMiss, RideEngine, RideStatus
 from rivercrossing.roster import EntryMode, PlateModel, Rider, Roster
 from rivercrossing.ui import app as app_module
 from rivercrossing.ui import ids, std_dialogs
@@ -84,15 +87,73 @@ def _frozen_clock() -> datetime:
     return _dt(10, 0)
 
 
-def _running_engine(
-    roster: Roster, *, min_lap_s: int = 1, hold_short_laps: bool = False
+def _running_engine(  # noqa: PLR0913 -- (roster, min_lap_s, hold_short_laps, engine_class)
+    roster: Roster,
+    *,
+    min_lap_s: int = 1,
+    hold_short_laps: bool = False,
+    engine_class: type[RideEngine] = RideEngine,
 ) -> RideEngine:
-    """Build a RUNNING engine over *roster* on the GORBA config."""
+    """Build a RUNNING engine over *roster* on the GORBA config.
+
+    *engine_class* builds the instance: ``RideEngine`` itself
+    everywhere but the void-card identity case, which needs its
+    recording double.
+    """
     config = gorba_config(min_lap_s=min_lap_s, hold_short_laps=hold_short_laps)
     shoe = Shoe(decks=config.deck_count, jokers_per_deck=config.jokers_per_deck, seed=20260920)
+    engine = engine_class(config=config, shoe=shoe, clock=_frozen_clock, roster=roster)
+    engine.start()
+    return engine
+
+
+# The same-code pair the identity cases below need: two physically
+# different cards sharing one code, both credited to one entry. The
+# GORBA shoe's eight decks repeat no code early enough to be worth
+# dealing; a two-deck shoe under this seed deals one code on two
+# consecutive deals (the seed test_ride.py's own identity cases use).
+_IDENTITY_SEED = 20260901
+
+
+def _identity_engine(roster: Roster) -> RideEngine:
+    """Build a RUNNING two-deck engine that repeats a code."""
+    config = replace(
+        gorba_config(min_lap_s=1, hold_short_laps=False),
+        deck_count=2,
+        jokers_per_deck=1,
+    )
+    shoe = Shoe(
+        decks=config.deck_count, jokers_per_deck=config.jokers_per_deck, seed=_IDENTITY_SEED
+    )
     engine = RideEngine(config=config, shoe=shoe, clock=_frozen_clock, roster=roster)
     engine.start()
     return engine
+
+
+def _record_alias_pair(engine: RideEngine) -> tuple[Crossing, Crossing]:
+    """Record seven laps for "12"; laps six and seven repeat a code.
+
+    Returns:
+        The aliased pair, earlier lap first -- the engine's own
+        ``Crossing`` objects.
+    """
+    for index in range(6):
+        engine.record_crossing("12", at=_dt(10, 0, 2 + index * 2))
+    engine.record_crossing("12", at=_dt(10, 0, 14))
+    return engine.crossings[5], engine.crossings[6]
+
+
+def _voided_alias_ride(roster: Roster) -> tuple[RideEngine, Crossing, Crossing]:
+    """Build a ride whose sixth lap's card is voided off the hand.
+
+    Returns:
+        The engine and the two aliased crossings -- the voided one and
+        its still-credited sibling, in that order.
+    """
+    engine = _identity_engine(roster)
+    voided, sibling = _record_alias_pair(engine)
+    engine.void_card("12", engine.card_for(voided), reason="wrong card off the line")
+    return engine, voided, sibling
 
 
 def _solo_roster(name: str = "Amy", plate: str = "12") -> Roster:
@@ -210,6 +271,43 @@ def test_build_fields_given_a_voided_card_reports_it_voided() -> None:
     assert fields.held == "Void"
 
 
+def test_build_fields_given_a_voided_card_renders_void_in_the_card_field() -> None:
+    """D3: the Card field drops the voided glyph for the word "Void".
+
+    A card out of the ride is not the crossing's any more, so showing
+    its glyph would name a card the entry does not hold; the field
+    reads what the Status field beside it reads.
+    """
+    roster = _solo_roster()
+    engine = _running_engine(roster, min_lap_s=1080, hold_short_laps=True)
+    engine.record_crossing("12", at=_dt(10, 2))
+    crossing = engine.crossings[0]
+    engine.void_held(crossing)
+
+    fields = crossing_detail.build_fields(crossing, roster, engine)
+
+    assert (fields.card, fields.held) == ("Void", "Void")
+
+
+def test_build_fields_given_a_duplicate_card_keeps_its_glyph() -> None:
+    """D3 guardrail: a duplicate's card is in the ride, so it shows.
+
+    The pair membership outranks the card's own disposition
+    (``_held_status``), so this is the one status that can sit beside a
+    credited or held card and still read as a glyph-bearing row.
+    """
+    roster = _solo_roster()
+    engine = _running_engine(roster)
+    engine.record_crossing("12", at=_dt(10, 2))
+    engine.record_crossing("12", at=_dt(10, 2))
+    crossing = engine.crossings[-1]
+    glyph = format_card(engine.card_for(crossing).code())
+
+    fields = crossing_detail.build_fields(crossing, roster, engine)
+
+    assert (fields.card, fields.held) == (glyph, "Duplicate")
+
+
 @pytest.mark.parametrize("index", [0, 1], ids=["older_twin", "newer_twin"])
 def test_build_fields_given_either_half_of_a_duplicate_pair_reports_it_duplicate(
     index: int,
@@ -253,6 +351,50 @@ def test_build_fields_given_a_second_duplicate_pair_reports_it_duplicate() -> No
     assert fields.held == "Duplicate"
 
 
+def test_build_fields_given_a_voided_card_beside_its_credited_code_alias_is_void() -> None:
+    """T-3: a credited same-code sibling cannot mask the void.
+
+    Voiding the sixth lap leaves the seventh's value-equal card in the
+    entry's hand, so a credited-membership read would call a card the
+    engine has retired "Credited" (an eight-deck alias in one hand).
+    """
+    roster = _solo_roster()
+    engine, voided, _sibling = _voided_alias_ride(roster)
+
+    fields = crossing_detail.build_fields(voided, roster, engine)
+
+    assert (fields.held, fields.card) == ("Void", "Void")
+
+
+def test_build_fields_given_the_credited_half_of_a_code_alias_stays_credited() -> None:
+    """T-3 negative: the voided object does not taint its code alias."""
+    roster = _solo_roster()
+    engine, _voided, sibling = _voided_alias_ride(roster)
+
+    fields = crossing_detail.build_fields(sibling, roster, engine)
+
+    assert fields.held == "Credited"
+
+
+def test_build_fields_given_a_voided_duplicate_reports_duplicate_not_void() -> None:
+    """T-13: the pair membership outranks even a voided card.
+
+    ``_held_status`` reads the duplicate pair before any card
+    disposition, so the voided arm cannot take a twin's row away from
+    the correction it needs.
+    """
+    roster = _solo_roster()
+    engine = _running_engine(roster)
+    engine.record_crossing("12", at=_dt(10, 2))
+    engine.record_crossing("12", at=_dt(10, 2))
+    crossing = engine.crossings[1]
+    engine.void_card("12", engine.card_for(crossing), reason="wrong card off the line")
+
+    fields = crossing_detail.build_fields(crossing, roster, engine)
+
+    assert fields.held == "Duplicate"
+
+
 class _StubEngine:
     """A ``RideEngine`` double for the field builder's read surface."""
 
@@ -287,6 +429,15 @@ class _StubEngine:
     def credited_cards(self, plate: str) -> tuple[Card, ...]:  # noqa: ARG002
         """Return the scripted credited hand."""
         return self._credited
+
+    def is_card_voided(self, card: Card) -> bool:  # noqa: ARG002
+        """Report the scripted card (``card``) never voided.
+
+        ``_StubEngine`` scripts credited hands only: a card outside
+        them reads as voided through ``_held_status``' own fallback,
+        which is the state the tests using this double pin.
+        """
+        return False
 
     def duplicate_crossings(self) -> tuple[tuple[Crossing, Crossing], ...]:
         """Report no pairs: every scripted crossing is a lone one."""
@@ -466,11 +617,16 @@ class _RecordingText:
 
 
 class _RecordingButton:
-    """A ``wx.Button`` double recording its enablement."""
+    """A ``wx.Button`` double recording its id and its enablement."""
 
-    def __init__(self) -> None:
-        """Start with no enablement applied."""
+    def __init__(self, button_id: int = 0) -> None:
+        """Start with *button_id* and no enablement applied."""
+        self.button_id = button_id
         self.enabled: bool | None = None
+
+    def GetId(self) -> int:  # noqa: N802
+        """Return the id Escape is pointed at through this button."""
+        return self.button_id
 
     def Enable(self, enabled: bool = True) -> None:  # noqa: N802, FBT001, FBT002
         """Record the enablement the view applied."""
@@ -478,11 +634,16 @@ class _RecordingButton:
 
 
 class _RecordingInfoBar:
-    """A ``wx.InfoBar`` double recording refusals."""
+    """A ``wx.InfoBar`` double recording refusals and its best size."""
 
-    def __init__(self) -> None:
-        """Start with no message shown."""
+    def __init__(self, best_height: int = 0) -> None:
+        """Start with no message shown and no measured height."""
         self.messages: list[str] = []
+        self._best_height = best_height
+
+    def GetBestSize(self) -> wx.Size:  # noqa: N802
+        """Report the height the bar wants, 0 when none measured."""
+        return wx.Size(0, self._best_height)
 
     def ShowMessage(self, message: str, icon: int = 0) -> None:  # noqa: N802, ARG002
         """Record the refusal text."""
@@ -641,6 +802,201 @@ def test_crossing_detail_dlg_given_its_correction_row_labels_the_four_buttons() 
         ids.VOID_CARD_BTN: "Void Card…",
     }
     assert labels.get(ids.DELETE_BTN) == "Delete"
+
+
+def test_crossing_detail_dlg_given_the_stock_row_authors_no_cancel_button() -> None:
+    """OK closes it: the window authors no Cancel to click."""
+    labels = _crossing_detail_button_labels()
+
+    assert (labels.get("wxID_OK"), "wxID_CANCEL" in labels) == ("OK", False)
+
+
+def test_crossing_detail_dlg_given_the_stock_row_places_ok_alone() -> None:
+    """Measured: a std sizer places only the stock ids it recognises."""
+    sizer = next(
+        element
+        for element in _crossing_detail_controls()
+        if element.get("class") == "wxStdDialogButtonSizer"
+    )
+
+    assert [button.find("object").get("name") for button in sizer.findall("object")] == ["wxID_OK"]
+
+
+# ``_DetailDialogView.__init__``'s own wiring -- the five button
+# binds, Escape's route and the dialog's size floor. All need the
+# shared ``__init__`` to run, which the ``object.__new__`` doubles above
+# cannot reach, so the window is a recording double too and the control
+# lookups are stubbed out.
+
+
+class _InitDialog:
+    """A ``wx.Dialog`` double recording ``__init__``'s own wiring."""
+
+    def __init__(self, fitted: tuple[int, int] = (400, 300)) -> None:
+        """Report *fitted* from GetSize, like a just-Fit() dialog."""
+        self._fitted = wx.Size(*fitted)
+        self._sizer: object = object()
+        self.escape_id: int | None = None
+        self.calls: list[str] = []
+        self.min_size: wx.Size | None = None
+        self.size: wx.Size | None = None
+        self.binds: list[tuple[object, object, object]] = []
+
+    def Bind(self, event: object, handler: object, source: object = None) -> None:  # noqa: N802
+        """Record one ``(event, handler, source)`` binding."""
+        self.binds.append((event, handler, source))
+
+    def SetEscapeId(self, escape_id: int) -> None:  # noqa: N802
+        """Record the id Escape is pointed at."""
+        self.escape_id = escape_id
+
+    def GetSizer(self) -> object:  # noqa: N802
+        """Return the authored content sizer."""
+        return self._sizer
+
+    def SetSizer(  # noqa: N802 -- wx's own method name
+        self,
+        sizer: object,
+        deleteOld: bool = True,  # noqa: FBT001, FBT002, N803, ARG002 -- wx's own parameter
+    ) -> None:
+        """Record the outer sizer the info bar wraps the content in."""
+        self._sizer = sizer
+
+    def Fit(self) -> None:  # noqa: N802
+        """Record the fitting call."""
+        self.calls.append("Fit")
+
+    def GetSize(self) -> wx.Size:  # noqa: N802
+        """Record the read and report the fitted size."""
+        self.calls.append("GetSize")
+        return wx.Size(self._fitted)
+
+    def SetMinSize(self, size: wx.Size) -> None:  # noqa: N802
+        """Record the floor the view applied."""
+        self.calls.append("SetMinSize")
+        self.min_size = size
+
+    def SetSize(self, size: wx.Size) -> None:  # noqa: N802
+        """Record the size the view opened the dialog at."""
+        self.calls.append("SetSize")
+        self.size = size
+
+
+_DISPLAY = (0, 25, 1920, 1080)
+
+
+def _detail_view_init(  # noqa: PLR0913 -- (monkeypatch, fitted, infobar_height, display)
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    fitted: tuple[int, int] = (400, 300),
+    infobar_height: int = 0,
+    display: tuple[int, int, int, int] = _DISPLAY,
+) -> tuple[_InitDialog, _RecordingInfoBar, crossing_detail._DetailDialogView]:
+    """Run ``_DetailDialogView.__init__`` over doubles; report wiring.
+
+    The control lookups and the code-side info bar are both replaced --
+    the real ones need a desktop -- so this drives the shared
+    ``__init__``'s own three steps: find the nine boxes and five
+    buttons, bind the five and point Escape at OK, then floor the
+    dialog.
+    """
+    dialog = _InitDialog(fitted=fitted)
+    bar = _RecordingInfoBar(best_height=infobar_height)
+    controls: dict[str, object] = {}
+
+    def _find(_self: object, name: str, _expected_type: object = None) -> object:
+        control = controls.get(name)
+        if control is None:
+            control = (
+                _RecordingButton(wx.ID_OK) if name == dialogs.WX_ID_OK else _RecordingValueBox()
+            )
+            controls[name] = control
+        return control
+
+    monkeypatch.setattr(crossing_detail._DetailDialogView, "_find", _find)
+    monkeypatch.setattr(crossing_detail._DetailDialogView, "_build_infobar", lambda _self: bar)
+    monkeypatch.setattr(wx, "GetClientDisplayRect", lambda: display)
+    view = crossing_detail._DetailDialogView(dialog, _StubEngine())
+    return dialog, bar, view
+
+
+def test_detail_dialog_view_given_its_five_buttons_binds_each_one_once(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The shared base binds every button; a second Bind double-fires.
+
+    The subclasses used to bind their own correction buttons, so leaving
+    those in place would now give ``ok_btn`` two handlers and fire
+    ``EndModal`` twice (``main_frame``'s measured duplicate-Bind note).
+    """
+    dialog, _bar, view = _detail_view_init(monkeypatch)
+
+    assert [(event, handler.__name__, source) for event, handler, source in dialog.binds] == [
+        (wx.EVT_BUTTON, "_on_ok", view.ok_btn),
+        (wx.EVT_BUTTON, "_on_edit", view.edit_btn),
+        (wx.EVT_BUTTON, "_on_edit_time", view.edit_time_btn),
+        (wx.EVT_BUTTON, "_on_void_card", view.void_card_btn),
+        (wx.EVT_BUTTON, "_on_delete", view.delete_btn),
+    ]
+
+
+def test_detail_dialog_view_given_the_cancel_less_row_points_escape_at_ok(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """R-76: with no Cancel authored, Escape still leaves the dialog."""
+    dialog, _bar, view = _detail_view_init(monkeypatch)
+
+    assert (dialog.escape_id, view.ok_btn.button_id) == (wx.ID_OK, wx.ID_OK)
+
+
+def test_detail_dialog_view_given_a_fitted_size_floors_the_dialog_by_the_infobar(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Fit() measures; the floor adds the info bar's own room."""
+    dialog, _bar, _view = _detail_view_init(monkeypatch, fitted=(400, 300), infobar_height=40)
+
+    assert (dialog.calls, (dialog.min_size.width, dialog.min_size.height)) == (
+        ["Fit", "GetSize", "SetMinSize", "SetSize"],
+        (400, 340),
+    )
+    assert (dialog.size.width, dialog.size.height) == (400, 340)
+
+
+def test_detail_dialog_view_given_an_unmeasured_infobar_falls_back_to_the_allowance(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """T-3/T-4 boundary: a 0-height report still reserves room."""
+    dialog, _bar, _ok = _detail_view_init(monkeypatch, fitted=(400, 300), infobar_height=0)
+
+    expected = (400, 300 + crossing_detail._INFOBAR_ALLOWANCE)
+    assert (dialog.min_size.width, dialog.min_size.height) == expected
+    assert (dialog.size.width, dialog.size.height) == expected
+
+
+@pytest.mark.parametrize(
+    ("fitted", "infobar_height", "display", "expected"),
+    [
+        ((400, 300), 40, (0, 25, 1920, 1080), (400, 340)),  # roomy: the floor stands
+        ((400, 300), 40, (0, 25, 400, 340), (400, 340)),  # T-4 boundary: exactly the floor
+        ((400, 300), 40, (0, 25, 400, 339), (400, 339)),  # max - 1: the display wins
+        ((400, 300), 40, (0, 25, 300, 200), (300, 200)),  # a small screen clamps both
+    ],
+    ids=["roomy", "exact_floor", "one_short", "small_screen"],
+)
+def test_detail_dialog_view_given_a_display_clamps_the_floored_size(  # noqa: PLR0913, PLR0917
+    monkeypatch: pytest.MonkeyPatch,
+    fitted: tuple[int, int],
+    infobar_height: int,
+    display: tuple[int, int, int, int],
+    expected: tuple[int, int],
+) -> None:
+    """The clamped size is both the floor and the opened size (T-4)."""
+    dialog, _bar, _ok = _detail_view_init(
+        monkeypatch, fitted=fitted, infobar_height=infobar_height, display=display
+    )
+
+    assert (dialog.min_size.width, dialog.min_size.height) == expected
+    assert (dialog.size.width, dialog.size.height) == expected
 
 
 def test_ids_given_the_removed_plate_field_declares_no_plate_input_constant() -> None:
@@ -1129,6 +1485,69 @@ def test_on_edit_time_given_a_finished_ride_keeps_the_dialog_open(
     ]
 
 
+@pytest.mark.parametrize(
+    ("crossed_at", "expected"),
+    [
+        (_dt(10, 2), "2026-09-20T10:02:00 is not after 2026-09-20T10:02:00"),  # at: T-4 max
+        (
+            _dt(10, 1),
+            "2026-09-20T10:01:00 is not after 2026-09-20T10:02:00",
+        ),  # before: T-4 max + 1
+    ],
+    ids=["at_predecessor", "before_predecessor"],
+)
+def test_on_edit_time_given_a_lap_retimed_at_or_before_its_predecessor_keeps_the_open_dialog(
+    monkeypatch: pytest.MonkeyPatch,
+    crossed_at: datetime,
+    expected: str,
+) -> None:
+    """T-5: a bad lap time is a ValueError, not a RideEngineError."""
+    roster = _solo_roster()
+    engine = _running_engine(roster)
+    engine.record_crossing("12", at=_dt(10, 2))
+    engine.record_crossing("12", at=_dt(10, 5))
+    view = _view(engine, roster=roster, crossing=engine.crossings[1])
+    _stub_run_edit_crossing(
+        monkeypatch,
+        CrossingEdit(entry_id="12", seq=2, crossed_at=crossed_at, reason="wrong clock"),
+    )
+
+    view._on_edit_time(_RecordingEvent())
+
+    assert view.dialog.modal_ids == []
+    assert view.crossing_detail_infobar.messages == [
+        f"Could not edit crossing: lap time must be positive for entry 12: {expected}"
+    ]
+    assert [c.crossed_at for c in engine.crossings] == [_dt(10, 2), _dt(10, 5)]
+
+
+def test_on_edit_time_given_a_stale_crossing_keeps_the_dialog_open(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """T-5: a stale crossing is refused, not left to StopIteration."""
+    roster = _solo_roster()
+    engine = _running_engine(roster)
+    engine.record_crossing("12", at=_dt(10, 2))
+    stale = Crossing(entry_id="12", seq=1, crossed_at=_dt(10, 2), rider_plate="12")
+    view = _view(engine, roster=roster, crossing=stale)
+    _stub_run_edit_crossing(
+        monkeypatch,
+        CrossingEdit(entry_id="12", seq=1, crossed_at=_dt(10, 3), reason="wrong clock"),
+    )
+    events_before = len(engine.events)
+
+    view._on_edit_time(_RecordingEvent())
+
+    assert view.dialog.modal_ids == []
+    assert view.crossing_detail_infobar.messages == [
+        "Could not edit crossing: this crossing is no longer recorded."
+    ]
+    assert (len(engine.events), [c.crossed_at for c in engine.crossings]) == (
+        events_before,
+        [_dt(10, 2)],
+    )
+
+
 def _stub_run_void_card(
     monkeypatch: pytest.MonkeyPatch, result: CardVoid | None
 ) -> list[dict[str, object]]:
@@ -1141,6 +1560,76 @@ def _stub_run_void_card(
 
     monkeypatch.setattr(corrections, "run_void_card", _run)
     return calls
+
+
+class _RecordingVoidEngine(RideEngine):
+    """A ``RideEngine`` remembering the object ``void_card`` was handed.
+
+    The one fact the dialog's own outcome cannot show: whether the
+    handler passed the engine's dealt object or a fresh, value-equal
+    ``Card.parse`` copy of the confirm dialog's code -- which Phase 1's
+    identity-keyed registry and hold guard no longer recognise.
+    """
+
+    voided_card: Card | None = None
+
+    def void_card(self, entry_id: str, card: Card, reason: str) -> Event:
+        """Record *card*, then run the engine's own void."""
+        self.voided_card = card
+        return super().void_card(entry_id, card, reason)
+
+
+def test_on_void_card_given_a_confirmed_void_passes_the_engines_own_dealt_object(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Identity, never the confirm dialog's returned code.
+
+    ``void_card`` keys the registry and guards the hold queue by object
+    identity, so a parsed copy of the code would name a different
+    physical card -- and, on a held duplicate, slip past the guard.
+    """
+    roster = _solo_roster()
+    engine = _running_engine(roster, engine_class=_RecordingVoidEngine)
+    engine.record_crossing("12", at=_dt(10, 2))
+    crossing = engine.crossings[0]
+    card = engine.card_for(crossing)
+    view = _view(engine, roster=roster)
+    _stub_run_void_card(
+        monkeypatch, CardVoid(entry_id="12", card=card.code(), reason="wrong card")
+    )
+
+    view._on_void_card(_RecordingEvent())
+
+    assert engine.voided_card is card
+    assert (view.crossing_held_lbl.value, engine.credited_cards("12")) == ("Void", ())
+
+
+def test_on_void_card_given_a_held_duplicate_card_keeps_the_held_refusal(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The identity hold guard still recognises the card it is given.
+
+    A duplicate crossing's held card is voidable from this dialog, and
+    ``void_card`` refuses it with the hold message. A parsed copy of
+    the code is another object, so the guard misses and the refusal
+    degrades to "no dealt card ... credited".
+    """
+    roster = _solo_roster()
+    engine = _running_engine(roster, min_lap_s=1080, hold_short_laps=True)
+    engine.record_crossing("12", at=_dt(10, 2))
+    engine.record_crossing("12", at=_dt(10, 2))
+    crossing = engine.crossings[1]
+    card = engine.card_for(crossing)
+    view = _view(engine, roster=roster, crossing=crossing)
+    _stub_run_void_card(
+        monkeypatch, CardVoid(entry_id="12", card=card.code(), reason="wrong card")
+    )
+
+    view._on_void_card(_RecordingEvent())
+
+    assert view.crossing_detail_infobar.messages == [
+        "Could not void card: card is held; confirm or void it through the review panel"
+    ]
 
 
 def test_on_void_card_given_a_confirmed_void_rerenders_the_crossing_in_place(
@@ -1456,6 +1945,29 @@ def test_commit_plate_given_a_stale_crossing_reports_failure() -> None:
     assert view.crossing_detail_infobar.messages == [
         "Could not reassign: this crossing is no longer recorded."
     ]
+
+
+def test_commit_plate_given_a_plate_already_crossing_then_points_at_the_new_crossing() -> None:
+    """The locator regression: the reassign appends, so the last is it.
+
+    ``reassign_crossing`` removes the crossing and appends its
+    replacement, so a plate/instant lookup against the record would find
+    the **older** twin recorded at the same instant under the same plate
+    (the documented duplicate case) instead of the crossing just moved.
+    """
+    roster = _two_solo_roster()
+    engine = _running_engine(roster)
+    engine.record_crossing("34", at=_dt(10, 2))
+    twin = engine.crossings[0]
+    engine.record_crossing("12", at=_dt(10, 2))
+    view = _view(engine, roster=roster, crossing=engine.crossings[1])
+
+    committed = view._commit_plate("34")
+
+    assert committed is True
+    assert engine.duplicate_crossings() == ((twin, engine.crossings[-1]),)
+    assert view.crossing is engine.crossings[-1]
+    assert (view.crossing_plate_lbl.value, view.crossing_lap_lbl.value) == ("34", "2")
 
 
 # -------------------------------------------------------------- OK
@@ -2141,113 +2653,30 @@ def test_build_miss_fields_given_any_naive_instant_keeps_the_placeholders(
     assert fields.time == crossing_detail._local_time(crossed_at)
 
 
-# The miss's Edit answer, resolved: once the operator types a plate, the
-# preview names the rider and team that plate belongs to -- the entry
-# `build_fields` would show had the crossing been recorded -- while the
-# lap, timing and card cells keep the miss's own placeholders.
-
-
-def test_build_resolved_miss_fields_given_a_pooled_rider_plate_names_the_rider() -> None:
-    """A pooled rider's own plate previews that rider and the team."""
-    roster = _pooled_team_roster()
-    miss = PendingMiss(miss_seq=1, crossed_at=_dt(10, 2))
-
-    fields = crossing_detail.build_resolved_miss_fields(miss, "45", roster)
-
-    assert (fields.rider, fields.team, fields.plate) == ("Sarah", "Dirt Dynamos", "45")
-
-
-def test_build_resolved_miss_fields_given_a_relay_plate_names_the_entry() -> None:
-    """Relay riders carry no plate (S1), so the entry stands."""
-    roster = _relay_team_roster()
-    miss = PendingMiss(miss_seq=1, crossed_at=_dt(10, 2))
-
-    fields = crossing_detail.build_resolved_miss_fields(miss, "9", roster)
-
-    assert (fields.rider, fields.team, fields.plate) == ("Dirt Dynamos", "Dirt Dynamos", "9")
-
-
-def test_build_resolved_miss_fields_given_a_solo_plate_names_the_entry() -> None:
-    """A solo plate resolves to its rider and the "solo" team text."""
-    roster = _solo_roster()
-    miss = PendingMiss(miss_seq=1, crossed_at=_dt(10, 2))
-
-    fields = crossing_detail.build_resolved_miss_fields(miss, "12", roster)
-
-    assert (fields.rider, fields.team, fields.plate) == ("Amy", "solo", "12")
-
-
-@pytest.mark.parametrize("plate", ["999", ""], ids=["unknown", "blank"])
-def test_build_resolved_miss_fields_given_an_unresolved_plate_keeps_the_placeholders(
-    plate: str,
-) -> None:
-    """T-3/T-4 negative: an unresolved plate shows what was typed."""
-    roster = _solo_roster()
-    miss = PendingMiss(miss_seq=1, crossed_at=_dt(10, 2))
-
-    fields = crossing_detail.build_resolved_miss_fields(miss, plate, roster)
-
-    assert (fields.rider, fields.team, fields.plate) == ("-", "missed", plate)
-
-
-def test_build_resolved_miss_fields_given_a_resolved_plate_keeps_the_miss_timing() -> None:
-    """Only rider/team/plate move: the instant stays the miss's own."""
-    roster = _pooled_team_roster()
-    miss = PendingMiss(miss_seq=1, crossed_at=_dt(10, 2))
-
-    fields = crossing_detail.build_resolved_miss_fields(miss, "45", roster)
-
-    assert (fields.lap, fields.time, fields.lap_time) == ("", "10:02:00", "")
-    assert (fields.total, fields.card, fields.held) == ("", "", "Not yet scored")
-
-
-@given(plate=st.text())
-def test_build_resolved_miss_fields_given_any_typed_plate_keeps_the_timing(
-    plate: str,
-) -> None:
-    """T-7 property: only rider, team and plate can move."""
-    roster = _pooled_team_roster()
-    miss = PendingMiss(miss_seq=1, crossed_at=_dt(10, 2))
-
-    fields = crossing_detail.build_resolved_miss_fields(miss, plate, roster)
-
-    assert fields.plate == plate
-    assert (fields.lap, fields.time, fields.lap_time, fields.total, fields.card) == (
-        "",
-        "10:02:00",
-        "",
-        "",
-        "",
-    )
-    assert fields.held == "Not yet scored"
-
-
 # ------------------------------------------------------- the miss view
 
 
-def _miss_view(  # noqa: PLR0913 -- (engine, roster, miss, plate)
+def _miss_view(
     engine: RideEngine,
     *,
     roster: Roster,
     miss: PendingMiss | None = None,
-    plate: str | None = None,
 ) -> crossing_detail.MissDetailView:
     """Return a ``MissDetailView`` over recording widget doubles.
 
     Built with ``object.__new__`` (``_view``'s own precedent): the
     handlers under test touch only these attributes, so no desktop and
     no ``__init__`` control binding is needed. *roster* is the ride's
-    own roster -- the plate preview's resolver
-    (``MissDetailView.roster``, the crossing mode's own attribute).
-    *plate* is the number Edit's own prompt stored -- ``None`` when
-    Edit never ran.
+    own roster, the attribute ``MissDetailView`` keeps beside the
+    crossing mode's. ``crossing`` is ``None``: this view is in miss mode
+    until its Edit scores the miss and the hand-off fills one in.
     """
     view = object.__new__(crossing_detail.MissDetailView)
     view.dialog = _RecordingDialog()
+    view.crossing = None
     view.miss = miss if miss is not None else engine.pending_misses()[-1]
     view.roster = roster
     view.engine = engine
-    view._miss_plate = plate
     for attr in _VALUE_ATTRS:
         setattr(view, attr, _RecordingValueBox())
     view.edit_btn = _RecordingButton()
@@ -2294,12 +2723,19 @@ def test_render_given_a_pending_miss_disables_delete_and_enables_edit() -> None:
 
 
 # ------------------------------------------------------- miss Edit/OK
+#
+# Edit is the miss mode's one action: it prompts blank, then assigns
+# the saved number through ``assign_plate_to_miss`` and hands the
+# dialog over to the crossing that assignment recorded -- the same
+# window, re-rendered in crossing mode. OK is a plain close in both
+# modes -- the window's one control that ends it -- so nothing in miss
+# mode refuses on it.
 
 
 def test_on_edit_given_a_miss_opens_the_plate_prompt_on_an_empty_field(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Work item B: a miss has no plate, so the prompt starts blank."""
+    """A miss has no plate, so the prompt starts blank."""
     roster = _solo_roster()
     engine = _running_engine(roster)
     engine.record_miss(_dt(10, 2), reason="missed number")
@@ -2309,81 +2745,25 @@ def test_on_edit_given_a_miss_opens_the_plate_prompt_on_an_empty_field(
     view._on_edit(_RecordingEvent())
 
     assert calls == [{"opener": view.dialog, "plate": ""}]
-    assert (view._miss_plate, view.dialog.modal_ids) == (None, [])
+    assert (view.dialog.modal_ids, len(engine.pending_misses())) == ([], 1)
 
 
-def test_on_edit_given_a_miss_and_a_saved_number_stores_and_shows_it(
+def test_on_edit_given_a_saved_number_scores_the_miss_and_stays_open(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The saved number is what OK commits, so the dialog shows it."""
-    roster = _solo_roster()
+    """The saved plate records the crossing and the dialog keeps it."""
+    roster = _two_solo_roster()
     engine = _running_engine(roster)
     engine.record_miss(_dt(10, 2), reason="missed number")
     view = _miss_view(engine, roster=roster)
     _stub_plate_dialog(monkeypatch, "34")
+    shoe_before = engine.shoe_remaining
     event = _RecordingEvent()
 
     view._on_edit(event)
 
-    assert (view._miss_plate, view.crossing_plate_lbl.value, event.skipped) == ("34", "34", True)
-    assert (view.dialog.modal_ids, len(engine.pending_misses())) == ([], 1)
-
-
-def test_on_edit_given_a_resolvable_number_rerenders_the_resolved_fields(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Edit previews the rider and team the typed plate names."""
-    roster = _two_solo_roster()
-    engine = _running_engine(roster)
-    engine.record_miss(_dt(10, 2), reason="missed number")
-    view = _miss_view(engine, roster=roster)
-    _stub_plate_dialog(monkeypatch, "34")
-
-    view._on_edit(_RecordingEvent())
-
-    assert (
-        view.crossing_rider_lbl.value,
-        view.crossing_team_lbl.value,
-        view.crossing_plate_lbl.value,
-        view.crossing_lap_lbl.value,
-        view.crossing_time_lbl.value,
-        view.crossing_lap_time_lbl.value,
-        view.crossing_total_lbl.value,
-        view.crossing_card_lbl.value,
-        view.crossing_held_lbl.value,
-    ) == ("Bob", "solo", "34", "", "10:02:00", "", "", "", "Not yet scored")
-
-
-def test_on_edit_given_a_pooled_rider_number_rerenders_its_team(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """A pooled rider's plate previews the rider and the team name."""
-    roster = _pooled_team_roster()
-    engine = _running_engine(roster)
-    engine.record_miss(_dt(10, 2), reason="missed number")
-    view = _miss_view(engine, roster=roster)
-    _stub_plate_dialog(monkeypatch, "45")
-
-    view._on_edit(_RecordingEvent())
-
-    assert (
-        view.crossing_rider_lbl.value,
-        view.crossing_team_lbl.value,
-        view.crossing_plate_lbl.value,
-    ) == ("Sarah", "Dirt Dynamos", "45")
-
-
-def test_on_ok_given_a_plate_assigns_it_to_the_miss_and_closes() -> None:
-    """OK records the crossing and deals its card at that instant."""
-    roster = _two_solo_roster()
-    engine = _running_engine(roster)
-    engine.record_miss(_dt(10, 2), reason="missed number")
-    view = _miss_view(engine, roster=roster, plate="34")
-    shoe_before = engine.shoe_remaining
-
-    view._on_ok(_RecordingEvent())
-
-    assert view.dialog.modal_ids == [wx.ID_OK]
+    assert event.skipped is True
+    assert view.dialog.modal_ids == []
     assert engine.pending_misses() == ()
     assert [(c.entry_id, c.rider_plate, c.crossed_at) for c in engine.crossings] == [
         ("34", "34", _dt(10, 2))
@@ -2392,52 +2772,172 @@ def test_on_ok_given_a_plate_assigns_it_to_the_miss_and_closes() -> None:
     assert engine.events[-1].action == "assign_plate_to_miss"
     assert engine.events[-1].payload["reason"] == crossing_detail.MISS_EDIT_REASON
     assert engine.events[-1].payload["new_plate"] == "34"
+    assert view.crossing is engine.crossings[-1]
+    assert (
+        view.crossing_rider_lbl.value,
+        view.crossing_team_lbl.value,
+        view.crossing_plate_lbl.value,
+        view.crossing_lap_lbl.value,
+        view.crossing_time_lbl.value,
+        view.crossing_lap_time_lbl.value,
+        view.crossing_total_lbl.value,
+    ) == ("Bob", "solo", "34", "1", "10:02:00", "2:00", "0:02:00")
+    assert view.crossing_card_lbl.value == format_card(engine.card_for(view.crossing).code())
+    assert view.crossing_held_lbl.value == "Credited"
 
 
-@pytest.mark.parametrize("plate", [None, ""], ids=["never_edited", "blank_saved"])
-def test_on_ok_given_a_blank_stored_plate_refuses_and_keeps_the_dialog_open(
-    plate: str | None,
+def test_on_edit_given_a_pooled_rider_number_scores_it_of_the_rider(
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """T-3 negative: with no plate there is nothing to assign."""
+    """A pooled member's own plate attributes the team (J1)."""
+    roster = _pooled_team_roster()
+    engine = _running_engine(roster)
+    engine.record_miss(_dt(10, 2), reason="missed number")
+    view = _miss_view(engine, roster=roster)
+    _stub_plate_dialog(monkeypatch, "45")
+
+    view._on_edit(_RecordingEvent())
+
+    assert [(c.entry_id, c.rider_plate) for c in engine.crossings] == [("9", "45")]
+    assert (view.dialog.modal_ids, engine.events[-1].payload["entry_id"]) == ([], "9")
+    assert (view.crossing_rider_lbl.value, view.crossing_team_lbl.value) == (
+        "Sarah",
+        "Dirt Dynamos",
+    )
+    assert (view.edit_btn.enabled, view.edit_time_btn.enabled) == (True, True)
+    assert (view.void_card_btn.enabled, view.delete_btn.enabled) == (True, True)
+
+
+def test_on_edit_given_a_number_already_crossing_then_points_at_the_new_crossing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The locator regression: the assignment appends, so last is it.
+
+    A crossing already recorded at the miss's instant under the plate
+    the operator types is the documented duplicate case
+    (``RideEngine.duplicate_crossings``). ``assign_plate_to_miss``
+    appends, so the crossing it just recorded is ``crossings[-1]`` --
+    never the earlier twin the plate/instant lookup would find first.
+    """
+    roster = _two_solo_roster()
+    engine = _running_engine(roster)
+    engine.record_crossing("34", at=_dt(10, 2))
+    twin = engine.crossings[0]
+    engine.record_miss(_dt(10, 2), reason="missed number")
+    view = _miss_view(engine, roster=roster)
+    _stub_plate_dialog(monkeypatch, "34")
+
+    view._on_edit(_RecordingEvent())
+
+    assert engine.duplicate_crossings() == ((twin, engine.crossings[-1]),)
+    assert view.crossing is engine.crossings[-1]
+    assert (view.crossing_lap_lbl.value, view.crossing_held_lbl.value) == ("2", "Duplicate")
+
+
+def _handed_over_view(
+    monkeypatch: pytest.MonkeyPatch, *, plate: str = "34"
+) -> tuple[RideEngine, crossing_detail.MissDetailView]:
+    """Arrange a miss view whose Edit has just scored the miss.
+
+    The dialog's post-hand-off state, reached through the real Edit seam
+    so the crossing handlers are exercised on the very object the app is
+    left holding (a miss is recorded first, at 10:02, and the assigned
+    crossing takes that instant).
+    """
+    roster = _two_solo_roster()
+    engine = _running_engine(roster)
+    engine.record_miss(_dt(10, 2), reason="missed number")
+    view = _miss_view(engine, roster=roster)
+    _stub_plate_dialog(monkeypatch, plate)
+    view._on_edit(_RecordingEvent())
+    return engine, view
+
+
+def test_on_edit_time_given_a_scored_miss_retimes_the_crossing_in_place(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Post-hand-off the view is crossing mode: a retime re-renders it.
+
+    ``_handed_over_view`` is the arrange step and the retime is the act:
+    the re-render must be the crossing's own -- a miss re-render would
+    show the placeholder cells (and fail on the dropped ``miss``)
+    instead of the retimed crossing the operator is now looking at.
+    """
+    engine, view = _handed_over_view(monkeypatch)
+    _stub_run_edit_crossing(
+        monkeypatch,
+        CrossingEdit(entry_id="34", seq=1, crossed_at=_dt(10, 3), reason="wrong clock"),
+    )
+
+    view._on_edit_time(_RecordingEvent())
+
+    assert [c.crossed_at for c in engine.crossings] == [_dt(10, 3)]
+    assert view.crossing is engine.crossings[0]
+    assert (view.crossing_time_lbl.value, view.crossing_lap_lbl.value) == ("10:03:00", "1")
+
+
+def test_on_edit_given_a_blank_saved_plate_refuses_and_keeps_the_miss_open(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """T-3/T-4 negative: blank is refused before the engine sees it."""
     roster = _solo_roster()
     engine = _running_engine(roster)
     engine.record_miss(_dt(10, 2), reason="missed number")
-    view = _miss_view(engine, roster=roster, plate=plate)
+    view = _miss_view(engine, roster=roster)
+    _stub_plate_dialog(monkeypatch, "")
 
-    view._on_ok(_RecordingEvent())
+    view._on_edit(_RecordingEvent())
 
     assert (view.dialog.modal_ids, len(engine.pending_misses())) == ([], 1)
     assert view.crossing_detail_infobar.messages == ["Enter a plate to assign to this miss."]
-    assert view.crossing_detail_infobar.messages == ["Enter a plate to assign to this miss."]
 
 
-def test_on_ok_given_an_unknown_plate_refuses_and_keeps_the_dialog_open() -> None:
+def test_on_edit_given_an_unknown_number_refuses_and_keeps_the_miss_open(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """A mistyped plate refuses; the miss stays pending."""
     roster = _two_solo_roster()
     engine = _running_engine(roster)
     engine.record_miss(_dt(10, 2), reason="missed number")
-    view = _miss_view(engine, roster=roster, plate="999")
+    view = _miss_view(engine, roster=roster)
+    _stub_plate_dialog(monkeypatch, "999")
 
-    view._on_ok(_RecordingEvent())
+    view._on_edit(_RecordingEvent())
 
     assert (view.dialog.modal_ids, len(engine.pending_misses())) == ([], 1)
     assert view.crossing_detail_infobar.messages == ["Could not assign: unknown plate: 999"]
 
 
-def test_on_ok_given_a_finished_ride_keeps_the_miss_dialog_open() -> None:
+def test_on_edit_given_a_finished_ride_refuses_and_keeps_the_miss_open(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """Assigning is RUNNING/REOPENED only; a finished ride says so."""
     roster = _two_solo_roster()
     engine = _running_engine(roster)
     engine.record_miss(_dt(10, 2), reason="missed number")
     engine.finish()
-    view = _miss_view(engine, roster=roster, plate="34")
+    view = _miss_view(engine, roster=roster)
+    _stub_plate_dialog(monkeypatch, "34")
 
-    view._on_ok(_RecordingEvent())
+    view._on_edit(_RecordingEvent())
 
     assert (view.dialog.modal_ids, len(engine.pending_misses())) == ([], 1)
     assert view.crossing_detail_infobar.messages == [
         "Could not assign: cannot assign plate to miss from finished"
     ]
+
+
+def test_on_ok_given_a_pending_miss_closes_without_assigning() -> None:
+    """OK is a plain close in miss mode: only Edit commits."""
+    roster = _solo_roster()
+    engine = _running_engine(roster)
+    engine.record_miss(_dt(10, 2), reason="missed number")
+    view = _miss_view(engine, roster=roster)
+
+    view._on_ok(_RecordingEvent())
+
+    assert view.dialog.modal_ids == [wx.ID_OK]
+    assert (view.crossing_detail_infobar.messages, len(engine.pending_misses())) == ([], 1)
 
 
 # -------------------------------------- the feed-row resolution
@@ -2688,7 +3188,8 @@ class _RefusingResource:
         raise AssertionError("no dialog may be loaded")
 
 
-def _run_dialog_stub(_dialog: object, opener: object) -> int:  # noqa: ARG001 -- run_dialog's keyword
+# run_dialog's keyword
+def _run_dialog_stub(_dialog: object, opener: object) -> int:  # noqa: ARG001
     """Stub ``run_dialog``: return OK without showing a window."""
     return wx.ID_OK
 

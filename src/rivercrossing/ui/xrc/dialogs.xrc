@@ -844,9 +844,11 @@
        opens edit_crossing_dlg in edit mode and void_card_btn voids the
        crossing's own credited card (Phase 2: the corrections the
        retired Reassign Plate…/Void Card… menu rows used to reach). The
-       window has no wxID_CANCEL, so CrossingDetailView points Escape at
-       OK with SetEscapeId, since wx's own Escape handling only ever
-       looks for wxID_CANCEL. -->
+       stock sizer carries wxID_OK alone: a Cancel beside it would be a
+       second control that closes the window, which the dialog is
+       deliberately not offering, so the view points Escape at OK with
+       SetEscapeId, wx's own Escape handling (measured) only ever
+       looking for wxID_CANCEL. -->
   <object class="wxDialog" name="crossing_detail_dlg">
     <title>Crossing Detail</title>
     <style>wxDEFAULT_DIALOG_STYLE|wxRESIZE_BORDER</style>
@@ -1111,9 +1113,9 @@
             </object>
           </object>
 
-          <!-- Absorbs the row's slack so the stock OK button, the only
-               remaining item, stays right-aligned however wide the
-               dialog is (rider_issues_dlg's spacer pattern). -->
+          <!-- Absorbs the row's slack so the stock button sizer, the
+               last item, stays right-aligned however wide the dialog
+               is (rider_issues_dlg's spacer pattern). -->
           <object class="spacer">
             <option>1</option>
             <size>0,0</size>

@@ -19,30 +19,40 @@ caught too, so a ``RideRunningError``/``RideNotFoundError`` refusal
 never escapes silently. This module drives every guard headless
 with a notice-capturing frame stub and failing-store fakes -- no wx
 window is constructed.
+
+The E5.4.1 library Open joins them: it is the deferred
+``wx.CallAfter`` the library schedules inside its own modal unwind,
+so a refused console switch (``RideEngineError``/``StoreError``)
+would reach the crash hook as a false crash. Its guard wraps the
+switch in the ride-named message the resume flow's Continue uses,
+posts it, alerts through ``std_dialogs.show_error`` and clears the
+session marker.
 """
 
 from __future__ import annotations
 
 import json
 import sqlite3
+from dataclasses import replace
 from typing import TYPE_CHECKING, NamedTuple
 
 import pytest
 import wx.xrc
 
-from rivercrossing.ride import Event, RideStatus
+from rivercrossing.ride import Event, RideEngineError, RideStatus
 from rivercrossing.roster import EntryMode, PlateModel, Rider, Roster
 from rivercrossing.store import (
     RideNameMismatchError,
     RideNotFoundError,
     RideRunningError,
     Store,
+    StoreError,
 )
 from rivercrossing.ui import app as app_module
-from rivercrossing.ui import ids, std_dialogs
+from rivercrossing.ui import commands, ids, std_dialogs
 from rivercrossing.ui.presenters.console import ConsolePresenter
 from rivercrossing.ui.presenters.data_source import EngineDataSource, RideSummary
-from rivercrossing.ui.presenters.settings import AppSettings
+from rivercrossing.ui.presenters.settings import AppSettings, default_settings
 from rivercrossing.ui.presenters.simulator import SimOutcome, SimulatorPresenter
 
 if TYPE_CHECKING:
@@ -399,6 +409,153 @@ def test_stamp_closed_session_given_a_failed_session_close_posts_a_notice() -> N
     assert context.frame.notices == ["Could not close session: database is locked"]
 
 
+# --------------------- E5.4.1: the library Open's replay-failure guard
+#
+# ``_open_ride_from_library`` is the deferred ``wx.CallAfter`` the ride
+# library's Open schedules from inside the modal's own unwind, so an
+# unguarded raise from the console switch reaches the crash hook as a
+# false crash. The guard is the resume flow's Continue guard
+# (``_resume_continue``) on the library's own message: the ride-named
+# wrap, the status notice, the error alert and the cleared session
+# marker. These tests drive it with fake stores, a recording
+# ``_switch_console_to_ride`` double and a spy on
+# ``std_dialogs.show_error`` (T-10: wx and the alert seam are the GUI
+# I/O boundary) -- no window is constructed.
+
+
+class _SwitchConsoleToRide:
+    """A ``_switch_console_to_ride`` stand-in: records, may refuse."""
+
+    def __init__(self, failure: Exception | None = None) -> None:
+        """Start with an empty call log, refusing with *failure*."""
+        self.calls: list[tuple[object, int]] = []
+        self._failure = failure
+
+    def __call__(self, context: object, ride_id: int) -> None:
+        """Record the switch, then raise the pinned refusal (if any)."""
+        self.calls.append((context, ride_id))
+        if self._failure is not None:
+            raise self._failure
+
+
+class _OpenRideStore:
+    """A store double for the Open guard: the rows, the marker clear."""
+
+    def __init__(self, *rows: _RideRow) -> None:
+        """Hold the library rows the failure's name lookup scans."""
+        self._rows = list(rows)
+        self.clears = 0
+
+    def rides(self) -> list[_RideRow]:
+        """Return the library rows."""
+        return self._rows
+
+    def clear_active_ride(self) -> None:
+        """Record one session-marker clear."""
+        self.clears += 1
+
+
+def _open_ride_doubles(
+    monkeypatch: pytest.MonkeyPatch,
+    store: _OpenRideStore,
+    failure: Exception | None = None,
+) -> tuple[app_module._RouteContext, _SwitchConsoleToRide, list[tuple[object, str, str]]]:
+    """Patch the switch and alert seams; return the three doubles."""
+    switch = _SwitchConsoleToRide(failure)
+    shown: list[tuple[object, str, str]] = []
+    monkeypatch.setattr(app_module, "_switch_console_to_ride", switch)
+    monkeypatch.setattr(
+        std_dialogs,
+        "show_error",
+        lambda parent, title, message: shown.append((parent, title, message)),
+    )
+    return _context(store=store), switch, shown
+
+
+# Both arms of the guard's ``except (RideEngineError, StoreError)``.
+_OPEN_REFUSAL_FAILURES = (
+    RideEngineError("no crossing with entry_id 12 seq 1 for confirm_held"),
+    StoreError("ride 7 has an invalid tiebreak_order: 'nope'"),
+)
+
+
+@pytest.mark.parametrize(
+    "failure",
+    _OPEN_REFUSAL_FAILURES,
+    ids=["ride-engine-error", "store-error"],
+)
+def test_open_ride_from_library_given_a_refused_load_surfaces_it_and_clears_the_marker(
+    failure: Exception, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A refused Open names the ride, alerts, and clears the marker.
+
+    The message is wrapped at the catch site, so it names the ride as
+    well as the offending event the replay error already names; the
+    console stays where it was (the switch raised).
+    """
+    store = _OpenRideStore(_RideRow(ride_id=7, name="GORBA EPIC 2026"))
+    context, switch, shown = _open_ride_doubles(monkeypatch, store, failure)
+    expected = f"cannot open ride GORBA EPIC 2026: {failure}"
+
+    app_module._open_ride_from_library(context, store, 7)
+
+    assert switch.calls == [(context, 7)]
+    assert context.frame.notices == [f"Could not open ride: {expected}"]
+    assert shown == [(context.frame, "Cannot Open Ride", expected)]
+    assert store.clears == 1
+
+
+@pytest.mark.parametrize(
+    ("rows", "expected_name"),
+    [
+        ((), "The ride"),
+        ((_RideRow(ride_id=3, name="Another Ride"),), "The ride"),
+        (
+            (
+                _RideRow(ride_id=1, name="First Ride"),
+                _RideRow(ride_id=7, name="GORBA EPIC 2026"),
+                _RideRow(ride_id=9, name="Third Ride"),
+            ),
+            "GORBA EPIC 2026",
+        ),
+    ],
+    ids=["no-rows", "other-row-only", "match-among-many"],
+)
+def test_open_ride_from_library_given_a_refused_load_names_the_ride_from_the_library(
+    rows: tuple[_RideRow, ...], expected_name: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The wrap takes the ride's name from the library, else a stand-in.
+
+    The row can be gone from the library (deleted between the modal's
+    open and the deferred Open), so the name lookup has a fallback: the
+    message is never left naming an empty ride.
+    """
+    store = _OpenRideStore(*rows)
+    failure = RideEngineError("no crossing with entry_id 12 seq 1 for confirm_held")
+    context, _switch, shown = _open_ride_doubles(monkeypatch, store, failure)
+    expected = f"cannot open ride {expected_name}: {failure}"
+
+    app_module._open_ride_from_library(context, store, 7)
+
+    assert shown == [(context.frame, "Cannot Open Ride", expected)]
+    assert context.frame.notices == [f"Could not open ride: {expected}"]
+
+
+def test_open_ride_from_library_given_a_loadable_ride_switches_the_console_silently(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The happy path swaps the console: nothing is surfaced."""
+    store = _OpenRideStore(_RideRow(ride_id=7, name="GORBA EPIC 2026"))
+    context, switch, shown = _open_ride_doubles(monkeypatch, store)
+
+    app_module._open_ride_from_library(context, store, 7)
+
+    assert switch.calls == [(context, 7)]
+    assert context.frame.notices == []
+    assert shown == []
+    assert store.clears == 0
+
+
 # -------------------------------------- settings-write route guards
 
 
@@ -469,7 +626,8 @@ def test_apply_settings_live_given_an_unwritable_settings_file_posts_a_notice(
             self.checks: list[tuple[int, bool]] = []
             self.item = _StubMenuItem()
 
-        def Check(self, item_id: int, checked: bool) -> None:  # noqa: N802, FBT001 -- mirrors wx MenuBar.Check's positional bool
+        # mirrors wx MenuBar.Check's positional bool
+        def Check(self, item_id: int, checked: bool) -> None:  # noqa: N802, FBT001
             """Record one check call."""
             self.checks.append((item_id, checked))
 
@@ -523,6 +681,160 @@ def test_apply_settings_live_given_an_unwritable_settings_file_posts_a_notice(
 
     assert context.frame.notices == ["Could not save settings: disk full"]
     assert context.settings is new_settings
+
+
+class _ColumnMenuBar:
+    """A menubar double answering the R-37 / G6 check calls."""
+
+    def __init__(self) -> None:
+        """Start with no checked item."""
+        self.checked: dict[int, bool] = {}
+
+    def Check(self, real_id: int, checked: bool) -> None:  # noqa: N802, FBT001 -- wx API name
+        """Record one check call by the item's runtime id."""
+        self.checked[real_id] = checked
+
+    def FindItem(  # noqa: N802 -- wx API name
+        self, _real_id: int
+    ) -> tuple[None, None]:
+        """Answer the miss R-63's gate skips on."""
+        return (None, None)
+
+
+class _MenuNoticeFrame(_NoticeFrame):
+    """A notice frame answering ``GetMenuBar`` with a column bar."""
+
+    def __init__(self) -> None:
+        """Start with a recording bar."""
+        super().__init__()
+        self.menubar = _ColumnMenuBar()
+
+    def GetMenuBar(self) -> _ColumnMenuBar:  # noqa: N802 -- wx API name
+        """Return the recording bar."""
+        return self.menubar
+
+
+class _ColumnViewStub:
+    """A console-view double recording the R-37 column push."""
+
+    def __init__(self) -> None:
+        """Start with an empty push log."""
+        self.calls: list[tuple[bool, bool]] = []
+
+    def set_time_columns(self, *, show_total: bool, show_lap: bool) -> None:
+        """Record the two show flags."""
+        self.calls.append((show_total, show_lap))
+
+
+class _ViewEvent:
+    """A ``wx.CommandEvent`` double carrying only the fired id."""
+
+    def __init__(self, real_id: int) -> None:
+        """Store the runtime id the handler dispatches on."""
+        self._real_id = real_id
+
+    def GetId(self) -> int:  # noqa: N802 -- wx API name the SUT calls
+        """Return the fired id."""
+        return self._real_id
+
+
+def _refuse_save(_settings: object, _path: object) -> None:
+    """Stand in for an unwritable settings file (a full disk)."""
+    raise OSError("disk full")
+
+
+# T-13: the two time columns are independent booleans, so the apply's
+# decision table is all four combinations.
+COLUMN_FLAG_ROWS = ((False, False), (False, True), (True, False), (True, True))
+
+
+def test_toggle_time_column_given_a_refused_save_posts_a_notice_and_still_flips(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """R-37: a refused settings write never aborts the menu toggle.
+
+    ``_toggle_time_column`` runs inside a wx menu event, where an
+    unguarded raise is swallowed with zero signal (measured) -- so the
+    column would silently not toggle and nothing would be said.
+    """
+    frame = _MenuNoticeFrame()
+    context = _context(store=None, frame=frame)
+    context.settings_path = tmp_path / "settings.json"
+    monkeypatch.setattr(app_module.settings_store, "save_settings", _refuse_save)
+
+    app_module._toggle_time_column(context, key="show_total_times")
+
+    assert context.frame.notices == ["Could not save settings: disk full"]
+    assert context.settings.show_total_times is True
+    assert frame.menubar.checked == {wx.xrc.XRCID(ids.MI_SHOW_TOTAL_TIMES): True}
+
+
+def test_toggle_publish_option_given_a_refused_save_posts_a_notice_and_still_flips(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """G6: a refused publish write never aborts the menu toggle."""
+    frame = _MenuNoticeFrame()
+    context = _context(store=None, frame=frame)
+    context.settings_path = tmp_path / "settings.json"
+    monkeypatch.setattr(app_module.settings_store, "save_settings", _refuse_save)
+
+    app_module._toggle_publish_option(context, key="publish_laps_board")
+
+    assert context.frame.notices == ["Could not save settings: disk full"]
+    assert context.settings.publish_laps_board is False
+    assert frame.menubar.checked == {wx.xrc.XRCID(ids.MI_LAPS_BOARD): False}
+
+
+def test_handle_view_row_given_a_refused_zoom_save_posts_a_notice_and_still_applies(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """E8.1.4: a refused zoom write never aborts the radio's apply."""
+    frame = _MenuNoticeFrame()
+    context = _context(store=None, frame=frame)
+    context.settings_path = tmp_path / "settings.json"
+    route = commands.route_for_id(ids.MI_ZOOM_120)
+    applied: list[int] = []
+    monkeypatch.setattr(app_module.zoom, "set_percent", applied.append)
+    monkeypatch.setattr(app_module.settings_store, "save_settings", _refuse_save)
+
+    app_module._handle_view_row(context, route, _ViewEvent(wx.xrc.XRCID(ids.MI_ZOOM_120)))
+
+    assert context.frame.notices == ["Could not save settings: disk full"]
+    assert (applied, context.settings.zoom_percent) == ([120], 120)
+    assert frame.menubar.checked == {wx.xrc.XRCID(ids.MI_ZOOM_120): True}
+
+
+@pytest.mark.parametrize("flags", COLUMN_FLAG_ROWS)
+def test_apply_time_columns_given_a_console_view_pushes_the_live_settings(
+    flags: tuple[bool, bool],
+) -> None:
+    """R-37: the no-presenter paths push the columns onto the view.
+
+    The no-ride bootstrap and Ride ▸ Clear Ride… have no presenter to
+    call ``on_time_columns`` on, so the persisted choice reaches the
+    console through its own ``set_time_columns``. T-13: both flags are
+    independent, so all four combinations are driven.
+    """
+    show_total, show_lap = flags
+    view = _ColumnViewStub()
+    context = _context(store=None)
+    context.console_view = view
+    context.settings = replace(
+        default_settings(), show_total_times=show_total, show_lap_time=show_lap
+    )
+
+    app_module._apply_time_columns(context)
+
+    assert view.calls == [(show_total, show_lap)]
+
+
+def test_apply_time_columns_given_no_console_view_applies_nothing() -> None:
+    """T-3: a console-less context (route-level tests) applies none."""
+    context = _context(store=None)
+
+    app_module._apply_time_columns(context)
+
+    assert context.settings == default_settings()
 
 
 # ------------------------ W7: rider editor close persists its changes
@@ -581,7 +893,8 @@ class _FakeResource:
         """Store the window every LoadDialog call returns."""
         self.window = window
 
-    def LoadDialog(self, _parent: object, _name: object) -> _FakeWindow:  # noqa: N802 -- wx API name
+    # wx API name
+    def LoadDialog(self, _parent: object, _name: object) -> _FakeWindow:  # noqa: N802
         """Return the one fake window."""
         return self.window
 
@@ -655,7 +968,8 @@ def test_open_target_given_rider_editor_close_with_changes_saves_the_roster(
     monkeypatch.setattr(app_module, "_apply_dialog_defaults", lambda _w, _route: None)
     from rivercrossing.ui.views import dialogs  # noqa: PLC0415 -- the patched modal seam
 
-    monkeypatch.setattr(dialogs, "run_dialog", lambda _dialog, opener: 0)  # noqa: ARG005 -- the SUT calls opener=; the stub ignores it
+    # the SUT calls opener=; the stub ignores it
+    monkeypatch.setattr(dialogs, "run_dialog", lambda _dialog, opener: 0)  # noqa: ARG005
 
     app_module._open_target(context, app_module.commands.route_for_id("mi_rider_editor"))
 
@@ -677,7 +991,8 @@ def test_open_target_given_rider_editor_close_without_changes_skips_the_save(
     monkeypatch.setattr(app_module, "_apply_dialog_defaults", lambda _w, _route: None)
     from rivercrossing.ui.views import dialogs  # noqa: PLC0415 -- the patched modal seam
 
-    monkeypatch.setattr(dialogs, "run_dialog", lambda _dialog, opener: 0)  # noqa: ARG005 -- the SUT calls opener=; the stub ignores it
+    # the SUT calls opener=; the stub ignores it
+    monkeypatch.setattr(dialogs, "run_dialog", lambda _dialog, opener: 0)  # noqa: ARG005
 
     app_module._open_target(context, app_module.commands.route_for_id("mi_rider_editor"))
 
@@ -699,7 +1014,8 @@ def test_open_target_given_rider_editor_close_and_a_failed_save_posts_a_notice(
     monkeypatch.setattr(app_module, "_apply_dialog_defaults", lambda _w, _route: None)
     from rivercrossing.ui.views import dialogs  # noqa: PLC0415 -- the patched modal seam
 
-    monkeypatch.setattr(dialogs, "run_dialog", lambda _dialog, opener: 0)  # noqa: ARG005 -- the SUT calls opener=; the stub ignores it
+    # the SUT calls opener=; the stub ignores it
+    monkeypatch.setattr(dialogs, "run_dialog", lambda _dialog, opener: 0)  # noqa: ARG005
 
     app_module._open_target(context, app_module.commands.route_for_id("mi_rider_editor"))
 
@@ -722,13 +1038,15 @@ def test_open_rider_editor_for_close_with_changes_saves_the_roster(
     monkeypatch.setattr(
         rider_editor,
         "RiderEditor",
-        lambda _window, *, roster: changed_view,  # noqa: ARG005 -- the SUT calls roster=; the stub ignores it
+        # the SUT calls roster=; the stub ignores it
+        lambda _window, *, roster: changed_view,  # noqa: ARG005
     )
     monkeypatch.setattr(app_module.zoom, "apply_to", lambda _window: None)
     monkeypatch.setattr(app_module, "_apply_dialog_defaults", lambda _w, _route: None)
     from rivercrossing.ui.views import dialogs  # noqa: PLC0415 -- the patched modal seam
 
-    monkeypatch.setattr(dialogs, "run_dialog", lambda _dialog, opener: 0)  # noqa: ARG005 -- the SUT calls opener=; the stub ignores it
+    # the SUT calls opener=; the stub ignores it
+    monkeypatch.setattr(dialogs, "run_dialog", lambda _dialog, opener: 0)  # noqa: ARG005
 
     app_module._open_rider_editor_for(context, "77")
 
@@ -748,7 +1066,8 @@ def test_open_rider_editor_for_close_without_changes_skips_the_save(
     monkeypatch.setattr(
         rider_editor,
         "RiderEditor",
-        lambda _window, *, roster: _EditorViewStub(  # noqa: ARG005 -- the SUT calls roster=; the stub ignores it
+        # the SUT calls roster=; the stub ignores it
+        lambda _window, *, roster: _EditorViewStub(  # noqa: ARG005
             roster_changed=False
         ),
     )
@@ -756,7 +1075,8 @@ def test_open_rider_editor_for_close_without_changes_skips_the_save(
     monkeypatch.setattr(app_module, "_apply_dialog_defaults", lambda _w, _route: None)
     from rivercrossing.ui.views import dialogs  # noqa: PLC0415 -- the patched modal seam
 
-    monkeypatch.setattr(dialogs, "run_dialog", lambda _dialog, opener: 0)  # noqa: ARG005 -- the SUT calls opener=; the stub ignores it
+    # the SUT calls opener=; the stub ignores it
+    monkeypatch.setattr(dialogs, "run_dialog", lambda _dialog, opener: 0)  # noqa: ARG005
 
     app_module._open_rider_editor_for(context, "77")
 
@@ -814,7 +1134,8 @@ def test_open_target_given_team_editor_close_with_changes_saves_the_roster(
     monkeypatch.setattr(app_module, "_apply_dialog_defaults", lambda _w, _route: None)
     from rivercrossing.ui.views import dialogs  # noqa: PLC0415 -- the patched modal seam
 
-    monkeypatch.setattr(dialogs, "run_dialog", lambda _dialog, opener: 0)  # noqa: ARG005 -- the SUT calls opener=; the stub ignores it
+    # the SUT calls opener=; the stub ignores it
+    monkeypatch.setattr(dialogs, "run_dialog", lambda _dialog, opener: 0)  # noqa: ARG005
 
     app_module._open_target(context, app_module.commands.route_for_id("mi_team_editor"))
 
@@ -836,7 +1157,8 @@ def test_open_target_given_team_editor_close_without_changes_skips_the_save(
     monkeypatch.setattr(app_module, "_apply_dialog_defaults", lambda _w, _route: None)
     from rivercrossing.ui.views import dialogs  # noqa: PLC0415 -- the patched modal seam
 
-    monkeypatch.setattr(dialogs, "run_dialog", lambda _dialog, opener: 0)  # noqa: ARG005 -- the SUT calls opener=; the stub ignores it
+    # the SUT calls opener=; the stub ignores it
+    monkeypatch.setattr(dialogs, "run_dialog", lambda _dialog, opener: 0)  # noqa: ARG005
 
     app_module._open_target(context, app_module.commands.route_for_id("mi_team_editor"))
 
@@ -981,7 +1303,8 @@ def test_open_target_given_simulation_close_with_changes_saves_the_roster(
     monkeypatch.setattr(app_module, "_apply_dialog_defaults", lambda _w, _route: None)
     from rivercrossing.ui.views import dialogs  # noqa: PLC0415 -- the patched modal seam
 
-    monkeypatch.setattr(dialogs, "run_dialog", lambda _dialog, opener: 0)  # noqa: ARG005 -- the SUT calls opener=; the stub ignores it
+    # the SUT calls opener=; the stub ignores it
+    monkeypatch.setattr(dialogs, "run_dialog", lambda _dialog, opener: 0)  # noqa: ARG005
 
     app_module._open_target(context, app_module.commands.route_for_id("mi_simulation"))
 
@@ -998,7 +1321,10 @@ def test_open_target_given_simulation_close_with_changes_saves_the_roster(
 # disabled after the modal closes. The tests below stage the app's own
 # flow headless (real store, store-replayed engine with the store's
 # append as its event sink, a real console presenter) and drive the
-# close-persist the route runs once the modal has ended.
+# close-persist the route runs once the modal has ended. The console
+# half is the same defect: no ride-state change fired either, so the
+# console kept its pre-GO render (an unlocked entry row on a stopped
+# ride) until a tick; the close refreshes it beside the menu.
 
 
 class _FakeMenuItem:
@@ -1048,15 +1374,53 @@ class _MenuFrame(_NoticeFrame):
 
 
 class _ConsoleViewStub:
-    """A console-view stub: only the presenter's constructor render."""
+    """A console-view stub: the renders the presenter drives.
+
+    The constructor's own R-11 teams-chip push, and -- since the
+    simulator's close-persist now re-renders the console beside the
+    menu re-apply (plan §2) -- every channel
+    :meth:`ConsolePresenter.refresh_state` pushes. The ride state and
+    the entry lock are recorded, because they are what this module's
+    post-GO test reads; the rest are inert.
+    """
 
     def __init__(self) -> None:
-        """Start with no chip render recorded."""
+        """Start with no chip render and no state render recorded."""
         self.team_ui_visible: bool | None = None
+        self.last_state: RideStatus | None = None
+        self.last_stopped: bool | None = None
+        self.entry_locked: bool | None = None
 
     def set_team_ui_visible(self, *, visible: bool) -> None:
         """Record the R-11 teams-chip visibility push."""
         self.team_ui_visible = visible
+
+    def set_state(self, status: RideStatus, *, stopped: bool = False) -> None:
+        """Record the ride state and the stop guard."""
+        self.last_state = status
+        self.last_stopped = stopped
+
+    def set_entry_locked(self, *, locked: bool) -> None:
+        """Record the entry-row lock verdict."""
+        self.entry_locked = locked
+
+    def show_feed(self, _rows: list[object]) -> None:
+        """No-op: the post-GO test reads the state render alone."""
+
+    def show_flagged(self, _rows: list[object]) -> None:
+        """No-op: the review tab is not this module's concern."""
+
+    def show_current_lap(self, _lap: int) -> None:
+        """No-op: the header reading is not this module's concern."""
+
+    def show_counters(self, _counters: object) -> None:
+        """No-op: the counter chips are not this module's concern."""
+
+    def show_clock(self, _elapsed: str, _remaining: str) -> None:
+        """No-op: the clock labels are not this module's concern."""
+
+    def set_clock_fractions(self, *, elapsed_frac: float, remaining_frac: float) -> None:
+        """No-op: the gauge dials are not this module's concern."""
 
 
 # The staged GO: four generated riders on two teams, replayed for two
@@ -1156,6 +1520,30 @@ def test_persist_simulator_changes_after_a_simulated_go_keeps_the_audit_trail(
         *["record_crossing"] * _SIM_CROSSINGS,
         "start",
     ]
+
+
+def test_persist_simulator_changes_after_a_simulated_go_renders_the_console(
+    simulated_go: _SimulatedGo,
+) -> None:
+    """Plan §2: the close re-renders the console the GO left behind.
+
+    GO drives the engine directly, so no console ride-state change
+    fires: the main screen would keep its pre-GO render -- an unlocked
+    entry row on a stopped ride, a stale clock -- until the next tick.
+    The close-persist refreshes it beside the menu re-apply, so the
+    engine's own verdicts (RUNNING, stopped, entry locked) are what
+    the console shows the moment the modal is gone.
+    """
+    context, _store, _ride_id, _menubar = simulated_go
+    view = context.presenter.view  # type: ignore[union-attr] -- the fixture threads one
+
+    app_module._persist_simulator_changes(context, _SimulatorViewStub(roster_changed=True))
+
+    assert (view.last_state, view.last_stopped, view.entry_locked) == (
+        RideStatus.RUNNING,
+        True,
+        True,
+    )
 
 
 def test_persist_simulator_changes_without_a_presenter_leaves_the_menu_untouched(

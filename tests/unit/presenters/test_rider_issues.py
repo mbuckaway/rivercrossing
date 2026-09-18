@@ -191,7 +191,8 @@ class _ExtractRefusingRoster(Roster):
     real base roster's -- so the arm's refusal shape can be pinned.
     """
 
-    def extract_rider_to_solo(self, rider: Rider) -> Entry:  # noqa: ARG002 -- override signature; the refusal never reads the rider
+    # override signature; the refusal never reads the rider
+    def extract_rider_to_solo(self, rider: Rider) -> Entry:  # noqa: ARG002
         """Refuse the extraction write: raise a RosterError instead."""
         raise RosterError("extract refused")
 

@@ -55,7 +55,9 @@ class ResultsPresenter:
     render.
     """
 
-    def __init__(  # noqa: PLR0913 -- (view, data_source) + the tie-break order and export-watermark seams
+    # (view, data_source) + the tie-break order and export-watermark
+    # seams
+    def __init__(  # noqa: PLR0913
         self,
         view: ResultsView,
         data_source: DataSource,

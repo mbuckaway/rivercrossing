@@ -23,7 +23,8 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 _GORBA_EVENT_DAY = date(2026, 9, 20)
-_GORBA_PLANNED_START = datetime(2026, 9, 20, 10, 0)  # noqa: DTZ001 -- naive local, Store's own contract
+# naive local, Store's own contract
+_GORBA_PLANNED_START = datetime(2026, 9, 20, 10, 0)  # noqa: DTZ001
 
 
 def gorba_config(*, min_lap_s: int = 1080, hold_short_laps: bool = True) -> RideConfig:

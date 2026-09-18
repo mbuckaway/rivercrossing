@@ -29,7 +29,6 @@ import base64
 import json
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
-from functools import lru_cache
 from pathlib import Path
 from typing import TYPE_CHECKING, Protocol, cast
 
@@ -436,9 +435,14 @@ def _finalize_display(value: object) -> object:
     return value
 
 
-@lru_cache(maxsize=2)
 def _asset_text(name: str) -> str:
-    """Read one vendored asset (``compiled_css`` or ``fonts_css``)."""
+    """Read one vendored asset (``compiled_css`` or ``fonts_css``).
+
+    Read uncached, once per render: the two assets are a few hundred
+    kilobytes off a local disk and each render writes a whole page, so
+    the read is not a measured hot path. Reinstate a cache only with a
+    measurement recorded beside it.
+    """
     return (_TEMPLATES_DIR / name).read_text(encoding="utf-8")
 
 
@@ -771,7 +775,8 @@ def sections(payload: RacePayload, placed: Sequence[Placed]) -> Sections:
     return replace(plan, laps_teams=laps_teams, laps_solo=laps_solo)
 
 
-def build_payload(  # noqa: PLR0913, PLR0917 -- (ride, placed, opts, generated, team_logos): D15's mapping inputs
+# (ride, placed, opts, generated, team_logos): D15's mapping inputs
+def build_payload(  # noqa: PLR0913, PLR0917
     ride: _RideLike,
     placed: Sequence[Placed],
     opts: ExportOptions,
@@ -828,7 +833,9 @@ def _logo_data_uri(path: Path | str) -> str:
     return f"data:image/png;base64,{payload}"
 
 
-def render(  # noqa: PLR0913 -- D15's frozen signature (ride, placed, opts, logo_src, generated, team_logos)
+# D15's frozen signature (ride, placed, opts, logo_src, generated,
+# team_logos)
+def render(  # noqa: PLR0913
     ride: _RideLike,
     placed: Sequence[Placed],
     opts: ExportOptions,
@@ -908,7 +915,9 @@ def _poster_sections(payload: RacePayload) -> tuple[tuple[str, tuple[ResultRow, 
     )
 
 
-def render_poster(  # noqa: PLR0913 -- (ride, placed, opts): the frozen signature plus the logo/generated seams
+# (ride, placed, opts): the frozen signature plus the logo/generated
+# seams
+def render_poster(  # noqa: PLR0913
     ride: _RideLike,
     placed: Sequence[Placed],
     opts: ExportOptions,

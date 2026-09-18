@@ -203,6 +203,9 @@ from rivercrossing.cards import Shoe
 from rivercrossing.ride import (
     JOKERS_MODE_TOTAL,
     REPLAY_ACTIONS,
+    TIEBREAK_HIGH_CARD,
+    TIEBREAK_LAPS,
+    TIEBREAK_TOTAL_TIME,
     Event,
     RideConfig,
     RideEngine,
@@ -405,7 +408,49 @@ def _from_epoch(epoch: int) -> datetime:
     survives; its tzinfo does not -- the epoch column stores only an
     instant, and RideConfig's own convention is naive local.
     """
-    return datetime.fromtimestamp(epoch)  # noqa: DTZ006 -- naive local by design, _to_epoch's inverse
+    # naive local by design, _to_epoch's inverse
+    return datetime.fromtimestamp(epoch)  # noqa: DTZ006
+
+
+# The three TIEBREAK_* spellings a stored order may name (ride.py's own
+# vocabulary), and the number of steps the column must hold.
+_TIEBREAK_SPELLINGS: frozenset[str] = frozenset(
+    {TIEBREAK_HIGH_CARD, TIEBREAK_LAPS, TIEBREAK_TOTAL_TIME}
+)
+_TIEBREAK_ORDER_LENGTH = 3
+
+
+def _ride_tiebreak_order(ride_id: int, stored: str) -> tuple[str, str, str]:
+    """Rebuild one ride's tiebreak order from its stored JSON column.
+
+    ``create_ride`` writes the config's order as JSON text of exactly
+    three known :data:`~rivercrossing.ride.TIEBREAK_*` spellings; a
+    hand-edited or truncated column is refused here rather than
+    silently honoured (a short or typo'd order would change every
+    tie-break the ride is scored with).
+
+    Args:
+        ride_id: The ride the column belongs to (for the message).
+        stored: The ``ride.tiebreak_order`` column value.
+
+    Returns:
+        The three-step order.
+
+    Raises:
+        StoreError: *stored* is not JSON text holding exactly three
+            known tie-break spellings.
+    """
+    try:
+        parsed = json.loads(stored)
+    except ValueError as exc:
+        raise StoreError(f"ride {ride_id} has an undecodable tiebreak_order: {stored!r}") from exc
+    if (
+        not isinstance(parsed, list)
+        or len(parsed) != _TIEBREAK_ORDER_LENGTH
+        or any(step not in _TIEBREAK_SPELLINGS for step in parsed)
+    ):
+        raise StoreError(f"ride {ride_id} has an invalid tiebreak_order: {stored!r}")
+    return (parsed[0], parsed[1], parsed[2])
 
 
 # The payload keys whose ISO-8601 values date-stamp an event for the
@@ -447,7 +492,35 @@ def _audit_when(epoch: int) -> str:
     ``data_source._feed_time`` applies to the engine-derived
     projection.
     """
-    return datetime.fromtimestamp(epoch).strftime("%H:%M:%S")  # noqa: DTZ006 -- local display, _to_epoch's inverse
+    # local display, _to_epoch's inverse
+    return datetime.fromtimestamp(epoch).strftime("%H:%M:%S")  # noqa: DTZ006
+
+
+def _audit_entry(action: str, payload: Mapping[str, object]) -> str:
+    """Return one stored audit row's Entry cell (E7.3.1).
+
+    A ``dnf`` row renders the display the engine recorded with the
+    mark -- the target's "plate · name"
+    (``data_source._audit_entry``'s live-ride twin) -- so the viewer
+    names the rider, never the internal entry id; a row stored before
+    the display was carried keeps the ``entry_id``/``plate`` fallback.
+    Every other action projects the payload's ``entry_id``, falling
+    back to ``plate``, then (for a roster plate change, whose payload
+    carries neither) ``old_plate``, ``new_plate`` and ``display_name``,
+    then ``""``.
+    """
+    if action == "dnf":
+        carried = payload.get("display")
+        if carried:
+            return str(carried)
+    return str(
+        payload.get("entry_id")
+        or payload.get("plate")
+        or payload.get("old_plate")
+        or payload.get("new_plate")
+        or payload.get("display_name")
+        or ""
+    )
 
 
 # The lifecycle actions that move the ride row's status column in the
@@ -1289,6 +1362,12 @@ class Store:
 
         Raises:
             RideNotFoundError: No ``ride`` row has *ride_id*.
+            StoreError: A stored column cannot be rebuilt -- an invalid
+                ``tiebreak_order`` (not three known ``TIEBREAK_*``
+                spellings), or an ``audit`` row whose payload is not a
+                replayable event (undecodable JSON, a missing key, or
+                an unparseable value). The message names the ride and,
+                for replay, the audit row.
         """
         row = self._conn.execute("SELECT * FROM ride WHERE id = ?", (ride_id,)).fetchone()
         if row is None:
@@ -1310,7 +1389,7 @@ class Store:
             jokers_per_deck=row["jokers_per_deck"],
             jokers_mode=row["jokers_mode"],
             max_cards=row["max_cards"],
-            tiebreak_order=cast("tuple[str, str, str]", tuple(json.loads(row["tiebreak_order"]))),
+            tiebreak_order=_ride_tiebreak_order(ride_id, row["tiebreak_order"]),
             logo_path=_materialize_ride_logo(ride_id, row["logo_png"]),
             hold_short_laps=bool(row["hold_short_laps"]),
         )
@@ -1326,14 +1405,25 @@ class Store:
             roster=roster if roster is not None else self._load_roster(ride_id),
         )
         events = self._conn.execute(
-            "SELECT action, payload_json FROM audit WHERE ride_id = ? ORDER BY id",
+            "SELECT id, action, payload_json FROM audit WHERE ride_id = ? ORDER BY id",
             (ride_id,),
         ).fetchall()
         for stored in events:
             action = stored["action"]
             if action not in REPLAY_ACTIONS:
                 continue
-            engine.apply(Event(action=action, payload=json.loads(stored["payload_json"])))
+            # A stored payload is JSON text an older or hand-edited file
+            # may hold in any shape; every shape a replay can trip on is
+            # translated, so the resume handler (which catches
+            # StoreError, never a bare JSONDecodeError/KeyError/
+            # ValueError) reports which row is unusable instead of
+            # crashing the launch.
+            try:
+                engine.apply(Event(action=action, payload=json.loads(stored["payload_json"])))
+            except (json.JSONDecodeError, KeyError, TypeError, ValueError) as exc:
+                raise StoreError(
+                    f"cannot replay audit row {stored['id']} for ride {ride_id}: {exc}"
+                ) from exc
         return engine
 
     # ------------------------- E7.3.1 audit viewer read accessor
@@ -1344,16 +1434,17 @@ class Store:
         The audit viewer's read accessor: every ``audit`` row the
         ride recorded, projected to the display
         :class:`~rivercrossing.ui.presenters.data_source.AuditRow`
-        shape the viewer's list draws -- ``entry`` = the payload's
+        shape the viewer's list draws -- ``entry`` = the display a
+        ``dnf`` row carried with its mark, else the payload's
         ``entry_id``, falling back to ``plate``, then (for a roster
         plate change, whose payload carries neither) ``old_plate``,
-        ``new_plate`` and ``display_name``, then ``""``, ``reason`` =
-        the payload's ``reason``, and ``when`` rendered
-        from the stored ``at`` epoch as local ``HH:MM:SS`` (spec §13:
-        stored UTC, displayed local). Newest first by insert id -- the
-        same order the viewer draws -- never by ``at``, which is not
-        monotonic in append order (module docstring's E5.1.2
-        resolution).
+        ``new_plate`` and ``display_name``, then ``""``
+        (:func:`_audit_entry`), ``reason`` = the payload's ``reason``,
+        and ``when`` rendered from the stored ``at`` epoch as local
+        ``HH:MM:SS`` (spec §13: stored UTC, displayed local). Newest
+        first by insert id -- the same order the viewer draws -- never
+        by ``at``, which is not monotonic in append order (module
+        docstring's E5.1.2 resolution).
 
         Args:
             ride_id: The ride whose audit trail to read.
@@ -1379,14 +1470,7 @@ class Store:
                 AuditRow(
                     when=_audit_when(audit_row["at"]),
                     action=audit_row["action"],
-                    entry=str(
-                        payload.get("entry_id")
-                        or payload.get("plate")
-                        or payload.get("old_plate")
-                        or payload.get("new_plate")
-                        or payload.get("display_name")
-                        or ""
-                    ),
+                    entry=_audit_entry(audit_row["action"], payload),
                     reason=str(payload.get("reason") or ""),
                 )
             )
@@ -1455,45 +1539,60 @@ class Store:
         with self._conn:
             cursor = self._conn.execute(_INSERT_RIDE_SQL, params)
             new_id = _require_rowid(cursor)
-            for source_entry in self._conn.execute(
-                "SELECT id, plate, display_name, type, team_size, status, notes,"
-                " logo_card FROM entry WHERE ride_id = ? ORDER BY id",
-                (ride_id,),
+            self._copy_roster_rows(new_id, ride_id)
+        return new_id
+
+    def _copy_roster_rows(self, new_id: int, ride_id: int) -> None:
+        """Copy *ride_id*'s entry and rider rows onto ride *new_id*.
+
+        Copies in creation order -- entries by insert id, each entry's
+        riders by ``sort_order`` then id -- so the copy's roster reads
+        exactly as the source's did. Every rider lands on the entry row
+        this method just inserted, never on the source's. Runs inside
+        the caller's transaction: a failure rolls the whole copy back.
+
+        Args:
+            new_id: The ride the rows are copied onto.
+            ride_id: The ride being copied.
+        """
+        for source_entry in self._conn.execute(
+            "SELECT id, plate, display_name, type, team_size, status, notes,"
+            " logo_card FROM entry WHERE ride_id = ? ORDER BY id",
+            (ride_id,),
+        ).fetchall():
+            entry_cursor = self._conn.execute(
+                "INSERT INTO entry"
+                " (ride_id, plate, display_name, type, team_size, status, dnf_at, notes,"
+                " logo_card)"
+                " VALUES (?, ?, ?, ?, ?, ?, NULL, ?, ?)",
+                (
+                    new_id,
+                    source_entry["plate"],
+                    source_entry["display_name"],
+                    source_entry["type"],
+                    source_entry["team_size"],
+                    source_entry["status"],
+                    source_entry["notes"],
+                    source_entry["logo_card"],
+                ),
+            )
+            new_entry_id = _require_rowid(entry_cursor)
+            for rider in self._conn.execute(
+                "SELECT first_name, last_name, plate, sex, sort_order FROM rider"
+                " WHERE entry_id = ? ORDER BY sort_order, id",
+                (source_entry["id"],),
             ).fetchall():
-                entry_cursor = self._conn.execute(
-                    "INSERT INTO entry"
-                    " (ride_id, plate, display_name, type, team_size, status, dnf_at, notes,"
-                    " logo_card)"
-                    " VALUES (?, ?, ?, ?, ?, ?, NULL, ?, ?)",
+                self._conn.execute(
+                    "INSERT INTO rider"
+                    " (entry_id, first_name, last_name, plate, sex, sort_order,"
+                    " emergency_contact, waiver_signed, ccn_reg_id)"
+                    " VALUES (?, ?, ?, ?, ?, ?, NULL, NULL, NULL)",
                     (
-                        new_id,
-                        source_entry["plate"],
-                        source_entry["display_name"],
-                        source_entry["type"],
-                        source_entry["team_size"],
-                        source_entry["status"],
-                        source_entry["notes"],
-                        source_entry["logo_card"],
+                        new_entry_id,
+                        rider["first_name"],
+                        rider["last_name"],
+                        rider["plate"],
+                        rider["sex"],
+                        rider["sort_order"],
                     ),
                 )
-                new_entry_id = _require_rowid(entry_cursor)
-                for rider in self._conn.execute(
-                    "SELECT first_name, last_name, plate, sex, sort_order FROM rider"
-                    " WHERE entry_id = ? ORDER BY sort_order, id",
-                    (source_entry["id"],),
-                ).fetchall():
-                    self._conn.execute(
-                        "INSERT INTO rider"
-                        " (entry_id, first_name, last_name, plate, sex, sort_order,"
-                        " emergency_contact, waiver_signed, ccn_reg_id)"
-                        " VALUES (?, ?, ?, ?, ?, ?, NULL, NULL, NULL)",
-                        (
-                            new_entry_id,
-                            rider["first_name"],
-                            rider["last_name"],
-                            rider["plate"],
-                            rider["sex"],
-                            rider["sort_order"],
-                        ),
-                    )
-        return new_id

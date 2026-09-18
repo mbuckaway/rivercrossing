@@ -166,7 +166,9 @@ class RidersView(Protocol):
         """Disable delete_btn once the entry has data (R-15)."""
         ...
 
-    def confirm(  # noqa: PLR0913 -- (title, message) + 2 button labels, mirroring std_dialogs.show_confirm
+    # (title, message) + 2 button labels, mirroring
+    # std_dialogs.show_confirm
+    def confirm(  # noqa: PLR0913
         self,
         title: str,
         message: str,
@@ -231,11 +233,6 @@ def _team_cell(entry: Entry) -> str:
     module reaches the presenter (R-71).
     """
     return entry.display_name if entry.type is EntryType.TEAM else SOLO_TEAM_TEXT
-
-
-def _rider_rows(roster: Roster) -> list[RiderRow]:
-    """Map every roster rider onto one riders_list row (R-20)."""
-    return _pair_rows(roster, _rider_pairs(roster))
 
 
 def _pair_row(roster: Roster, entry: Entry, rider: Rider) -> RiderRow:

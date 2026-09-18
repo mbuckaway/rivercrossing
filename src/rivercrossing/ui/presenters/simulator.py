@@ -485,7 +485,8 @@ class SimulatorPresenter:
             return "; ".join(problems)
         return None
 
-    def run_simulation(  # noqa: PLR0913 -- (laps, interval) + G9's three counts + the two view hooks
+    # (laps, interval) + G9's three counts + the two view hooks
+    def run_simulation(  # noqa: PLR0913
         self,
         laps: int,
         interval_minutes: int,

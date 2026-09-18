@@ -301,7 +301,8 @@ def test_wire_flagged_open_seam_routes_the_flagged_row_to_the_review_handler(
     context = _RouteStub(console_view=console)
 
     app_module._wire_flagged_open_seam(context)  # type: ignore[arg-type]
-    console._on_open_flagged("77", "held", False)  # type: ignore[attr-defined]  # noqa: FBT003 -- bit
+    # bit
+    console._on_open_flagged("77", "held", False)  # type: ignore[attr-defined]  # noqa: FBT003
 
     assert opened == [(context, "77", "held", False)]
 
@@ -334,6 +335,15 @@ def _running_engine(*, hold_short_laps: bool, min_lap_s: int = 60) -> RideEngine
     config = gorba_config(min_lap_s=min_lap_s, hold_short_laps=hold_short_laps)
     roster = Roster(entry_mode=EntryMode.MIXED, plate_model=PlateModel.RIDER_POOLED)
     roster.create_solo_entry(first_name="Rider 12", last_name="", plate="12")
+    shoe = Shoe(decks=config.deck_count, jokers_per_deck=config.jokers_per_deck, seed=20260920)
+    engine = RideEngine(config=config, shoe=shoe, clock=lambda: _dt(10, 0), roster=roster)
+    engine.start()
+    return engine
+
+
+def _running_engine_over(roster: Roster) -> RideEngine:
+    """Build a RUNNING engine over *roster* (the pooled teams' own)."""
+    config = gorba_config(min_lap_s=60)
     shoe = Shoe(decks=config.deck_count, jokers_per_deck=config.jokers_per_deck, seed=20260920)
     engine = RideEngine(config=config, shoe=shoe, clock=lambda: _dt(10, 0), roster=roster)
     engine.start()
@@ -403,7 +413,8 @@ def test_open_flagged_review_for_given_a_held_row_routes_to_the_held_review(
         lambda _context, _engine, crossing: routed.append(crossing),
     )
 
-    app_module._open_flagged_review_for(context, "12", "held", False)  # noqa: FBT003 -- the row's bit
+    # the row's bit
+    app_module._open_flagged_review_for(context, "12", "held", False)  # noqa: FBT003
 
     assert routed == [engine.crossings[-1]]
 
@@ -448,7 +459,8 @@ def test_open_flagged_review_for_given_a_voided_row_routes_to_return_to_held(
         lambda _context, _engine, crossing: routed.append(crossing),
     )
 
-    app_module._open_flagged_review_for(context, "12", "voided", False)  # noqa: FBT003 -- the row's bit
+    # the row's bit
+    app_module._open_flagged_review_for(context, "12", "voided", False)  # noqa: FBT003
 
     assert routed == [voided]
 
@@ -510,7 +522,8 @@ def test_open_flagged_review_for_given_a_duplicate_held_row_opens_the_detail_fir
     )
     monkeypatch.setattr(app_module, "_review_held_crossing", lambda *_args: routed.append("held"))
 
-    app_module._open_flagged_review_for(context, "12", "held", True)  # noqa: FBT003 -- the row's bit
+    # the row's bit
+    app_module._open_flagged_review_for(context, "12", "held", True)  # noqa: FBT003
 
     assert (detailed, routed) == ([engine.crossings[-1]], [])
 
@@ -533,7 +546,8 @@ def test_open_flagged_review_for_given_an_unresolvable_plate_posts_a_notice(
         app_module, "_show_crossing_detail_dialog", lambda *_args: routed.append("detail")
     )
 
-    app_module._open_flagged_review_for(context, "99", card_status, False)  # noqa: FBT003 -- row bit
+    # row bit
+    app_module._open_flagged_review_for(context, "99", card_status, False)  # noqa: FBT003
 
     assert (notices, routed) == (["Review — no crossing found for plate 99"], [])
 
@@ -545,7 +559,8 @@ def test_open_flagged_review_for_given_a_credited_row_asked_as_held_posts_a_noti
     notices: list[str] = []
     context = _review_context(engine, frame=_NoticeFrame(notices))
 
-    app_module._open_flagged_review_for(context, "12", "held", False)  # noqa: FBT003 -- the row's bit
+    # the row's bit
+    app_module._open_flagged_review_for(context, "12", "held", False)  # noqa: FBT003
 
     assert notices == ["Review — no crossing found for plate 12"]
 
@@ -572,7 +587,8 @@ def test_open_flagged_review_for_given_no_presenter_posts_nothing() -> None:
     notices: list[str] = []
     context = _RouteStub(frame=_NoticeFrame(notices), presenter=None)
 
-    app_module._open_flagged_review_for(context, "12", "held", False)  # noqa: FBT003 -- the row's bit
+    # the row's bit
+    app_module._open_flagged_review_for(context, "12", "held", False)  # noqa: FBT003
 
     assert notices == []
 
@@ -832,6 +848,13 @@ def test_app_given_no_finished_banner_has_no_wiring_seam() -> None:
 # so it is swapped for a recorder here -- the same seam
 # test_app_ride_menu.py's ``_patch_ride_setup`` uses for the setup
 # dialog.
+#
+# Phase 5 adds the confirm half: a ``DnfMark`` is named back through the
+# shared ``_dnf_subject`` line (plate · name (team|solo)) in the native
+# ``std_dialogs.show_prompt`` before anything is marked, and only a
+# confirmed OK reaches ``engine.mark_dnf``. The prompt is the second
+# wx boundary this suite swaps, so the route's decisions -- refuse,
+# cancel, confirm -- are drivable headless.
 
 
 class _DnfFrame:
@@ -889,13 +912,97 @@ def test_handle_mark_dnf_route_opens_the_dialog_unprefilled(
     engine = _running_engine(hold_short_laps=False)
     context = _DnfContext(engine)
     captured = _patch_run_dnf(monkeypatch, DnfMark(plate="12", reason="mechanical failure"))
+    _stub_show(monkeypatch, "show_prompt", wx.ID_OK)
 
     app_module._handle_mark_dnf_route(context)  # type: ignore[arg-type]
 
     assert (captured["plate"], captured["entry"]) == ("", "")
+    assert captured["roster"] is engine._roster
     assert [event.action for event in engine.events[-1:]] == ["dnf"]
     assert context.frame.notices == ["12 · Rider 12 (solo) — DNF"]
     assert context.presenter.ticks == 1
+
+
+# Phase 5's confirm: the resolved target is named back in a native
+# prompt before the mark lands, so a valid-but-wrong plate is caught
+# before the audit trail records it (UX-DESKTOP §4).
+
+_DNF_CONFIRM_QUESTION = "Mark this target DNF and exclude it from the results?"
+
+
+def test_handle_mark_dnf_route_given_a_confirmed_prompt_names_the_target_and_marks(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The prompt names plate, rider and "solo"; OK marks the rider."""
+    engine = _running_engine(hold_short_laps=False)
+    context = _DnfContext(engine)
+    _patch_run_dnf(monkeypatch, DnfMark(plate="12", reason="mechanical failure"))
+    calls = _stub_show(monkeypatch, "show_prompt", wx.ID_OK)
+
+    app_module._handle_mark_dnf_route(context)  # type: ignore[arg-type]
+
+    assert calls[0] == (
+        (
+            context.frame,
+            "Mark DNF",
+            f"12 · Rider 12 (solo)\n\n{_DNF_CONFIRM_QUESTION}",
+            "Mark DNF",
+            "Cancel",
+        ),
+        {},
+    )
+    assert context.frame.notices == ["12 · Rider 12 (solo) — DNF"]
+    assert context.presenter.ticks == 1
+
+
+def test_handle_mark_dnf_route_given_a_pooled_rider_names_the_rider_and_team(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A pooled team member's prompt names the rider beside the team."""
+    engine = _running_engine_over(_pooled_team_roster())
+    context = _DnfContext(engine)
+    _patch_run_dnf(monkeypatch, DnfMark(plate="45", reason="mechanical failure"))
+    calls = _stub_show(monkeypatch, "show_prompt", wx.ID_OK)
+
+    app_module._handle_mark_dnf_route(context)  # type: ignore[arg-type]
+
+    assert calls[0][0][2] == f"45 · Alex Smith (Dirt Dynamos)\n\n{_DNF_CONFIRM_QUESTION}"
+    assert context.frame.notices == ["45 · Alex Smith (Dirt Dynamos) — DNF"]
+
+
+def test_handle_mark_dnf_route_given_a_cancelled_prompt_marks_nothing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Cancel is non-destructive: no event, no notice, no refresh."""
+    engine = _running_engine(hold_short_laps=False)
+    context = _DnfContext(engine)
+    before = len(engine.events)
+    _patch_run_dnf(monkeypatch, DnfMark(plate="12", reason="mechanical failure"))
+    _stub_show(monkeypatch, "show_prompt", wx.ID_CANCEL)
+
+    app_module._handle_mark_dnf_route(context)  # type: ignore[arg-type]
+
+    assert len(engine.events) == before
+    assert context.frame.notices == []
+    assert context.presenter.ticks == 0
+
+
+def test_handle_mark_dnf_route_given_an_unknown_plate_refuses_before_prompting(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A plate no entry answers never reaches the confirm or engine."""
+    engine = _running_engine(hold_short_laps=False)
+    context = _DnfContext(engine)
+    before = len(engine.events)
+    _patch_run_dnf(monkeypatch, DnfMark(plate="404", reason="mechanical failure"))
+    calls = _stub_show(monkeypatch, "show_prompt", wx.ID_OK)
+
+    app_module._handle_mark_dnf_route(context)  # type: ignore[arg-type]
+
+    assert calls == []
+    assert len(engine.events) == before
+    assert context.frame.notices == ["Mark DNF… — unknown plate 404"]
+    assert context.presenter.ticks == 0
 
 
 # The notice names what was actually marked: the engine's own scope rule
@@ -972,6 +1079,38 @@ def test_dnf_notice_given_an_unknown_plate_falls_back_to_the_generic_notice() ->
     notice = app_module._dnf_notice(_solo_roster(), "404")
 
     assert notice == "DNF marked"
+
+
+# ``_dnf_subject`` is the one naming line the notice and Phase 5's
+# confirm share: the notice appends its "— DNF", the confirm its
+# question, so the two can never drift.
+
+_DNF_SUBJECT_CASES = (
+    (_solo_roster(), "12", "12 · Rider 12 (solo)"),
+    (_pooled_team_roster(), "45", "45 · Alex Smith (Dirt Dynamos)"),
+    (_pooled_team_roster(), "9", "9 · Bo Jones (Dirt Dynamos)"),
+    (_relay_team_roster(), "9", "9 · Dirt Dynamos (Dirt Dynamos)"),
+)
+_DNF_SUBJECT_CASE_IDS = ("solo_entry", "team_member", "pooled_team_plate", "relay_team")
+
+
+@pytest.mark.parametrize(
+    ("roster", "plate", "expected"), _DNF_SUBJECT_CASES, ids=_DNF_SUBJECT_CASE_IDS
+)
+def test_dnf_subject_given_a_known_plate_names_plate_rider_and_team(
+    roster: Roster, plate: str, expected: str
+) -> None:
+    """The line carries the plate, the name and the team (or solo)."""
+    subject = app_module._dnf_subject(roster, plate)
+
+    assert subject == expected
+
+
+def test_dnf_subject_given_an_unknown_plate_is_none() -> None:
+    """T-3 negative: an unresolvable plate has no subject to name."""
+    subject = app_module._dnf_subject(_solo_roster(), "404")
+
+    assert subject is None
 
 
 def test_handle_mark_dnf_route_given_a_cancelled_dialog_marks_nothing(

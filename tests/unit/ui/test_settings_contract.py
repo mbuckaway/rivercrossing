@@ -63,7 +63,8 @@ class _FakeDialog:
         self.bindings: list[dict[str, Any]] = []
         self.modal_results: list[int] = []
 
-    def Bind(self, event_type: object, handler: Any, **kwargs: Any) -> None:  # noqa: ANN401, N802 -- wx API name
+    # wx API name
+    def Bind(self, event_type: object, handler: Any, **kwargs: Any) -> None:  # noqa: ANN401, N802
         """Record a binding (wx's own keyword ``id`` included)."""
         self.bindings.append({"event_type": event_type, "handler": handler, **kwargs})
 
@@ -237,8 +238,10 @@ def test_settings_dialog_collect_settings_given_the_time_checkboxes_returns_both
 ) -> None:
     """OK collects the two checkbox states into the two fields."""
     view, controls, _dialog = _build_view(monkeypatch, settings=default_settings())
-    controls[ids.SHOW_TOTAL_TIMES_CHK].SetValue(True)  # noqa: FBT003 -- control double's wx-shaped API
-    controls[ids.SHOW_LAP_TIME_CHK].SetValue(False)  # noqa: FBT003 -- control double's wx-shaped API
+    # control double's wx-shaped API
+    controls[ids.SHOW_TOTAL_TIMES_CHK].SetValue(True)  # noqa: FBT003
+    # control double's wx-shaped API
+    controls[ids.SHOW_LAP_TIME_CHK].SetValue(False)  # noqa: FBT003
 
     collected = view.collect_settings()
 

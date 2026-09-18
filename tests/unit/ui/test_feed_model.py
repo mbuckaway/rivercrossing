@@ -29,12 +29,13 @@ from rivercrossing.ui.feed_model import (
     COLUMN_WIDTHS,
     LAP_TIME_COLUMN,
     TOTAL_COLUMN,
+    card_cell_text,
     card_status_text,
     card_text_or_blank,
     edited_row_indexes,
     entry_text,
-    flagged_row_indexes,
     flash_crossing_label,
+    held_duplicate_row_indexes,
     lap_text,
     review_issue,
 )
@@ -310,7 +311,13 @@ def test_card_text_or_blank_given_arbitrary_text_never_raises_and_returns_displa
     assert display == "" or display[-1] in {"♠", "♥", "♦", "♣"} or display == "JK★"
 
 
-# --- flagged_row_indexes -------------------------------------------
+# --- held_duplicate_row_indexes (the feed's bold channels) ----------
+# R-34 amended: the feed bolds a row while its card is *held* for review
+# (awaiting confirm/void) or the row is one half of a live duplicate
+# pair. ``flagged`` no longer bolds on its own -- it is recomputed from
+# the lap time on every render, so a short-lap row would stay bold after
+# the operator resolved its card. ``edited`` stays its own bold channel
+# (``edited_row_indexes``), untouched by this helper.
 
 
 def _feed_row(  # noqa: PLR0913 -- one keyword per feed field a test varies
@@ -356,54 +363,120 @@ def _feed_row(  # noqa: PLR0913 -- one keyword per feed field a test varies
     )
 
 
-FLAGGED_ROWS_CASES = (
+HELD_DUPLICATE_ROWS_CASES = (
     ((), frozenset()),
-    ((_feed_row(flagged=False),), frozenset()),
-    ((_feed_row(flagged=True),), frozenset({0})),
+    ((_feed_row(held=False, duplicate=False),), frozenset()),
+    ((_feed_row(held=True),), frozenset({0})),
+    ((_feed_row(duplicate=True),), frozenset({0})),
     (
         (
-            _feed_row(plate="1", flagged=False),
-            _feed_row(plate="2", flagged=False),
-            _feed_row(plate="45", flagged=True),
-            _feed_row(plate="4", flagged=False),
+            _feed_row(plate="1", held=True),
+            _feed_row(plate="2"),
+            _feed_row(plate="3", duplicate=True),
+            _feed_row(plate="4"),
         ),
-        frozenset({2}),
+        frozenset({0, 2}),
     ),
 )
 
 
-@pytest.mark.parametrize(("rows", "expected"), FLAGGED_ROWS_CASES)
-def test_flagged_row_indexes_given_rows_returns_the_flagged_positions(
+@pytest.mark.parametrize(("rows", "expected"), HELD_DUPLICATE_ROWS_CASES)
+def test_held_duplicate_row_indexes_given_rows_returns_the_bold_positions(
     rows: tuple[FeedRow, ...], expected: frozenset[int]
 ) -> None:
     """Boundary collection sizes (T-4): empty, single, many rows."""
-    assert flagged_row_indexes(rows) == expected
+    assert held_duplicate_row_indexes(rows) == expected
 
 
-def test_flagged_row_indexes_given_a_mixed_feed_marks_only_the_plate_45_row() -> None:
-    """Ties the flagged row to plate 45 -- never a bare row index."""
+@pytest.mark.parametrize(
+    ("held", "duplicate", "expected"),
+    [
+        (False, False, frozenset()),
+        (False, True, frozenset({0})),
+        (True, False, frozenset({0})),
+        (True, True, frozenset({0})),
+    ],
+    ids=["neither", "duplicate", "held", "both"],
+)
+def test_held_duplicate_row_indexes_given_the_two_bits_marks_the_row_for_either(
+    held: bool,  # noqa: FBT001 -- parametrize passes the flags positionally
+    duplicate: bool,  # noqa: FBT001 -- parametrize passes the flags positionally
+    expected: frozenset[int],
+) -> None:
+    """T-13: bold iff held or duplicate, never on ``flagged``."""
+    rows = (_feed_row(held=held, duplicate=duplicate),)
+
+    assert held_duplicate_row_indexes(rows) == expected
+
+
+def test_held_duplicate_row_indexes_given_a_credited_short_lap_leaves_the_row_out() -> None:
+    """The behaviour change: a resolved short lap is no longer bold.
+
+    ``flagged`` is recomputed from the lap time on every render, so
+    bolding on it would leave this row bold forever after the operator
+    resolved its card. The feed bolds a short lap only while its card
+    waits in the hold queue.
+    """
+    rows = (_feed_row(plate="12", flagged=True, held=False, card_status="credited"),)
+
+    assert held_duplicate_row_indexes(rows) == frozenset()
+
+
+def test_held_duplicate_row_indexes_given_a_voided_short_lap_leaves_the_row_out() -> None:
+    """Confirming or voiding clears the hold, so the row unbolds."""
+    rows = (_feed_row(plate="56", flagged=True, card_status="voided"),)
+
+    assert held_duplicate_row_indexes(rows) == frozenset()
+
+
+def test_held_duplicate_row_indexes_given_a_duplicate_voided_row_keeps_it_bold() -> None:
+    """T-3: the duplicate channel ignores the card's disposition."""
+    rows = (_feed_row(plate="78", card_status="voided", duplicate=True),)
+
+    assert held_duplicate_row_indexes(rows) == frozenset({0})
+
+
+def test_held_duplicate_row_indexes_given_an_edited_only_row_leaves_it_out() -> None:
+    """T-3: ``edited`` is a separate channel, not this one."""
+    rows = (_feed_row(plate="90", edited=True),)
+
+    assert held_duplicate_row_indexes(rows) == frozenset()
+
+
+def test_held_duplicate_row_indexes_given_a_miss_row_leaves_it_out() -> None:
+    """A pending miss holds no card and duplicates nothing."""
+    rows = (_feed_row(plate="-", entry="missed", missed=True),)
+
+    assert held_duplicate_row_indexes(rows) == frozenset()
+
+
+def test_held_duplicate_row_indexes_given_a_mixed_feed_marks_only_the_bold_rows() -> None:
+    """Ties the bold rows to plates -- never a bare row index."""
     rows = (
-        _feed_row(plate="123", flagged=False),
-        _feed_row(plate="77", flagged=False),
-        _feed_row(plate="45", flagged=True),
-        _feed_row(plate="212", flagged=False),
+        _feed_row(plate="123"),
+        _feed_row(plate="77", held=True, card_status="held"),
+        _feed_row(plate="45", flagged=True, card_status="credited"),
+        _feed_row(plate="212", duplicate=True),
     )
 
-    flagged = flagged_row_indexes(rows)
+    bold = held_duplicate_row_indexes(rows)
 
-    assert {rows[index].plate for index in flagged} == {"45"}
+    assert {rows[index].plate for index in bold} == {"77", "212"}
 
 
-@given(st.lists(st.booleans(), max_size=20))
-def test_flagged_row_indexes_given_arbitrary_flags_agrees_with_each_rows_own_bit(
-    flags: list[bool],
+@given(st.lists(st.tuples(st.booleans(), st.booleans()), max_size=20))
+def test_held_duplicate_row_indexes_given_arbitrary_bits_agrees_with_each_rows_own_flags(
+    bits: list[tuple[bool, bool]],
 ) -> None:
-    """Property: membership matches each row's own flagged bit."""
-    rows = [_feed_row(flagged=flag) for flag in flags]
+    """T-7: membership matches each row's own held-or-duplicate bits."""
+    rows = [_feed_row(held=held, duplicate=duplicate) for held, duplicate in bits]
 
-    indexes = flagged_row_indexes(rows)
+    indexes = held_duplicate_row_indexes(rows)
 
-    agrees = all((index in indexes) == rows[index].flagged for index in range(len(rows)))
+    agrees = all(
+        (index in indexes) == (rows[index].held or rows[index].duplicate)
+        for index in range(len(rows))
+    )
     assert agrees is True
 
 
@@ -545,13 +618,6 @@ def test_flash_crossing_label_given_any_natural_code_renders_the_matching_glyph(
     assert label.startswith("✓ ")
 
 
-def test_flagged_row_indexes_given_a_credited_short_lap_still_marks_the_row() -> None:
-    """Always-deal: a short lap is bolded for review though not held."""
-    rows = (_feed_row(plate="12", flagged=True, held=False),)
-
-    assert flagged_row_indexes(rows) == frozenset({0})
-
-
 # --- missed rows (K: a pass whose number the scorer missed) ----------
 
 
@@ -618,6 +684,62 @@ def test_card_status_text_given_any_known_status_is_blank_exactly_when_that_stat
     text = card_status_text(_feed_row(card_status=status))
 
     assert (text == "") is (status == "")
+
+
+# --- card_cell_text (Change D3: a voided card reads "Void") ----------
+# The feed's Card column, unlike the review tab's own, shows the dealt
+# card's glyph -- except when the card is voided: a card the entry's
+# hand does not hold and the hold queue does not carry is out of the
+# ride, so its glyph would name a card the crossing no longer has. The
+# word is the review tab's own for that state
+# (``card_status_text``), so the two columns agree.
+
+CARD_CELL_CASES = (
+    ("AS", "voided", "Void"),
+    ("AS", "credited", "A♠"),
+    ("AS", "held", "A♠"),
+    ("10D", "credited", "10♦"),
+    ("JK", "held", "JK★"),
+    ("", "", ""),
+    ("ZZ", "credited", ""),
+    # The status decides first: a voided row's glyph is gone, whatever
+    # (corrupt) code the stored cell happens to carry.
+    ("", "voided", "Void"),
+)
+
+
+@pytest.mark.parametrize(
+    ("card", "status", "text"),
+    CARD_CELL_CASES,
+    ids=[
+        "voided",
+        "credited",
+        "held",
+        "credited_ten",
+        "held_joker",
+        "miss",
+        "unmappable",
+        "voided_blank_code",
+    ],
+)
+def test_card_cell_text_given_a_rows_card_and_status_returns_the_cell_text(
+    card: str, status: str, text: str
+) -> None:
+    """D3: "Void" for a voided card, the glyph for every other one."""
+    assert card_cell_text(_feed_row(card=card, card_status=status)) == text
+
+
+@given(
+    card=st.sampled_from(("", "9H", "AS", "10D", "JK", "ZZ")),
+    status=st.sampled_from(("", "held", "credited", "voided")),
+)
+def test_card_cell_text_given_any_status_reads_void_exactly_when_that_status_is(
+    card: str, status: str
+) -> None:
+    """T-7: the word replaces the glyph for a voided card only."""
+    cell = card_cell_text(_feed_row(card=card, card_status=status))
+
+    assert (cell == "Void") is (status == "voided")
 
 
 # --- review_issue (Needs Review tab: why this row is here) -----------
@@ -689,7 +811,8 @@ REVIEW_ISSUE_CASES = (
         "duplicate_held_flagged_team_overlap",
     ],
 )
-def test_review_issue_given_a_rows_flags_returns_its_review_reason(  # noqa: PLR0913, PLR0917 -- the four flags plus the reason
+# the four flags plus the reason
+def test_review_issue_given_a_rows_flags_returns_its_review_reason(  # noqa: PLR0913, PLR0917
     duplicate: bool,  # noqa: FBT001 -- parametrize passes the flags positionally
     flagged: bool,  # noqa: FBT001 -- parametrize passes the flags positionally
     team_overlap: bool,  # noqa: FBT001 -- parametrize passes the flags positionally
@@ -736,7 +859,8 @@ def test_review_issue_given_a_held_short_lap_reads_as_a_plain_short_lap() -> Non
     team_overlap=st.booleans(),
     held=st.booleans(),
 )
-def test_review_issue_given_any_flags_is_blank_exactly_when_clean(  # noqa: PLR0913 -- one argument per review flag
+# one argument per review flag
+def test_review_issue_given_any_flags_is_blank_exactly_when_clean(  # noqa: PLR0913
     *, duplicate: bool, flagged: bool, team_overlap: bool, held: bool
 ) -> None:
     """T-7: an issue shows iff one of the three review bits is set."""

@@ -262,7 +262,8 @@ class MembersListModel(wx.dataview.DataViewIndexListModel):  # type: ignore[misc
         """Return "string" -- every ``members_list`` cell is text."""
         return "string"
 
-    def GetValueByRow(self, row: int, col: int) -> Any:  # noqa: ANN401, ARG002 -- wx ships no stubs
+    # wx ships no stubs
+    def GetValueByRow(self, row: int, col: int) -> Any:  # noqa: ANN401, ARG002
         """Return the member name at *row*."""
         return self._names[row]
 

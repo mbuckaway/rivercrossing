@@ -17,7 +17,11 @@ actor, so every cell read the same word. Every remaining column is
 appended with :data:`AUDIT_COLUMN_FLAGS` (sortable and resizable) and
 answers the native header sort through :meth:`AuditListModel.Compare`,
 and every render re-imposes the When-descending default
-(:meth:`AuditDialog._apply_default_sort`, scope 6b).
+(:meth:`AuditDialog._apply_default_sort`, scope 6b). The Action cell
+draws the friendly label ``presenters.audit.ACTION_CHOICES`` carries
+for a row's own action (``dnf`` -> "Mark DNF"), falling back to the raw
+action for anything the tuple does not name, so the list reads the same
+words the dropdown offers.
 
 The dialog is shared by two entry points: the menu route (app.py's
 ``_decorate``) and the entry-detail deep-link (``views.corrections``'
@@ -104,9 +108,26 @@ DEFAULT_SORT_ASCENDING = False
 # ever filters on an action (``presenters.audit.ACTION_CHOICES``).
 _ACTION_BY_LABEL: dict[str, str] = dict(ACTION_CHOICES)
 
+# The Action cell draws the same label the dropdown offers for a row's
+# own action -- "Mark DNF" rather than a bare ``dnf`` -- and falls back
+# to the raw action for anything ``ACTION_CHOICES`` does not carry (an
+# action a future build records before this table grows).
+_LABEL_BY_ACTION: dict[str, str] = {action: label for label, action in ACTION_CHOICES}
+
+
+def _action_text(action: str) -> str:
+    """Return the Action cell's text for the recorded *action*.
+
+    The friendly label (``_LABEL_BY_ACTION``), or the action itself
+    when the tuple carries none, so an unmapped row still says what it
+    was rather than rendering blank.
+    """
+    return _LABEL_BY_ACTION.get(action, action)
+
+
 _TEXT_ACCESSORS: tuple[Callable[[AuditRow], str], ...] = (
     lambda row: row.when,
-    lambda row: row.action,
+    lambda row: _action_text(row.action),
     lambda row: row.entry,
     lambda row: row.reason,
 )

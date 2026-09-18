@@ -775,7 +775,8 @@ class Roster:
         self._log("create_solo_entry", {"plate": entry.plate, "name": rider.full_name})
         return entry
 
-    def create_team_entry(  # noqa: PLR0913 -- (display_name, riders, plate, logo_card), keyword-only
+    # (display_name, riders, plate, logo_card), keyword-only.
+    def create_team_entry(  # noqa: PLR0913
         self,
         *,
         display_name: str,
@@ -824,7 +825,8 @@ class Roster:
         )
         return entry
 
-    def create_team_entry_of_one(  # noqa: PLR0913 -- (display_name, rider, plate, logo_card), keyword-only
+    # (display_name, rider, plate, logo_card), keyword-only.
+    def create_team_entry_of_one(  # noqa: PLR0913
         self,
         *,
         display_name: str,

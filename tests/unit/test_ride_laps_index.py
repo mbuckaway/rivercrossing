@@ -41,7 +41,8 @@ _VALID_KWARGS: dict[str, object] = {
     "lap_km": 8.0,
     "organizer": "GORBA",
     "scorer": "K. Singh",
-    "planned_start": datetime(2026, 9, 20, 10, 0),  # noqa: DTZ001 -- naive by design, RideConfig's own convention
+    # naive by design, RideConfig's own convention
+    "planned_start": datetime(2026, 9, 20, 10, 0),  # noqa: DTZ001
     "planned_duration_s": 21600,
     "min_lap_s": 1,
     "entry_mode": EntryMode.MIXED,
@@ -72,7 +73,8 @@ class _FakeClock:
 
 def _dt(hour: int, minute: int = 0, second: int = 0) -> datetime:
     """Build a naive datetime on the fixed day, Sept 20, 2026."""
-    return datetime(2026, 9, 20, hour, minute, second)  # noqa: DTZ001 -- naive by design, as RideConfig's planned_start
+    # naive by design, as RideConfig's planned_start
+    return datetime(2026, 9, 20, hour, minute, second)  # noqa: DTZ001
 
 
 def _make_engine(

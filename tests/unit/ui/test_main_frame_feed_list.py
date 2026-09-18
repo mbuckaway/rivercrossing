@@ -6,10 +6,10 @@ Four behaviours, none of which needs a display:
 - the **search row** ``main.xrc`` now declares above ``crossings_list``
   (a ``wxStaticText`` label + ``crossings_search``), read as XML;
 - the **column flags** every feed column is appended with (sortable and
-  resizable) and the two independent time-column handles
+  resizable), the two independent time-column handles
   ``_build_columns`` keeps (Total/Lap time) that ``set_time_columns``
-  toggles;
-- the **native header sort** -- the default Time-ascending arrow, the
+  toggles, and the W9 widths every toggle re-pins;
+- the **native header sort** -- the default Time-descending arrow, the
   remembered column re-applied after every ``show_feed`` rebuild, and
   ``CrossingsFeedModel.Compare``'s own per-column keys;
 - the **search forwarding** the view's ``_on_search_text`` handler does.
@@ -67,12 +67,18 @@ class _Column:
         self.ascending = ascending
         self.is_sort_key = is_sort_key
         self.hidden: bool | None = None
+        self.widths: list[int] = []
         self.sort_orders: list[bool] = []
         self.operations: list[str] = []
 
-    def SetHidden(self, hidden: bool) -> None:  # noqa: N802, FBT001 -- wx API name the double mirrors
+    # wx API name the double mirrors
+    def SetHidden(self, hidden: bool) -> None:  # noqa: N802, FBT001
         """Record the explicit hidden state the view applied."""
         self.hidden = hidden
+
+    def SetWidth(self, width: int) -> None:  # noqa: N802 -- wx API name the double mirrors
+        """Record one re-pinned width, in call order."""
+        self.widths.append(width)
 
     def GetModelColumn(self) -> int:  # noqa: N802 -- wx API name the double mirrors
         """Return the model column this header sorts."""
@@ -102,6 +108,23 @@ class _SortEvent:
     def __init__(self) -> None:
         """Start before the handler ran."""
         self.skipped = False
+
+    def Skip(self) -> None:  # noqa: N802 -- wx API name the double mirrors
+        """Record that the handler let the event continue."""
+        self.skipped = True
+
+
+class _KeyEvent:
+    """A ``wx.KeyEvent`` double carrying the feed's pressed key."""
+
+    def __init__(self, key_code: int) -> None:
+        """Report *key_code* from ``GetKeyCode()``."""
+        self._key_code = key_code
+        self.skipped = False
+
+    def GetKeyCode(self) -> int:  # noqa: N802 -- wx API name the double mirrors
+        """Return the key the operator pressed."""
+        return self._key_code
 
     def Skip(self) -> None:  # noqa: N802 -- wx API name the double mirrors
         """Record that the handler let the event continue."""
@@ -185,7 +208,7 @@ class _Shell:
         control: _CrossingsListControl | None = None,
         search: _SearchCtrl | None = None,
         sort_column: int = feed_model.COL_TIME,
-        sort_ascending: bool = True,
+        sort_ascending: bool = False,
     ) -> None:
         """Store the state the methods under test read."""
         self.crossings_list = control if control is not None else _CrossingsListControl()
@@ -333,24 +356,34 @@ def test_set_time_columns_given_each_pair_of_flags_hides_each_column_independent
     show_total: bool,  # noqa: FBT001 -- parametrized test inputs
     show_lap: bool,  # noqa: FBT001 -- parametrized test inputs
 ) -> None:
-    """The Total and Lap-time columns hide/show independently (R-37)."""
-    total = _Column(feed_model.COL_TOTAL)
-    lap = _Column(feed_model.COL_LAP_TIME)
-    shell = _Shell(control=_CrossingsListControl())
-    shell._total_column = total
-    shell._lap_time_column = lap
+    """R-37: the columns toggle independently; widths re-pinned.
+
+    macOS hides a column through AppKit alone, and the outline view's
+    last-column-only autoresizing leaves a re-shown column at width 0
+    (measured ``IsHidden()`` ``False`` with width 0), so each toggle
+    re-pins every W9 ``COLUMN_WIDTHS`` entry afterwards.
+    """
+    control = _CrossingsListControl()
+    shell = _Shell(control=control)
+    main_frame.MainFrame._build_columns(shell)
 
     main_frame.MainFrame.set_time_columns(shell, show_total=show_total, show_lap=show_lap)
 
-    assert (total.hidden, lap.hidden) == (not show_total, not show_lap)
+    assert (shell._total_column.hidden, shell._lap_time_column.hidden) == (
+        not show_total,
+        not show_lap,
+    )
+    assert [control.GetColumn(index).widths for index in range(len(feed_model.COLUMN_LABELS))] == [
+        [width] for width in feed_model.COLUMN_WIDTHS
+    ]
 
 
 # ----------------------------------------------------- the default sort
 
 
-def test_default_feed_sort_is_the_time_column_ascending() -> None:
-    """Oldest crossing first: elapsed 0 at the top (Phase 4)."""
-    assert main_frame.DEFAULT_FEED_SORT == (feed_model.COL_TIME, True)
+def test_default_feed_sort_is_the_time_column_descending() -> None:
+    """Newest crossing first: the largest elapsed reading on top."""
+    assert main_frame.DEFAULT_FEED_SORT == (feed_model.COL_TIME, False)
 
 
 def test_show_feed_given_rows_applies_the_default_sort_after_the_rebuild() -> None:
@@ -367,7 +400,7 @@ def test_show_feed_given_rows_applies_the_default_sort_after_the_rebuild() -> No
 
     main_frame.MainFrame.show_feed(shell, [_feed_row()])
 
-    assert (column.operations, column.sort_orders) == (["set"], [True])
+    assert (column.operations, column.sort_orders) == (["set"], [False])
 
 
 def test_show_feed_given_a_remembered_column_re_applies_that_column() -> None:
@@ -458,7 +491,7 @@ def test_apply_feed_sort_given_a_never_sorted_column_leaves_the_sort_key_alone()
 
     main_frame.MainFrame._apply_feed_sort(shell)
 
-    assert (column.operations, column.sort_orders, model.resorts) == (["set"], [True], 1)
+    assert (column.operations, column.sort_orders, model.resorts) == (["set"], [False], 1)
 
 
 def test_apply_feed_sort_given_a_remembered_column_unset_then_sets_then_resorts() -> None:
@@ -553,6 +586,10 @@ class _FeedModel:
 class _FeedShell:
     """A ``MainFrame`` double owning the feed handlers' own state."""
 
+    # The real delete handler, so ``_on_feed_key_down``'s routing is
+    # driven through the production code rather than a stub.
+    _on_delete_crossing_accelerator = main_frame.MainFrame._on_delete_crossing_accelerator
+
     def __init__(  # noqa: PLR0913 -- (selection, model) + the three feed seams
         self,
         *,
@@ -580,13 +617,15 @@ def test_on_edit_crossing_accelerator_given_a_selected_row_fires_the_seam() -> N
     assert fired == [3]
 
 
-def test_accelerator_entries_given_a_frame_id_returns_the_f2_entry() -> None:
-    """Phase 6: the frame's own entry is F2 -> its frame-local id.
+def test_accelerator_entries_given_a_frame_id_returns_the_three_code_side_rows() -> None:
+    """Phase 6/7: F2, Ctrl+D and Ctrl+E -> their frame-local ids.
 
     ``app._apply_accelerators`` appends this list to the harvested
-    menubar entries, so the key code and command are the app-facing
-    contract that keeps F2 alive after the bootstrap re-applies the
-    table.
+    menubar entries, so the key codes and commands are the app-facing
+    contract that keeps them alive after the bootstrap re-applies the
+    table. Delete is deliberately absent: it is feed-scoped (bound on
+    ``crossings_list``'s own ``EVT_KEY_DOWN``), never a frame
+    accelerator that could remap it away from ``plate_input``.
     """
     shell = object.__new__(main_frame.MainFrame)
     shell._edit_crossing_id = 4242
@@ -597,17 +636,16 @@ def test_accelerator_entries_given_a_frame_id_returns_the_f2_entry() -> None:
 
     assert [(entry.GetKeyCode(), entry.GetCommand()) for entry in entries] == [
         (wx.WXK_F2, 4242),
-        (wx.WXK_DELETE, 4343),
         (ord("D"), 4343),
         (ord("E"), 4444),
     ]
 
 
-def test_accelerator_entries_given_a_frame_id_modifies_delete_with_ctrl_only() -> None:
-    """The two Delete bindings differ in modifier, never in command id.
+def test_accelerator_entries_given_a_frame_id_keeps_only_the_ctrl_rows_modified() -> None:
+    """F2 stays a bare accelerator; the two commands now take Ctrl.
 
-    Delete and Ctrl+D run the same ``_delete_crossing_id`` command (one
-    bound id, two rows), while F2 stays a bare accelerator.
+    Ctrl+D is the one frame-level Delete, so the bare-Delete row that
+    used to shadow the key is gone.
     """
     shell = object.__new__(main_frame.MainFrame)
     shell._edit_crossing_id = 4242
@@ -618,7 +656,6 @@ def test_accelerator_entries_given_a_frame_id_modifies_delete_with_ctrl_only() -
 
     assert [(entry.GetFlags(), entry.GetCommand()) for entry in entries] == [
         (wx.ACCEL_NORMAL, 4242),
-        (wx.ACCEL_NORMAL, 4343),
         (wx.ACCEL_CTRL, 4343),
         (wx.ACCEL_CTRL, 4444),
     ]
@@ -634,11 +671,13 @@ def test_accelerator_entries_given_a_frame_id_modifies_delete_with_ctrl_only() -
     ids=["delete", "ctrl_d", "ctrl_e"],
 )
 def test_crossings_panel_hotkey_constants_bind_the_expected_keys(name: str, key: int) -> None:
-    """The three new frame accelerators' own key constants.
+    """The feed's own key constants.
 
-    wxPython exposes no ``WXK_D``/``WXK_E`` for letter keys, so the
-    Ctrl+D/Ctrl+E rows carry ``ord("D")``/``ord("E")`` -- the spelling
-    ``app._accelerator_entries``' own tests already use for Ctrl+Z.
+    Delete is read by ``_on_feed_key_down`` (feed-scoped); Ctrl+D and
+    Ctrl+E are frame accelerators. wxPython exposes no ``WXK_D``/
+    ``WXK_E`` for letter keys, so those two carry ``ord("D")``/
+    ``ord("E")`` -- the spelling ``app._accelerator_entries``' own
+    tests already use for Ctrl+Z.
     """
     assert getattr(main_frame, name) == key
 
@@ -686,9 +725,11 @@ def test_on_edit_crossing_accelerator_given_no_callback_resolves_but_opens_nothi
 
 # ------------------------- Delete / Ctrl+D / Ctrl+E (crossings panel)
 #
-# The three new frame accelerators are the F2 handler's own shape with
-# a different seam: the view resolves the feed's *selection* through
-# the model and fires the app's callback with the row index.
+# F2, Ctrl+D and Ctrl+E are the F2 handler's own shape with a different
+# seam: the view resolves the feed's *selection* through the model and
+# fires the app's callback with the row index. Delete reaches the same
+# handler from the feed's own key-down hook instead of the frame
+# accelerator table, so the key stays with ``crossings_list``.
 
 
 def test_set_on_delete_crossing_registers_the_callback() -> None:
@@ -760,6 +801,45 @@ def test_on_delete_crossing_accelerator_given_no_callback_resolves_but_deletes_n
     main_frame.MainFrame._on_delete_crossing_accelerator(shell, _SortEvent())
 
     assert (len(model.resolved), shell._on_delete_crossing) == (1, None)
+
+
+# ------------------------------------------- the feed's own Delete key
+#
+# Delete is not in the frame's accelerator table: a bare frame-level
+# Delete would remap the key away from ``plate_input``, which needs it
+# for text editing. ``crossings_list`` binds it instead, so it only
+# acts while the feed has focus.
+
+
+def test_on_feed_key_down_given_delete_routes_to_the_delete_flow() -> None:
+    """Delete runs the same delete flow the Ctrl+D accelerator fires."""
+    fired: list[int] = []
+    shell = _FeedShell(model=_FeedModel(row=3), delete_crossing=fired.append)
+
+    main_frame.MainFrame._on_feed_key_down(shell, _KeyEvent(wx.WXK_DELETE))
+
+    assert fired == [3]
+
+
+def test_on_feed_key_down_given_delete_consumes_the_key() -> None:
+    """The feed handles Delete, so it never reaches the control."""
+    shell = _FeedShell(model=_FeedModel(row=3))
+    event = _KeyEvent(wx.WXK_DELETE)
+
+    main_frame.MainFrame._on_feed_key_down(shell, event)
+
+    assert event.skipped is False
+
+
+def test_on_feed_key_down_given_a_non_delete_key_skips_the_event() -> None:
+    """Every other key falls through to the feed's own handling."""
+    fired: list[int] = []
+    shell = _FeedShell(model=_FeedModel(row=3), delete_crossing=fired.append)
+    event = _KeyEvent(ord("K"))
+
+    main_frame.MainFrame._on_feed_key_down(shell, event)
+
+    assert (event.skipped, fired) == (True, [])
 
 
 def test_on_edit_plate_crossing_accelerator_given_a_selected_row_fires_the_seam() -> None:
@@ -995,6 +1075,11 @@ def _feed_row(  # noqa: PLR0913 -- one keyword per feed field a test varies
     team: str = "",
     lap: int = 1,
     card: str = "9H",
+    flagged: bool = False,
+    held: bool = False,
+    edited: bool = False,
+    duplicate: bool = False,
+    card_status: str = "",
     dnf: bool = False,
     missed: bool = False,
     elapsed_s: float = 0.0,
@@ -1011,6 +1096,11 @@ def _feed_row(  # noqa: PLR0913 -- one keyword per feed field a test varies
         lap_time="1:00",
         total="1:00",
         card=card,
+        flagged=flagged,
+        held=held,
+        edited=edited,
+        duplicate=duplicate,
+        card_status=card_status,
         dnf=dnf,
         missed=missed,
         elapsed_s=elapsed_s,
@@ -1022,3 +1112,154 @@ def _feed_row(  # noqa: PLR0913 -- one keyword per feed field a test varies
 def _model(*rows: FeedRow) -> main_frame.CrossingsFeedModel:
     """Build the real feed model over *rows*, in the given order."""
     return main_frame.CrossingsFeedModel(list(rows))
+
+
+# --------------------------- CrossingsFeedModel.GetAttrByRow
+# R-34 amended: the feed's bold channels are (1) a card held for review
+# or a live duplicate pair and (2) an edited crossing, each its own
+# channel. A flag resolved by confirm/void (a credited or voided short
+# lap) renders at regular weight -- ``flagged`` alone never bolds.
+
+
+class _Attr:
+    """A ``wx.DataViewItemAttr`` double recording each bold request."""
+
+    def __init__(self) -> None:
+        """Start with no bold request recorded."""
+        self.bold_calls: list[bool] = []
+
+    def SetBold(self, bold: bool) -> None:  # noqa: N802, FBT001 -- wx API name
+        """Record one ``SetBold`` call."""
+        self.bold_calls.append(bold)
+
+
+def test_get_attr_by_row_given_a_held_row_bolds_it() -> None:
+    """R-34: a card waiting in the hold queue bolds its whole row."""
+    model = _model(_feed_row(held=True, card_status="held"))
+    attr = _Attr()
+
+    result = model.GetAttrByRow(0, 0, attr)
+
+    assert (result, attr.bold_calls) == (True, [True])
+
+
+def test_get_attr_by_row_given_a_duplicate_row_bolds_it() -> None:
+    """Phase 3: either half of a live duplicate pair bolds."""
+    model = _model(_feed_row(duplicate=True))
+    attr = _Attr()
+
+    result = model.GetAttrByRow(0, 0, attr)
+
+    assert (result, attr.bold_calls) == (True, [True])
+
+
+def test_get_attr_by_row_given_an_edited_row_bolds_it() -> None:
+    """E7.2.2: a corrected crossing bolds independently of the card."""
+    model = _model(_feed_row(edited=True))
+    attr = _Attr()
+
+    result = model.GetAttrByRow(0, 0, attr)
+
+    assert (result, attr.bold_calls) == (True, [True])
+
+
+@pytest.mark.parametrize(
+    "flagged",
+    [True, False],
+    ids=["credited_short_lap", "credited_clean"],
+)
+def test_get_attr_by_row_given_a_credited_row_never_bolds_it(
+    flagged: bool,  # noqa: FBT001 -- a parametrize row's value
+) -> None:
+    """The behaviour change: a credited (resolved) row is not bold."""
+    model = _model(_feed_row(flagged=flagged, held=False, card_status="credited"))
+    attr = _Attr()
+
+    result = model.GetAttrByRow(0, 0, attr)
+
+    assert (result, attr.bold_calls) == (False, [])
+
+
+def test_get_attr_by_row_given_a_voided_short_lap_never_bolds_it() -> None:
+    """Confirm/void clears the hold, so the row unbolds."""
+    model = _model(_feed_row(flagged=True, held=False, card_status="voided"))
+    attr = _Attr()
+
+    result = model.GetAttrByRow(0, 0, attr)
+
+    assert (result, attr.bold_calls) == (False, [])
+
+
+def test_get_attr_by_row_given_a_plain_row_returns_false_without_setting_bold() -> None:
+    """T-3 negative: an ordinary crossing stays at regular weight."""
+    model = _model(_feed_row())
+    attr = _Attr()
+
+    result = model.GetAttrByRow(0, 0, attr)
+
+    assert (result, attr.bold_calls) == (False, [])
+
+
+def test_get_attr_by_row_given_a_miss_row_returns_false() -> None:
+    """A pending miss bolds on neither channel."""
+    model = _model(_feed_row(plate="-", entry="missed", missed=True))
+    attr = _Attr()
+
+    result = model.GetAttrByRow(0, 0, attr)
+
+    assert (result, attr.bold_calls) == (False, [])
+
+
+@pytest.mark.parametrize(
+    "column",
+    [0, feed_model.COL_TEAM, feed_model.COL_TOTAL],
+    ids=["time", "team", "total"],
+)
+def test_get_attr_by_row_given_any_column_bolds_the_whole_row(column: int) -> None:
+    """The attribute is row-wide: *col* is unused."""
+    model = _model(_feed_row(held=True, card_status="held"))
+    attr = _Attr()
+
+    result = model.GetAttrByRow(0, column, attr)
+
+    assert (result, attr.bold_calls) == (True, [True])
+
+
+@pytest.mark.parametrize(
+    ("held", "duplicate", "edited", "expected"),
+    [
+        (False, False, False, False),
+        (False, False, True, True),
+        (False, True, False, True),
+        (False, True, True, True),
+        (True, False, False, True),
+        (True, False, True, True),
+        (True, True, False, True),
+        (True, True, True, True),
+    ],
+    ids=[
+        "none",
+        "edited",
+        "duplicate",
+        "duplicate_edited",
+        "held",
+        "held_edited",
+        "held_duplicate",
+        "all",
+    ],
+)
+# the three flags plus the expected result
+def test_get_attr_by_row_given_the_three_bold_channels_bolds_on_either(  # noqa: PLR0913, PLR0917
+    held: bool,  # noqa: FBT001 -- parametrize passes the flags positionally
+    duplicate: bool,  # noqa: FBT001 -- parametrize passes the flags positionally
+    edited: bool,  # noqa: FBT001 -- parametrize passes the flags positionally
+    expected: bool,  # noqa: FBT001 -- a parametrize row's value
+) -> None:
+    """T-13: bold = held OR duplicate OR edited, for all eight rows."""
+    model = _model(_feed_row(held=held, duplicate=duplicate, edited=edited))
+    attr = _Attr()
+    expected_calls = [True] if expected else []
+
+    result = model.GetAttrByRow(0, 0, attr)
+
+    assert (result, attr.bold_calls) == (expected, expected_calls)

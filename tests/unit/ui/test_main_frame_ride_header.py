@@ -44,7 +44,7 @@ hangs at exit on an undismissable "Several errors occurred" modal
 
 import base64
 import inspect
-from datetime import date, datetime
+from datetime import date
 from functools import cache
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -56,7 +56,6 @@ from hypothesis import HealthCheck, given, settings
 from hypothesis import strategies as st
 
 from rivercrossing.ride import RideStatus
-from rivercrossing.roster import EntryMode
 from rivercrossing.ui.views import main_frame
 from rivercrossing.ui.views.gauges import StopLight
 from rivercrossing.ui.views.main_frame import (
@@ -99,8 +98,6 @@ _HEADER_FIELDS: dict[str, object] = {
     "name": "GORBA EPIC 2026",
     "logo": None,
     "event_date": date(2026, 9, 20),
-    "planned_start": datetime(2026, 9, 20, 10, 0),  # noqa: DTZ001 -- naive, by design
-    "entry_mode": EntryMode.MIXED,
     "venue": "Sea to Sky Gondola",
     "organizer": "GORBA",
     "scorer": "K. Singh",
@@ -639,14 +636,31 @@ def test_main_frame_declares_no_top_infobar_name_or_builder() -> None:
     ) == (False, False, False)
 
 
-def test_main_frame_init_given_a_new_console_builds_no_infobar() -> None:
-    """G4: the constructor shells no wxInfoBar into the frame's sizer.
+# Every step the constructor is an ordered list of (its own docstring):
+# the whole construction path, one step per row.
+_CONSTRUCTOR_STEPS = (
+    "__init__",
+    "_resolve_controls",
+    "_build_gauges",
+    "_init_list_state",
+    "_bind_feed_and_lists",
+    "_bind_frame_commands",
+    "_init_feed_state",
+    "_init_render_seams",
+    "_bind_layout_persistence",
+    "_show_first_render",
+)
 
-    logic-coverage-exempt: T-3 -- ``MainFrame.__init__`` cannot run
+
+@pytest.mark.parametrize("step", _CONSTRUCTOR_STEPS)
+def test_main_frame_constructor_step_given_a_new_console_builds_no_infobar(step: str) -> None:
+    """G4: no constructor step shells a wxInfoBar into the sizer.
+
+    logic-coverage-exempt: T-3 -- the construction path cannot run
     headless (it resolves every frozen name and needs a desktop), so
     the absence is read off its own source rather than branch-covered.
     """
-    source = inspect.getsource(main_frame.MainFrame.__init__)
+    source = inspect.getsource(getattr(main_frame.MainFrame, step))
 
     assert ("wx.InfoBar" in source, "_build_infobar" in source) == (False, False)
 

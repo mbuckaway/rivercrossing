@@ -65,7 +65,6 @@ from rivercrossing.ui.presenters.riders import (
     _apply_team_change,
     _pair_rows,
     _rider_pairs,
-    _rider_rows,
     _team_choices,
     _visible_pairs,
 )
@@ -1961,8 +1960,8 @@ def test_team_choices_given_n_teams_is_solo_then_every_team_in_order(
         unique=True,
     )
 )
-def test_rider_rows_given_n_teams_returns_one_row_per_rider(team_names: list[str]) -> None:
-    """_rider_rows is length-preserving: one row per rider (T-7)."""
+def test_pair_rows_given_n_teams_returns_one_row_per_rider(team_names: list[str]) -> None:
+    """``_pair_rows`` is length-preserving: one row per rider (T-7)."""
     roster = Roster(entry_mode=EntryMode.MIXED)
     # logic-coverage-exempt: T-8 -- this loop is pure Arrange (building
     # a Hypothesis-sized roster fixture), not decision logic; the one
@@ -1976,7 +1975,7 @@ def test_rider_rows_given_n_teams_returns_one_row_per_rider(team_names: list[str
             ],
         )
 
-    rows = _rider_rows(roster)
+    rows = _pair_rows(roster, _rider_pairs(roster))
 
     assert len(rows) == sum(len(entry.riders) for entry in roster.entries)
 

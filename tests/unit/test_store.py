@@ -1165,6 +1165,171 @@ def test_store_load_engine_builds_shoe_from_the_stored_rng_seed(tmp_path: Path) 
     assert engine._shoe.remaining == DEFAULT_DECK_COUNT * 52 + DEFAULT_JOKERS_PER_DECK - 1
 
 
+# --------------------- load_engine's corrupt-row refusals (T-5)
+# ``load_engine`` documents RideNotFoundError for a missing ride and
+# StoreError for anything else it cannot rebuild. The ride and audit
+# rows it reads are plain columns a hand-edited, truncated or older
+# file can hold in any shape, so every rebuild failure names the ride
+# (and, for replay, the audit row) rather than leaking a
+# JSONDecodeError/KeyError/TypeError/ValueError past the callers that
+# catch only RideEngineError/StoreError.
+
+
+def _audit_row_id(path: Path, ride_id: int) -> int:
+    """Return the ride's only audit row's id (arrange/assert aid)."""
+    with closing(sqlite3.connect(str(path))) as conn:
+        row = conn.execute("SELECT id FROM audit WHERE ride_id = ?", (ride_id,)).fetchone()
+    if row is None:
+        raise AssertionError(f"no audit row for ride {ride_id}")
+    return int(row[0])
+
+
+def _rewrite_audit_payload(path: Path, ride_id: int, payload_json: str) -> int:
+    """Overwrite the ride's audit payload; return the row's id."""
+    row_id = _audit_row_id(path, ride_id)
+    with closing(sqlite3.connect(str(path))) as conn:
+        conn.execute("UPDATE audit SET payload_json = ? WHERE id = ?", (payload_json, row_id))
+        conn.commit()
+    return row_id
+
+
+def _rewrite_tiebreak_order(path: Path, ride_id: int, stored: str) -> None:
+    """Overwrite the ride row's stored tiebreak_order JSON text."""
+    with closing(sqlite3.connect(str(path))) as conn:
+        conn.execute("UPDATE ride SET tiebreak_order = ? WHERE id = ?", (stored, ride_id))
+        conn.commit()
+
+
+def test_store_load_engine_given_undecodable_audit_payload_raises_store_error(
+    tmp_path: Path,
+) -> None:
+    """T-5: payload_json that is not JSON is reported, not leaked."""
+    db_path = tmp_path / "rides.db"
+    store = Store.open(db_path)
+    try:
+        ride_id = store.create_ride(_config())
+        store.append(
+            ride_id, Event(action="start", payload={"actual_start": "2026-09-20T10:00:00"})
+        )
+        row_id = _rewrite_audit_payload(db_path, ride_id, '{"actual_start": ')
+
+        with pytest.raises(StoreError, match=re.escape(f"audit row {row_id}")) as caught:
+            store.load_engine(ride_id)
+    finally:
+        store.close()
+
+    assert f"ride {ride_id}" in str(caught.value)
+    assert isinstance(caught.value.__cause__, json.JSONDecodeError)
+
+
+def test_store_load_engine_given_audit_payload_missing_a_key_raises_store_error(
+    tmp_path: Path,
+) -> None:
+    """T-5: a payload missing its timestamp key names the row."""
+    db_path = tmp_path / "rides.db"
+    store = Store.open(db_path)
+    try:
+        ride_id = store.create_ride(_config())
+        store.append(
+            ride_id, Event(action="start", payload={"actual_start": "2026-09-20T10:00:00"})
+        )
+        row_id = _rewrite_audit_payload(db_path, ride_id, "{}")
+
+        with pytest.raises(StoreError, match=re.escape(f"audit row {row_id}")) as caught:
+            store.load_engine(ride_id)
+    finally:
+        store.close()
+
+    assert f"ride {ride_id}" in str(caught.value)
+    assert isinstance(caught.value.__cause__, KeyError)
+
+
+def test_store_load_engine_given_audit_payload_bad_timestamp_raises_store_error(
+    tmp_path: Path,
+) -> None:
+    """T-5: an unparseable timestamp names the row, not ValueError."""
+    db_path = tmp_path / "rides.db"
+    store = Store.open(db_path)
+    try:
+        ride_id = store.create_ride(_config())
+        store.append(
+            ride_id, Event(action="start", payload={"actual_start": "2026-09-20T10:00:00"})
+        )
+        row_id = _rewrite_audit_payload(db_path, ride_id, '{"actual_start": "yesterday"}')
+
+        with pytest.raises(StoreError, match=re.escape(f"audit row {row_id}")) as caught:
+            store.load_engine(ride_id)
+    finally:
+        store.close()
+
+    assert f"ride {ride_id}" in str(caught.value)
+    assert isinstance(caught.value.__cause__, ValueError)
+
+
+def test_store_load_engine_given_audit_payload_that_is_not_an_object_raises_store_error(
+    tmp_path: Path,
+) -> None:
+    """T-5: a JSON array payload (unsubscriptable) names the row."""
+    db_path = tmp_path / "rides.db"
+    store = Store.open(db_path)
+    try:
+        ride_id = store.create_ride(_config())
+        store.append(
+            ride_id, Event(action="start", payload={"actual_start": "2026-09-20T10:00:00"})
+        )
+        row_id = _rewrite_audit_payload(db_path, ride_id, "[]")
+
+        with pytest.raises(StoreError, match=re.escape(f"audit row {row_id}")) as caught:
+            store.load_engine(ride_id)
+    finally:
+        store.close()
+
+    assert f"ride {ride_id}" in str(caught.value)
+    assert isinstance(caught.value.__cause__, TypeError)
+
+
+@pytest.mark.parametrize(
+    "stored",
+    [
+        "null",  # T-4 nullable: JSON null, never a list
+        "not json",  # undecodable text
+        '"laps"',  # a JSON scalar, not a list
+        "[]",  # T-4 collection: empty
+        '["laps"]',  # T-4 collection: single
+        '["laps", "high_card"]',  # T-4 min-1: two steps
+        '["laps", "high_card", "total_time", "laps"]',  # T-4 max+1: four steps
+        '["laps", "high_card", "fastest"]',  # unknown TIEBREAK_* spelling
+    ],
+    ids=[
+        "json_null",
+        "not_json",
+        "scalar",
+        "empty",
+        "single",
+        "two_steps",
+        "four_steps",
+        "unknown_step",
+    ],
+)
+def test_store_load_engine_given_an_invalid_tiebreak_order_raises_store_error(
+    tmp_path: Path, stored: str
+) -> None:
+    """T-5: only three known TIEBREAK_* spellings rebuild the config."""
+    db_path = tmp_path / "rides.db"
+    store = Store.open(db_path)
+    try:
+        ride_id = store.create_ride(_config())
+        _rewrite_tiebreak_order(db_path, ride_id, stored)
+
+        with pytest.raises(StoreError, match=re.escape(f"ride {ride_id}")) as caught:
+            store.load_engine(ride_id)
+    finally:
+        store.close()
+
+    assert "tiebreak_order" in str(caught.value)
+    assert stored in str(caught.value)
+
+
 # --------------------------------- Phase 5: jokers_mode round trip
 # The ride row's own jokers_mode column: the setup dialog's per-deck /
 # total radio pair, persisted so a reloaded ride rebuilds the same shoe
@@ -1566,7 +1731,8 @@ def test_store_previous_session_running_at_exit_carries_ride_id_and_closed_at(
 
     assert previous.state is SessionState.RUNNING_AT_EXIT
     assert previous.ride_id == ride_id
-    assert previous.ended_at == datetime.fromtimestamp(  # noqa: DTZ006 -- naive local, _from_epoch's inverse
+    # naive local, _from_epoch's inverse
+    assert previous.ended_at == datetime.fromtimestamp(  # noqa: DTZ006
         row["closed_at"]
     )
 
@@ -1593,7 +1759,8 @@ def test_store_previous_session_crashed_without_heartbeat_uses_opened_at(
 
     assert previous.state is SessionState.CRASHED
     assert previous.ride_id == ride_id
-    assert previous.ended_at == datetime.fromtimestamp(  # noqa: DTZ006 -- naive local, _from_epoch's inverse
+    # naive local, _from_epoch's inverse
+    assert previous.ended_at == datetime.fromtimestamp(  # noqa: DTZ006
         row["opened_at"]
     )
 
@@ -1606,7 +1773,8 @@ def test_store_previous_session_crashed_with_heartbeat_uses_last_heartbeat(
     ride_id = _created_ride_id(db_path)
     store = Store.open(db_path, active_ride_id=ride_id)
     heartbeat_epoch = int(
-        datetime(2026, 9, 20, 12, 37).timestamp()  # noqa: DTZ001 -- local epoch, what the store writes
+        # local epoch, what the store writes
+        datetime(2026, 9, 20, 12, 37).timestamp()  # noqa: DTZ001
     )
     with store._conn:
         store._conn.execute(
@@ -1623,7 +1791,8 @@ def test_store_previous_session_crashed_with_heartbeat_uses_last_heartbeat(
         reopened.close()
 
     assert previous.state is SessionState.CRASHED
-    assert previous.ended_at == datetime.fromtimestamp(  # noqa: DTZ006 -- naive local, _from_epoch's inverse
+    # naive local, _from_epoch's inverse
+    assert previous.ended_at == datetime.fromtimestamp(  # noqa: DTZ006
         heartbeat_epoch
     )
 
@@ -2920,6 +3089,63 @@ def test_store_audit_rows_entry_falls_back_through_plate_change_payload_keys(
         store.close()
 
     assert [row.entry for row in rows] == ["Trail Blazers", "77", "12"]
+
+
+def test_store_audit_rows_given_a_dnf_row_renders_the_carried_display(
+    tmp_path: Path,
+) -> None:
+    """A dnf row names the marked rider, never the bare entry id."""
+    db_path = tmp_path / "rides.db"
+    store = Store.open(db_path)
+    try:
+        ride_id = store.create_ride(_config(min_lap_s=1))
+        store.append(
+            ride_id,
+            Event(
+                action="dnf",
+                payload={
+                    "entry_id": "9",
+                    "plate": "45",
+                    "rider": True,
+                    "reason": "mechanical failure",
+                    "display": "45 · Sarah",
+                },
+            ),
+        )
+
+        rows = store.audit_rows(ride_id)
+    finally:
+        store.close()
+
+    assert rows[0].entry == "45 · Sarah"
+
+
+def test_store_audit_rows_given_a_dnf_row_without_a_display_falls_back(
+    tmp_path: Path,
+) -> None:
+    """T-4 nullable: a stored row predating the display keeps its id."""
+    db_path = tmp_path / "rides.db"
+    store = Store.open(db_path)
+    try:
+        ride_id = store.create_ride(_config(min_lap_s=1))
+        store.append(
+            ride_id,
+            Event(
+                action="dnf",
+                payload={
+                    "entry_id": "9",
+                    "plate": "45",
+                    "rider": True,
+                    "reason": "mechanical failure",
+                },
+            ),
+        )
+
+        rows = store.audit_rows(ride_id)
+    finally:
+        store.close()
+
+    assert rows[0].entry == "9"
 
 
 def test_store_load_engine_ignores_a_roster_plate_change_row(tmp_path: Path) -> None:

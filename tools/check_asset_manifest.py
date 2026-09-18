@@ -35,7 +35,7 @@ Run it directly to check a tree without waiting for a build::
 ``main()`` checks all five manifests -- ``verify_assets``,
 ``verify_vectors``, ``verify_templates``, ``verify_pdf_fonts`` and
 ``verify_docs`` -- so a tree missing either the ``ui/`` assets, the
-two self-test vector CSVs, the five htmlexport template artifacts, the
+two self-test vector CSVs, the six htmlexport template artifacts, the
 three PDF report TTFs or any of the five docs fails this direct check
 the same way it would fail the real build.
 """
@@ -65,9 +65,10 @@ XRC_SUBDIR = "xrc"
 CARDS_SUBDIR = "assets/cards"
 SOUNDS_SUBDIR = "assets/sounds"
 
-# spec.md section 15b, "Files (src/rivercrossing/ui/xrc/)" -- the nine
+# spec.md section 15b, "Files (src/rivercrossing/ui/xrc/)" -- the ten
 # files that hold the frozen windows (detail.xrc retired in Phase 2
-# with the Entry Detail window).
+# with the Entry Detail window; simulation.xrc joined them with the
+# Rider Simulator).
 REQUIRED_XRC: tuple[str, ...] = (
     "audit.xrc",
     "dialogs.xrc",
@@ -77,6 +78,7 @@ REQUIRED_XRC: tuple[str, ...] = (
     "riders.xrc",
     "settings.xrc",
     "setup.xrc",
+    "simulation.xrc",
     "teams.xrc",
 )
 
@@ -262,13 +264,36 @@ def missing_assets(ui_dir: Path) -> tuple[str, ...]:
     )
 
 
+def extra_xrc_files(ui_dir: Path) -> tuple[str, ...]:
+    """List the ``.xrc`` files *ui_dir* holds but the manifest does not.
+
+    The manifest is the expected set, so every other direction of drift
+    is a failure: a window file added, re-added after retirement, or
+    renamed on disk while ``REQUIRED_XRC`` still names the old one. A
+    listing-only check would agree with any such tree; set equality
+    cannot.
+    """
+    present = {entry.name for entry in (ui_dir / XRC_SUBDIR).glob("*.xrc")}
+    return tuple(sorted(present - set(REQUIRED_XRC)))
+
+
 def verify_assets(ui_dir: Path) -> None:
-    """Assert *ui_dir* holds every asset the bundle must ship.
+    """Assert *ui_dir* holds exactly the assets the bundle must ship.
+
+    Set equality, both ways: an absent required file *and* an unlisted
+    ``.xrc`` file each abort the build, so a renamed window fails here
+    rather than shipping a bundle whose loader cannot find the window
+    the app opens.
 
     Raises:
-        MissingAssetError: Naming every absent file, so one run
-            reports the whole shortfall rather than the first gap.
+        MissingAssetError: Naming every unlisted ``.xrc`` file, or
+            every absent asset -- so one run reports the whole
+            shortfall rather than the first gap.
     """
+    extra = extra_xrc_files(ui_dir)
+    if extra:
+        listed = ", ".join(f"{XRC_SUBDIR}/{name}" for name in extra)
+        raise MissingAssetError(f"xrc files not in the manifest, under {ui_dir}: {listed}")
     missing = missing_assets(ui_dir)
     if missing:
         raise MissingAssetError(f"assets missing from {ui_dir}: {', '.join(missing)}")
@@ -283,7 +308,8 @@ def data_entries(ui_dir: Path) -> list[tuple[str, str]]:
     passing the check.
 
     Raises:
-        MissingAssetError: If any required asset is absent.
+        MissingAssetError: If any required asset is absent, or the
+            tree holds an unlisted ``.xrc`` file.
     """
     verify_assets(ui_dir)
     return [

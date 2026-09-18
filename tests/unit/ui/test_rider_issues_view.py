@@ -47,7 +47,8 @@ def _config(*, planned_duration_s: int = 21600) -> RideConfig:
         lap_km=1.0,
         organizer="GORBA",
         scorer="K. Singh",
-        planned_start=datetime(2026, 9, 20, 10, 0),  # noqa: DTZ001 -- naive local, RideConfig's contract
+        # naive local, RideConfig's contract
+        planned_start=datetime(2026, 9, 20, 10, 0),  # noqa: DTZ001
         planned_duration_s=planned_duration_s,
         min_lap_s=1080,
         entry_mode=EntryMode.SOLO,
@@ -119,7 +120,8 @@ def _view_with_label() -> tuple[RiderIssuesView, _FakeLabel]:
         # 417 > 2 * 208: more than double the estimated demand.
         (
             CardCheck(shoe_cards=_DEFAULT_SHOE, expected=208, verdict=FAR_TOO_MANY),
-            "Shoe holds 417 cards · estimated 208 crossings — far too many (2×+)",  # noqa: RUF001 -- the SUT's own display glyph
+            # the SUT's own display glyph
+            "Shoe holds 417 cards · estimated 208 crossings — far too many (2×+)",  # noqa: RUF001
         ),
         (
             CardCheck(shoe_cards=_DEFAULT_SHOE, expected=209, verdict=OK),

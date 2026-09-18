@@ -185,7 +185,8 @@ class ThemeController:
     saved appearance.
     """
 
-    def __init__(self, app: Any, *, mode: ThemeMode = ThemeMode.SYSTEM) -> None:  # noqa: ANN401 -- wx ships no stubs
+    # wx ships no stubs
+    def __init__(self, app: Any, *, mode: ThemeMode = ThemeMode.SYSTEM) -> None:  # noqa: ANN401
         """Store the live *app* and apply *mode*.
 
         Args:

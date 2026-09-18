@@ -452,7 +452,8 @@ def test_run_launch_flow_without_a_log_still_resumes_the_ride(
         PreviousSession(
             state=SessionState.RUNNING_AT_EXIT,
             ride_id=7,
-            ended_at=datetime(2026, 9, 11, 11, 0),  # noqa: DTZ001 -- naive local, the store's contract
+            # naive local, the store's contract
+            ended_at=datetime(2026, 9, 11, 11, 0),  # noqa: DTZ001
         )
     )
 

@@ -82,8 +82,15 @@ def _plate_cell(row: RiderRow) -> str:
 
 
 def _name_cell(row: RiderRow) -> str:
-    """Return the Name cell: the rider's full display name."""
-    return row.name
+    """Return the Name cell: the rider's full display name.
+
+    A rider -- or an entry -- that is out of the results takes the
+    feed's own ``" DNF"`` suffix (``ui.feed_model.entry_text``): text,
+    never colour or weight alone (UX-DESKTOP §7). The Name sort key
+    stays the bare name (:func:`_name_sort_key`), so a DNF rider does
+    not jump position when the list is ordered by name.
+    """
+    return f"{row.name} DNF" if row.dnf else row.name
 
 
 def _team_cell(row: RiderRow) -> str:

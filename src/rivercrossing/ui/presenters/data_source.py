@@ -14,8 +14,14 @@ in the build order (S3) and would tie this UI-only seam to modules
 several EPICs away.
 
 Pure Python -- no ``wx`` import may ever land here (R-71).
+
+:data:`WARN` is the module's injectable warning seam -- the same shape
+as ``console.FINISH_GATE`` -- used where a display helper must degrade
+to a blank cell rather than raise: the fallback is recorded instead of
+being silently swallowed.
 """
 
+import logging
 from dataclasses import dataclass
 from datetime import datetime
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
@@ -32,7 +38,7 @@ from rivercrossing.standings import (
 from rivercrossing.ui.rider_columns import SOLO_TEAM_TEXT
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Callable, Sequence
 
     from rivercrossing.cards import Card
     from rivercrossing.ride import Crossing, Event, PendingMiss, RideEngine
@@ -40,6 +46,7 @@ if TYPE_CHECKING:
 
 __all__ = [
     "CORRECTION_ACTIONS",
+    "WARN",
     "AuditRow",
     "Counters",
     "DataSource",
@@ -55,19 +62,30 @@ __all__ = [
 ]
 
 
+# The display helpers' warning sink: where a helper must render a blank
+# cell rather than raise (a malformed stored value), the refusal is
+# recorded here instead of being silently swallowed. Tests swap the seam
+# for a recorder.
+WARN: Callable[[str], None] = logging.getLogger(__name__).warning
+
+
 @dataclass(frozen=True, slots=True)
 class FeedRow:
     """One row of the console crossings feed (main_frame's list).
 
     ``flagged`` is the short-lap review channel: a row whose lap came
     in under ``config.min_lap_s`` flags in *both* card policies, which
-    is what bolds it in the feed and lists it in the console's Needs
-    Review tab. ``held`` is the card's disposition -- True only in hold
-    mode (R-34), where the card waits uncredited for a confirm/void
-    decision; an always-deal short lap flags while its card is credited
-    (``held`` False), so the review routing reads the two bits
-    separately. ``edited`` (E7.2.2)
-    is the same visual channel for a crossing a correction touched
+    is what lists it in the console's Needs Review tab. It does not
+    bold the feed row on its own -- the feed bolds while the card is
+    ``held`` or the row is half of a live duplicate pair -- so a
+    resolved (credited or voided) short lap lists for review at
+    regular weight. ``held`` is the card's disposition -- True only in
+    hold mode (R-34), where the card waits uncredited for a
+    confirm/void decision; an always-deal short lap flags while its
+    card is credited (``held`` False), so the review routing reads the
+    two bits separately. ``edited`` (E7.2.2)
+    is the independent visual channel for a crossing a correction
+    touched
     (spec §3 design 8c: "edits highlighted in the feed"). ``missed``
     (K) marks a pending miss: the row renders Plate ``-``, Name
     ``missed`` and blank Card/Lap/Lap-time/Total until the miss is
@@ -186,7 +204,9 @@ class RiderRow:
     drawn by the lists that carry those columns (the console's
     ``console_riders_list`` adds Cards; the editor stops at Sex), so
     both default to the empty value a list without the column leaves
-    them at.
+    them at. ``dnf`` marks a rider -- or a whole entry -- that is out
+    of the results, which both lists render as a plain ``" DNF"``
+    suffix on the Name cell (:mod:`rivercrossing.ui.rider_columns`).
     """
 
     plate: str
@@ -194,6 +214,7 @@ class RiderRow:
     team: str | None = None
     sex: str | None = None
     cards: tuple[str, ...] = ()
+    dnf: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -369,7 +390,9 @@ def _event_time(event: Event) -> str:
 
     Every ride-level event payload carries at least one ISO-8601
     timestamp key (crossed_at/actual_start/stopped_at/finished_at/
-    reopened_at); the audit row shows whichever applies, locally.
+    reopened_at); the audit row shows whichever applies, locally. A
+    value that is not ISO-8601 renders ``""`` and is recorded through
+    :data:`WARN` -- the cell degrades, the corruption is not lost.
     """
     for key in ("crossed_at", "actual_start", "stopped_at", "finished_at", "reopened_at"):
         value = event.payload.get(key)
@@ -377,8 +400,29 @@ def _event_time(event: Event) -> str:
             try:
                 return _feed_time(datetime.fromisoformat(value))
             except ValueError:
+                WARN(f"audit event {event.action!r} has a malformed {key} timestamp: {value!r}")
                 return ""
     return ""
+
+
+def _audit_entry(event: Event) -> str:
+    """Return the Entry cell one audit row shows for *event*.
+
+    A ``dnf`` event carries the marked target's human display -- the
+    engine resolved it when the mark was made (``ride.py``'s
+    ``_record_dnf``, "plate · name") -- so the trail names the rider or
+    entry the row is about, never the internal entry id; a payload
+    without it (an event recorded before the display was carried, or a
+    hand-written one) keeps the plain ``entry_id``/``plate`` reading,
+    exactly like the store-backed projection
+    (``store.audit_rows``). Every other action reads those two keys and
+    nothing else.
+    """
+    if event.action == "dnf":
+        carried = event.payload.get("display")
+        if carried:
+            return str(carried)
+    return str(event.payload.get("entry_id") or event.payload.get("plate") or "")
 
 
 # E7.3.2: the audited correction actions whose arrival after an export
@@ -630,19 +674,26 @@ class _FeedContext:
 def _card_status_for(engine: RideEngine, crossing: Crossing, held_card: Card | None) -> str:
     """Return *crossing*'s card disposition: held, credited or voided.
 
-    Read by elimination, never from ``RideEngine._voided_cards``: a
-    card voided out of the hold queue (:meth:`RideEngine.void_held`)
-    is dropped, not returned to the shoe, so it never joins that set
-    and never credits either -- membership in the set would miss the
-    very case it is named for. Held comes first (R-34): a held card
-    waits uncredited; a card the entry's credited hand does not hold
-    was voided off it. *crossing* is one the engine recorded
+    Held comes first (R-34): a held card waits uncredited. A card the
+    engine has retired is voided -- read from
+    :meth:`RideEngine.is_card_voided` on this crossing's own dealt
+    object, the identity-keyed registry, because the entry's credited
+    hand matches by *value* and an eight-deck shoe routinely credits
+    one entry two cards of a code: membership alone would call a voided
+    crossing "credited" off its sibling. Otherwise the card is credited
+    when the hand holds it and voided when it does not -- the
+    elimination the registry cannot answer for, since a value match can
+    take an earlier same-code twin out of the hand on another
+    crossing's behalf. *crossing* is one the engine recorded
     (:func:`_crossing_feed_row` walks ``engine.crossings``), so the
     dealt-card lookup cannot miss.
     """
     if held_card is not None:
         return "held"
-    if engine.card_for(crossing) in engine.credited_cards(crossing.entry_id):
+    card = engine.card_for(crossing)
+    if engine.is_card_voided(card):
+        return "voided"
+    if card in engine.credited_cards(crossing.entry_id):
         return "credited"
     return "voided"
 
@@ -865,11 +916,21 @@ class EngineDataSource:
         never credited and so never shows. A solo entry's row takes
         the one rider's sex -- the roster always gives a solo entry
         exactly one rider.
+
+        Phase 5: every row also carries the DNF bit the two lists mark
+        a row with -- the entry's own verdict
+        (:meth:`RideEngine.entry_is_dnf`: a solo/relay entry's status,
+        or a pooled team every one of whose riders is out) or, for a
+        pooled team member, their own plate in
+        :attr:`RideEngine.dnf_riders`. A solo entry's DNF is always the
+        entry's (its rider is never scoped on their own), so the
+        verdict is that row's whole rule.
         """
         engine = self._engine
         rows: list[RiderRow] = []
         for entry in self._roster.entries:
             cards = tuple(card.code() for card in engine.credited_cards(entry.plate))
+            entry_dnf = engine.entry_is_dnf(entry)
             if entry.type is EntryType.TEAM:
                 rows.extend(
                     RiderRow(
@@ -878,6 +939,8 @@ class EngineDataSource:
                         team=entry.display_name,
                         sex=rider.sex,
                         cards=cards,
+                        dnf=entry_dnf
+                        or (rider.plate is not None and rider.plate in engine.dnf_riders),
                     )
                     for rider in entry.riders
                 )
@@ -888,6 +951,7 @@ class EngineDataSource:
                         name=entry.display_name,
                         sex=entry.riders[0].sex,
                         cards=cards,
+                        dnf=entry_dnf,
                     )
                 )
         return rows
@@ -948,13 +1012,15 @@ class EngineDataSource:
 
         ``reason`` is the event payload's own, so a live ride's trail
         reads exactly what the store-backed one projects from the
-        persisted payloads (scope 6d).
+        persisted payloads (scope 6d). A ``dnf`` row's Entry cell is
+        the target's carried display (:func:`_audit_entry`), never the
+        bare entry id.
         """
         return [
             AuditRow(
                 when=_event_time(event),
                 action=event.action,
-                entry=str(event.payload.get("entry_id") or event.payload.get("plate") or ""),
+                entry=_audit_entry(event),
                 reason=str(event.payload.get("reason") or ""),
             )
             for event in reversed(self._engine.events)
@@ -1015,7 +1081,8 @@ class EmptyDataSource:
 
     def standings(
         self,
-        order: tuple[TieBreak, ...] = DEFAULT_TIEBREAK_ORDER,  # noqa: ARG002 -- DataSource's signature; empty state returns no rows
+        # DataSource's signature; empty state returns no rows
+        order: tuple[TieBreak, ...] = DEFAULT_TIEBREAK_ORDER,  # noqa: ARG002
     ) -> tuple[list[StandingsRow], list[StandingsRow]]:
         """Return empty teams and solo standings sections."""
         return [], []
@@ -1024,6 +1091,7 @@ class EmptyDataSource:
         """Return no audit trail rows."""
         return []
 
-    def results_stale(self, export_watermark: int | None) -> bool:  # noqa: ARG002 -- DataSource's signature; the empty state has no events
+    # DataSource's signature; the empty state has no events
+    def results_stale(self, export_watermark: int | None) -> bool:  # noqa: ARG002
         """Return False: no ride, no events, nothing to go stale."""
         return False

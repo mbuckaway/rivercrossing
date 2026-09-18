@@ -38,9 +38,10 @@ def _row(  # noqa: PLR0913 -- one keyword per RiderRow field, with every field d
     team: str | None = None,
     sex: str | None = None,
     cards: tuple[str, ...] = (),
+    dnf: bool = False,
 ) -> RiderRow:
     """Build a minimal ``RiderRow`` varying only what a test needs."""
-    return RiderRow(plate=plate, name=name, team=team, sex=sex, cards=cards)
+    return RiderRow(plate=plate, name=name, team=team, sex=sex, cards=cards, dnf=dnf)
 
 
 def _column(label: str) -> RiderColumn:
@@ -88,6 +89,7 @@ def test_column_given_every_shared_column_is_a_rider_column() -> None:
 CELL_CASES = (
     ("Plate", _row(plate="123"), "123"),
     ("Name", _row(name="Sam Ellis"), "Sam Ellis"),
+    ("Name", _row(name="Sam Ellis", dnf=True), "Sam Ellis DNF"),
     ("Team", _row(team=None), SOLO_TEAM_TEXT),  # T-4 nullable: missing
     ("Team", _row(team=""), ""),  # T-4 nullable: present-but-empty
     ("Team", _row(team="Trail Blazers"), "Trail Blazers"),  # T-4 nullable: present
@@ -162,6 +164,21 @@ def test_name_sort_key_given_mixed_case_names_orders_case_folded() -> None:
     rows = [_row(plate="1", name="sam"), _row(plate="2", name="Zoe"), _row(plate="3", name="Alex")]
 
     assert _plates_in_sort_order("Name", rows) == ["3", "1", "2"]
+
+
+def test_name_sort_key_given_a_dnf_row_keeps_the_bare_case_folded_name() -> None:
+    """The DNF marker renders in the cell but never in the sort key."""
+    key = _column("Name").sort_key(_row(name="Sam Ellis", dnf=True))
+
+    assert key == "sam ellis"
+
+
+def test_name_column_given_a_dnf_row_and_a_healthy_twin_keeps_them_tied() -> None:
+    """A marked rider does not jump position: the keys stay equal."""
+    healthy = _row(plate="1", name="Sam Ellis")
+    marked = _row(plate="2", name="Sam Ellis", dnf=True)
+
+    assert _column("Name").sort_key(marked) == _column("Name").sort_key(healthy)
 
 
 def test_team_sort_key_given_solos_and_teams_groups_solos_first() -> None:
@@ -245,6 +262,16 @@ def test_name_sort_key_given_any_name_is_already_case_folded(name: str) -> None:
     key = _column("Name").sort_key(_row(name=name))
 
     assert key == key.casefold()
+
+
+@given(name=st.text(max_size=20), out=st.booleans())
+def test_name_cell_given_any_row_carries_the_marker_exactly_when_marked(
+    name: str, *, out: bool
+) -> None:
+    """Property: the cell carries the marker exactly when marked."""
+    cell = _column("Name").value(_row(name=name, dnf=out))
+
+    assert (cell == f"{name} DNF") is out
 
 
 _SAFE_CARD = st.text(alphabet=string.ascii_uppercase + string.digits, min_size=1, max_size=3)

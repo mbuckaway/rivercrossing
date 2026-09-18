@@ -451,7 +451,7 @@ def test_handle_export_command_picks_writes_and_records(
     assert out.exists()
     assert (context.html_export_path, context.pdf_export_path) == (out, None)
     assert context.export_watermark == 0
-    # the off-loop notice is async; the sync seam posts nothing
+    # The off-loop notice is async; the sync seam posts nothing
     assert context.frame.notices == []
 
 

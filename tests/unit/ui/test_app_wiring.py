@@ -424,3 +424,20 @@ def test_build_main_window_gives_the_console_the_hourly_backup_scheduler() -> No
 
     assert "backup_scheduler = _build_backup_scheduler(store, log)" in source
     assert "backup_scheduler=backup_scheduler" in source
+
+
+def test_build_main_window_applies_the_time_columns_at_the_no_ride_bootstrap() -> None:
+    """R-37: the persisted columns are on screen before any ride.
+
+    The no-ride console has no presenter to call ``on_time_columns``
+    on, so the bootstrap reaches the view through
+    :func:`app._apply_time_columns` -- the seam the route-level tests
+    drive directly (``test_app_write_guards.py``). What this pin adds
+    is the bootstrap call site and the ordering its guard needs: the
+    context must carry ``console_view`` before the apply runs, which
+    is why the ``replace`` moved above it.
+    """
+    source = inspect.getsource(app.build_main_window)
+
+    assert "console_view=_console" in source
+    assert source.index("console_view=_console") < source.index("_apply_time_columns(context)")

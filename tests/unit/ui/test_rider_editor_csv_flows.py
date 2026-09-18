@@ -136,7 +136,8 @@ def test_handle_export_csv_posts_success_only_for_a_written_path(
     )
     written = tmp_path / "riders.csv"
 
-    def _ok_flow(_parent: object, _roster: object, *, on_error: object) -> object:  # noqa: ARG001 -- success path never reports a failure
+    # success path never reports a failure
+    def _ok_flow(_parent: object, _roster: object, *, on_error: object) -> object:  # noqa: ARG001
         return written
 
     monkeypatch.setattr(rider_editor, "run_csv_export_flow", _ok_flow)

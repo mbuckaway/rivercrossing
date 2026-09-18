@@ -67,7 +67,8 @@ class _FakeThemeApp:
         """Start with an empty appearance call log."""
         self.appearances: list[object] = []
 
-    def SetAppearance(self, appearance: object) -> object:  # noqa: N802 -- wx.App's own name, the API theme.apply calls
+    # wx.App's own name, the API theme.apply calls
+    def SetAppearance(self, appearance: object) -> object:  # noqa: N802
         """Record the requested appearance and report success."""
         self.appearances.append(appearance)
         return wx.PyApp.AppearanceResult.Ok
@@ -104,7 +105,8 @@ class _RecordingThemeApp:
         self.result = result
         self.appearances: list[object] = []
 
-    def SetAppearance(self, appearance: object) -> object:  # noqa: N802 -- wx.App's own name, the API theme.apply calls
+    # wx.App's own name, the API theme.apply calls
+    def SetAppearance(self, appearance: object) -> object:  # noqa: N802
         """Record the appearance and return the fixed result."""
         self.appearances.append(appearance)
         return self.result
@@ -245,7 +247,8 @@ class _FakePanelDialog:
     def __init__(self) -> None:
         self.backgrounds: list[object] = []
 
-    def SetBackgroundColour(self, colour: object) -> None:  # noqa: N802 -- wx.Window's own API name, what the helper calls
+    # wx.Window's own API name, what the helper calls
+    def SetBackgroundColour(self, colour: object) -> None:  # noqa: N802
         self.backgrounds.append(colour)
 
 
@@ -255,7 +258,8 @@ class _FakeAppearance:
     def __init__(self, *, dark: bool) -> None:
         self._dark = dark
 
-    def IsDark(self) -> bool:  # noqa: N802 -- wx.SystemAppearance's own API name, what the helper calls
+    # wx.SystemAppearance's own API name, what the helper calls
+    def IsDark(self) -> bool:  # noqa: N802
         return self._dark
 
 
@@ -265,7 +269,8 @@ class _FakeSystemSettings:
     def __init__(self, *, dark: bool) -> None:
         self._appearance = _FakeAppearance(dark=dark)
 
-    def GetAppearance(self) -> _FakeAppearance:  # noqa: N802 -- wx.SystemSettings's own API name, what the helper calls
+    # wx.SystemSettings's own API name, what the helper calls
+    def GetAppearance(self) -> _FakeAppearance:  # noqa: N802
         return self._appearance
 
 
@@ -280,7 +285,8 @@ class _FakeWx:
         self.SystemSettings = _FakeSystemSettings(dark=dark)
         self.colour_rgb: list[tuple[int, int, int]] = []
 
-    def Colour(self, red: int, green: int, blue: int) -> tuple[int, int, int]:  # noqa: N802 -- wx.Colour's own API name, what the helper calls
+    # wx.Colour's own API name, what the helper calls
+    def Colour(self, red: int, green: int, blue: int) -> tuple[int, int, int]:  # noqa: N802
         self.colour_rgb.append((red, green, blue))
         return (red, green, blue)
 

@@ -284,3 +284,70 @@ def test_required_templates_declares_the_poster_page_beside_the_results_page() -
 def test_missing_templates_given_the_real_source_tree_finds_nothing_absent() -> None:
     """The tree both the wheel and the bundle are built from."""
     assert manifest.missing_templates(_PACKAGE_DIR) == ()
+
+
+# -------------------------------------------------- the xrc drift guard
+
+# E1.3.1 / E11: the ten ``.xrc`` files come from spec.md section 15b's
+# file map -- ``simulation.xrc`` joined the original nine with the
+# Rider Simulator. The manifest is the only authority on which files
+# ship, so the check runs both ways: an absent file and an unlisted
+# file both fail the build. Otherwise a renamed window would leave the
+# manifest naming a file that is gone while shipping one the loader
+# never opens.
+
+
+def test_required_xrc_declares_the_ten_window_files_including_simulation() -> None:
+    """A window file disappearing must shrink this, not the suite."""
+    assert len(manifest.REQUIRED_XRC) == 10
+    assert "simulation.xrc" in manifest.REQUIRED_XRC
+
+
+def test_extra_xrc_files_given_the_real_source_tree_finds_no_extras() -> None:
+    """The tree both the wheel and the bundle are built from."""
+    assert manifest.extra_xrc_files(manifest.DEFAULT_UI_DIR) == ()
+
+
+def test_extra_xrc_files_given_an_unlisted_file_names_only_it(tmp_path: Path) -> None:
+    """The guard names the stray, so a rename is a one-look fix."""
+    shutil.copytree(manifest.DEFAULT_UI_DIR / manifest.XRC_SUBDIR, tmp_path / manifest.XRC_SUBDIR)
+    (tmp_path / manifest.XRC_SUBDIR / "stray.xrc").write_text("", encoding="utf-8")
+
+    assert manifest.extra_xrc_files(tmp_path) == ("stray.xrc",)
+
+
+def test_extra_xrc_files_given_several_unlisted_files_names_them_sorted(tmp_path: Path) -> None:
+    """Many strays: the whole set, in a stable order for the caller."""
+    shutil.copytree(manifest.DEFAULT_UI_DIR / manifest.XRC_SUBDIR, tmp_path / manifest.XRC_SUBDIR)
+    (tmp_path / manifest.XRC_SUBDIR / "zeta.xrc").write_text("", encoding="utf-8")
+    (tmp_path / manifest.XRC_SUBDIR / "alpha.xrc").write_text("", encoding="utf-8")
+
+    assert manifest.extra_xrc_files(tmp_path) == ("alpha.xrc", "zeta.xrc")
+
+
+def test_verify_assets_given_a_stray_xrc_names_the_unlisted_file(tmp_path: Path) -> None:
+    """T-5 negative: an extra ``.xrc`` fails the manifest check."""
+    shutil.copytree(manifest.DEFAULT_UI_DIR / manifest.XRC_SUBDIR, tmp_path / manifest.XRC_SUBDIR)
+    (tmp_path / manifest.XRC_SUBDIR / "stray.xrc").write_text("", encoding="utf-8")
+
+    with pytest.raises(manifest.MissingAssetError, match=re.escape("xrc/stray.xrc")):
+        manifest.verify_assets(tmp_path)
+
+
+def test_data_entries_given_a_stray_xrc_raises_instead_of_listing_entries(
+    tmp_path: Path,
+) -> None:
+    """The spec cannot obtain its datas from a drifted tree."""
+    shutil.copytree(manifest.DEFAULT_UI_DIR / manifest.XRC_SUBDIR, tmp_path / manifest.XRC_SUBDIR)
+    (tmp_path / manifest.XRC_SUBDIR / "stray.xrc").write_text("", encoding="utf-8")
+
+    with pytest.raises(manifest.MissingAssetError, match=re.escape("xrc/stray.xrc")):
+        manifest.data_entries(tmp_path)
+
+
+def test_verify_assets_given_a_tree_without_the_card_bitmaps_names_them(tmp_path: Path) -> None:
+    """T-5 negative: the absent half of the same check still fires."""
+    shutil.copytree(manifest.DEFAULT_UI_DIR / manifest.XRC_SUBDIR, tmp_path / manifest.XRC_SUBDIR)
+
+    with pytest.raises(manifest.MissingAssetError, match=re.escape("assets/cards/")):
+        manifest.verify_assets(tmp_path)

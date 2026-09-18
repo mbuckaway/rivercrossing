@@ -46,7 +46,8 @@ _VALID_KWARGS: dict[str, object] = {
     "lap_km": 8.0,
     "organizer": "GORBA",
     "scorer": "K. Singh",
-    "planned_start": datetime(2026, 9, 20, 10, 0),  # noqa: DTZ001 -- naive by design, RideConfig's own convention
+    # naive by design, RideConfig's own convention
+    "planned_start": datetime(2026, 9, 20, 10, 0),  # noqa: DTZ001
     "planned_duration_s": 21600,
     "min_lap_s": 1080,  # 18 min: every 10:3x crossing below is a normal lap
     "entry_mode": EntryMode.MIXED,
@@ -77,7 +78,8 @@ class _FakeClock:
 
 def _dt(hour: int, minute: int = 0, second: int = 0) -> datetime:
     """Build a naive datetime on the fixed day, Sept 20, 2026."""
-    return datetime(2026, 9, 20, hour, minute, second)  # noqa: DTZ001 -- naive by design, as RideConfig's planned_start
+    # naive by design, as RideConfig's planned_start
+    return datetime(2026, 9, 20, hour, minute, second)  # noqa: DTZ001
 
 
 def _pooled_team_roster() -> Roster:
@@ -518,6 +520,29 @@ def test_reassign_crossing_voided_card_is_not_recredited_to_the_new_entry() -> N
     assert results["12"].cards == (first.card,)  # only the live card stays
 
 
+def test_reassign_crossing_void_held_card_is_not_recredited_to_the_new_entry() -> None:
+    """A review-panel void retires its card exactly as void_card does.
+
+    ``void_held`` records the card in the same ``_voided_cards``
+    registry ``void_card`` uses, so reassigning the crossing moves the
+    lap to the destination but never resurrects the voided card into
+    the destination entry's hand.
+    """
+    engine, _ = _make_engine(config=_config(hold_short_laps=True, min_lap_s=1080))
+    engine.start()
+    first = engine.record_crossing("12", at=_dt(10, 30))
+    engine.record_crossing("12", at=_dt(10, 0, 30))  # short lap -> held
+    held = engine.held_crossings()[0]
+    engine.void_held(held.crossing)
+
+    engine.reassign_crossing(2, "34", reason="mis-keyed plate")
+
+    results = {entry.plate: entry for entry in engine.snapshot()}
+    assert results["34"].laps == 1  # the crossing itself moved plates
+    assert results["34"].cards == ()  # but its voided card never re-credits
+    assert results["12"].cards == (first.card,)  # only the live card stays
+
+
 def test_reassign_crossing_empty_reason_is_refused() -> None:
     """A reassign with no reason is refused outright (R-33)."""
     engine, _ = _make_engine()
@@ -585,6 +610,7 @@ def test_mark_dnf_audits_entry_plate_scope_and_reason() -> None:
             "plate": "12",
             "rider": False,
             "reason": "mechanical failure",
+            "display": "12 · Rider 12",
         },
     )
     assert len(engine.events) == before + 1
@@ -619,6 +645,7 @@ def test_mark_dnf_pooled_rider_plate_marks_that_rider_not_the_team() -> None:
         "plate": "45",
         "rider": True,
         "reason": "mechanical failure",
+        "display": "45 · Sarah",
     }
     results = {entry.plate: entry for entry in engine.snapshot()}
     assert results["9"].dnf is False
@@ -645,6 +672,7 @@ def test_mark_dnf_relay_team_plate_marks_the_whole_entry() -> None:
         "plate": "77",
         "rider": False,
         "reason": "mechanical failure",
+        "display": "77 · Trail Blazers",
     }
     results = {result.plate: result for result in engine.snapshot()}
     assert results["77"].dnf is True
@@ -920,7 +948,35 @@ def test_apply_dnf_event_marks_the_entry() -> None:
 
     results = {entry.plate: entry for entry in engine.snapshot()}
     assert results["12"].dnf is True
-    assert engine.events[-1] == event
+    assert engine.events[-1].payload == {**event.payload, "display": "12 · Rider 12"}
+
+
+def test_apply_dnf_event_given_an_audit_only_display_ignores_it() -> None:
+    """Replay reads the four state keys only: the display is audit-only.
+
+    A persisted row's ``display`` is never fed back into the engine's
+    state (``apply`` re-derives it from the roster it loaded), so a
+    payload whose display says anything at all still replays to the
+    same DNF mark.
+    """
+    engine, _ = _make_engine()
+    engine.start(at=_dt(10, 0))
+    event = Event(
+        action="dnf",
+        payload={
+            "entry_id": "12",
+            "plate": "12",
+            "rider": False,
+            "reason": "mechanical failure",
+            "display": "999 · Nobody",
+        },
+    )
+
+    engine.apply(event)
+
+    results = {entry.plate: entry for entry in engine.snapshot()}
+    assert results["12"].dnf is True
+    assert engine.events[-1].payload["display"] == "12 · Rider 12"
 
 
 def test_apply_dnf_rider_event_marks_the_rider_scope_from_the_payload() -> None:

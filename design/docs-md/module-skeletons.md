@@ -311,7 +311,7 @@ class ConsoleView(Protocol):   show_feed(rows) · show_counters(c) · flash_cros
                                show_notice(text) · clear_entry()   # Phase 8: entry-row feedback
 class ConsolePresenter:        on_plate_entered(text) · on_undo() · on_start() · on_finish()
                                on_stop_requested() · on_stop_confirmed() · on_reopen()
-                               on_time_columns(*, show_total, show_lap) · tick()
+                               on_time_columns(*, show_total, show_lap) · tick() · refresh_state()
                                # arm-to-stop is retired; hide-times is on_time_columns (R-37)
 # same pattern: SetupPresenter (7a radios, defaults per §13) · RidersPresenter (csv;
 # AddRiderPresenter/EditRiderPresenter) · ResultsPresenter (1f flags — its tie-break order

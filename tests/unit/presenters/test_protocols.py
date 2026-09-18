@@ -358,7 +358,8 @@ class FakeDataSource:
 
     def standings(
         self,
-        order: tuple[TieBreak, ...] = DEFAULT_TIEBREAK_ORDER,  # noqa: ARG002 -- DataSource's signature; the fake ignores order
+        # DataSource's signature; the fake ignores order
+        order: tuple[TieBreak, ...] = DEFAULT_TIEBREAK_ORDER,  # noqa: ARG002
     ) -> tuple[list[StandingsRow], list[StandingsRow]]:
         """Return one fixed team standings row for any order."""
         return [
@@ -377,7 +378,8 @@ class FakeDataSource:
         """Return one fixed audit row."""
         return [AuditRow(when="14:23:02", action="void_crossing", entry="45", reason="mis-key")]
 
-    def results_stale(self, export_watermark: int | None) -> bool:  # noqa: ARG002 -- DataSource's signature; the fake is never stale
+    # DataSource's signature; the fake is never stale
+    def results_stale(self, export_watermark: int | None) -> bool:  # noqa: ARG002
         """Return False: the fake publishes nothing that goes stale."""
         return False
 
@@ -413,7 +415,8 @@ def test_results_view_protocol_given_the_reworked_dialog_declares_two_members() 
     ``FakeResultsView`` above implements exactly these two, so it is
     the isinstance case that fails the day one of them returns.
     """
-    declared = set(getattr(ResultsView, "__protocol_attrs__"))  # noqa: B009 -- the Protocol's own member set
+    # the Protocol's own member set
+    declared = set(getattr(ResultsView, "__protocol_attrs__"))  # noqa: B009
 
     assert declared == {"show_standings", "set_stale"}
 

@@ -662,7 +662,8 @@ PREVIEW_FLAG_CASES = (False, True)
 @pytest.mark.parametrize(
     ("status", "exported", "expected_enabled"), PREVIEW_CASES, ids=PREVIEW_CASE_IDS
 )
-def test_is_route_enabled_given_preview_requires_finished_and_its_format_export(  # noqa: PLR0913 -- the T-13 row inputs
+# the T-13 row inputs
+def test_is_route_enabled_given_preview_requires_finished_and_its_format_export(  # noqa: PLR0913
     route: commands.MenuRoute,
     field: str,
     status: RideStatus,
@@ -687,7 +688,8 @@ def test_is_route_enabled_given_preview_requires_finished_and_its_format_export(
 @pytest.mark.parametrize(
     "other_exported", PREVIEW_FLAG_CASES, ids=("other_missing", "other_present")
 )
-def test_is_route_enabled_given_preview_ignores_the_other_formats_exports(  # noqa: PLR0913 -- the T-13 row inputs
+# the T-13 row inputs
+def test_is_route_enabled_given_preview_ignores_the_other_formats_exports(  # noqa: PLR0913
     route: commands.MenuRoute, own_field: str, *, own_exported: bool, other_exported: bool
 ) -> None:
     """T-13: the other formats' exports never enable this row."""

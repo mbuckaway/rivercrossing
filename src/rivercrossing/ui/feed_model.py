@@ -40,12 +40,13 @@ __all__ = [
     "COL_TOTAL",
     "LAP_TIME_COLUMN",
     "TOTAL_COLUMN",
+    "card_cell_text",
     "card_status_text",
     "card_text_or_blank",
     "edited_row_indexes",
     "entry_text",
-    "flagged_row_indexes",
     "flash_crossing_label",
+    "held_duplicate_row_indexes",
     "lap_text",
     "review_issue",
 ]
@@ -179,9 +180,10 @@ def entry_text(row: FeedRow) -> str:
 
     The DNF marker (Phase 4): a row whose rider -- or whose whole
     entry -- is out of the results renders a plain ``" DNF"`` suffix.
-    Text, not a second bold channel: ``GetAttrByRow`` already carries
-    the flagged/edited bold, and CODINGSTANDARDS-UX-DESKTOP.md §7
-    forbids conveying meaning by colour or weight alone.
+    Text, not another bold channel: ``GetAttrByRow`` already carries
+    the held/duplicate/edited bold, and
+    CODINGSTANDARDS-UX-DESKTOP.md §7 forbids conveying meaning by
+    colour or weight alone.
     """
     return f"{row.entry} DNF" if row.dnf else row.entry
 
@@ -229,20 +231,39 @@ def card_status_text(row: FeedRow) -> str:
     return _CARD_STATUS_TEXTS[row.card_status]
 
 
-def flagged_row_indexes(rows: Sequence[FeedRow]) -> frozenset[int]:
-    """Return the indexes of every flagged row in *rows* (R-34)."""
-    return frozenset(index for index, row in enumerate(rows) if row.flagged)
+def card_cell_text(row: FeedRow) -> str:
+    """Return the feed Card column's cell text for *row*.
+
+    A voided card reads "Void" -- the card is out of the ride, so its
+    glyph would mislead -- while a held, credited or duplicate row
+    keeps the real dealt card's glyph.
+    """
+    if row.card_status == "voided":
+        return _CARD_STATUS_TEXTS["voided"]
+    return card_text_or_blank(row.card)
+
+
+def held_duplicate_row_indexes(rows: Sequence[FeedRow]) -> frozenset[int]:
+    """Return the indexes of every bold row in *rows* (R-34, Phase 3).
+
+    The feed's error highlight: a row bolds while its card is held for
+    review (awaiting confirm/void) or the row is half of a duplicate
+    pair. A credited row -- a resolved confirm, or an always-deal short
+    lap -- is not bold; confirming or voiding a held card unbolds the
+    row, and returning it to held bolds it again.
+    """
+    return frozenset(index for index, row in enumerate(rows) if row.held or row.duplicate)
 
 
 def edited_row_indexes(rows: Sequence[FeedRow]) -> frozenset[int]:
     """Return the indexes of every edited row in *rows* (E7.2.2).
 
-    The feed's second bold channel: a crossing a correction touched
-    (edit/void/add-at-time/reassign -- the ``FeedRow.edited`` flag set
-    by ``EngineDataSource.feed_rows`` from the engine's event log)
-    renders bold like a flagged (short-lap) row does (R-34). Pure, so
+    The feed's independent second bold channel: a crossing a correction
+    touched (edit/void/add-at-time/reassign -- the ``FeedRow.edited``
+    flag set by ``EngineDataSource.feed_rows`` from the engine's event
+    log) renders bold whatever its card's disposition (R-34). Pure, so
     the wx-facing ``CrossingsFeedModel`` can delegate the decision
-    here, exactly as it does for :func:`flagged_row_indexes`.
+    here, exactly as it does for :func:`held_duplicate_row_indexes`.
     """
     return frozenset(index for index, row in enumerate(rows) if row.edited)
 

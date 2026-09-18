@@ -121,7 +121,9 @@ def _apply_fonts(window: Any, percent: int) -> None:  # noqa: ANN401 -- wx ships
     base_font = getattr(window, "_zoom_base_font", None)
     if base_font is None:
         base_font = window.GetFont()
-        window._zoom_base_font = base_font  # noqa: SLF001 -- the E8.1.4 capture attribute, deliberately a plain window attribute
+        # the E8.1.4 capture attribute, deliberately a plain window
+        # attribute
+        window._zoom_base_font = base_font  # noqa: SLF001
     window.SetFont(_scaled_font(base_font, percent))
     for child in window.GetChildren():
         _apply_fonts(child, percent)

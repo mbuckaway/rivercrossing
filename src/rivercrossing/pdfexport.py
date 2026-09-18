@@ -698,7 +698,8 @@ class _PosterPDF(FPDF):
     -- no "Page n of N", there is only one page.
     """
 
-    def __init__(  # noqa: PLR0913 -- (ride, letter, created_at, logo_path): the poster's state inputs
+    # (ride, letter, created_at, logo_path): the poster's state inputs
+    def __init__(  # noqa: PLR0913
         self, ride: _RideLike, *, letter: bool, created_at: datetime, logo_path: Path | str | None
     ) -> None:
         """Open one poster: geometry, fonts, metadata, footer stamp.
@@ -847,7 +848,9 @@ class _ReportPDF(FPDF):
     export's order, one drawer per planned section.
     """
 
-    def __init__(  # noqa: PLR0913 -- (ride, opts, letter, created_at, logo_path): the report's state inputs
+    # (ride, opts, letter, created_at, logo_path): the report's state
+    # inputs
+    def __init__(  # noqa: PLR0913
         self,
         ride: _RideLike,
         opts: ExportOptions,
@@ -1422,10 +1425,13 @@ def _atomic_write_bytes(path: Path | str, data: bytes) -> None:
     destination = Path(path)
     tmp = destination.with_name(destination.name + ".tmp")
     tmp.write_bytes(data)
-    os.replace(tmp, destination)  # noqa: PTH105 -- R-52 mandates the os.replace atomic swap; tests patch it
+    # R-52 mandates the os.replace atomic swap; tests patch it
+    os.replace(tmp, destination)  # noqa: PTH105
 
 
-def render(  # noqa: PLR0913, PLR0917 -- module-skeletons.md's frozen (ride, placed, opts, path) plus the letter/created_at/logo seams
+# module-skeletons.md's frozen (ride, placed, opts, path) plus the
+# letter/created_at/logo seams
+def render(  # noqa: PLR0913, PLR0917
     ride: _RideLike,
     placed: Sequence[Placed],
     opts: ExportOptions,
@@ -1474,7 +1480,9 @@ def render(  # noqa: PLR0913, PLR0917 -- module-skeletons.md's frozen (ride, pla
     _atomic_write_bytes(path, data)
 
 
-def podium_poster(  # noqa: PLR0913 -- module-skeletons.md's frozen (ride, placed, path) plus the letter/created_at/logo seams
+# module-skeletons.md's frozen (ride, placed, path) plus the
+# letter/created_at/logo seams
+def podium_poster(  # noqa: PLR0913
     ride: _RideLike,
     placed: Sequence[Placed],
     path: Path | str,

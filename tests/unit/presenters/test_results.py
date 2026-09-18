@@ -362,7 +362,8 @@ def _engine_source_with_correction() -> tuple[RideEngine, EngineDataSource]:
         lap_km=8.0,
         organizer="GORBA",
         scorer="K. Singh",
-        planned_start=datetime(2026, 9, 20, 10, 0),  # noqa: DTZ001 -- naive, RideConfig's own contract
+        # naive, RideConfig's own contract
+        planned_start=datetime(2026, 9, 20, 10, 0),  # noqa: DTZ001
         planned_duration_s=21600,
         min_lap_s=1,
         entry_mode=EntryMode.MIXED,
@@ -372,7 +373,8 @@ def _engine_source_with_correction() -> tuple[RideEngine, EngineDataSource]:
     engine = RideEngine(
         config=config,
         shoe=shoe,
-        clock=lambda: datetime(2026, 9, 20, 10, 0),  # noqa: DTZ001 -- naive clock, matching the naive crossing instants
+        # naive clock, matching the naive crossing instants
+        clock=lambda: datetime(2026, 9, 20, 10, 0),  # noqa: DTZ001
         roster=roster,
     )
     engine.start()

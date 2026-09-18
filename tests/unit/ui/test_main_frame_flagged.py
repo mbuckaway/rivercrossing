@@ -6,8 +6,8 @@ the operator's attention: a **held** card (hold mode, R-34) awaiting a
 confirm/void decision, a **credited** short lap (always-deal mode) whose
 crossing detail the operator opens, and both halves of a live
 **duplicate** pair (Phase 3). Six columns name each row -- Issue |
-Card | Plate | Lap | Rider | Team -- and the "Show Held Cards Only" box
-narrows the tab to the rows that still hold a card.
+Card | Plate | Lap | Lap time | Rider -- and the "Show Held Cards Only"
+box narrows the tab to the rows that still hold a card.
 
 The tab's ``flagged_list`` and the sidebar's ``review_btn`` hand the app
 the activated row's plate, its card disposition (``card_status``) and
@@ -42,6 +42,7 @@ def _row(  # noqa: PLR0913 -- one keyword per feed field a test varies
     *,
     plate: str = "12",
     lap: int = 3,
+    lap_time: str = "0:05",
     entry: str = "Rider 12",
     team: str = "Trail Blazers",
     card_status: str = "credited",
@@ -56,7 +57,7 @@ def _row(  # noqa: PLR0913 -- one keyword per feed field a test varies
         plate=plate,
         entry=entry,
         lap=lap,
-        lap_time="0:05",
+        lap_time=lap_time,
         total="0:05",
         card="9H",
         team=team,
@@ -102,7 +103,7 @@ def test_flagged_list_model_keeps_the_six_review_columns() -> None:
 
     assert (model.GetColumnCount(), main_frame.FLAG_COLUMN_LABELS) == (
         6,
-        ("Issue", "Card", "Plate", "Lap", "Rider", "Team"),
+        ("Issue", "Card", "Plate", "Lap", "Lap time", "Rider"),
     )
     assert main_frame.FLAG_COL_ISSUE == 0
 
@@ -114,14 +115,14 @@ def test_flagged_column_indexes_given_the_canvas_order_name_each_cell() -> None:
         main_frame.FLAG_COL_CARD,
         main_frame.FLAG_COL_PLATE,
         main_frame.FLAG_COL_LAP,
+        main_frame.FLAG_COL_LAP_TIME,
         main_frame.FLAG_COL_RIDER,
-        main_frame.FLAG_COL_TEAM,
     ) == (0, 1, 2, 3, 4, 5)
 
 
 def test_flagged_column_widths_given_the_six_labels_pin_one_width_each() -> None:
     """Every column carries its own width, so no cell truncates."""
-    assert main_frame.FLAG_COLUMN_WIDTHS == (136, 76, 64, 52, 256, 136)
+    assert main_frame.FLAG_COLUMN_WIDTHS == (136, 76, 64, 52, 48, 256)
     assert len(main_frame.FLAG_COLUMN_WIDTHS) == len(main_frame.FLAG_COLUMN_LABELS)
 
 
@@ -132,10 +133,10 @@ def test_flagged_column_widths_given_the_six_labels_pin_one_width_each() -> None
         (1, "Credited"),
         (2, "12"),
         (3, "3"),
-        (4, "Rider 12"),
-        (5, "Trail Blazers"),
+        (4, "0:05"),
+        (5, "Rider 12"),
     ],
-    ids=["issue", "card", "plate", "lap", "rider", "team"],
+    ids=["issue", "card", "plate", "lap", "lap-time", "rider"],
 )
 def test_flagged_list_model_given_a_credited_row_renders_its_six_cells(
     col: int, expected: str
@@ -144,6 +145,20 @@ def test_flagged_list_model_given_a_credited_row_renders_its_six_cells(
     model = main_frame.FlaggedListModel([_row()])
 
     assert model.GetValueByRow(0, col) == expected
+
+
+def test_flagged_list_model_given_a_distinct_lap_time_shows_that_cell() -> None:
+    """T-4: the cell reads ``lap_time``, not the row's total."""
+    model = main_frame.FlaggedListModel([_row(lap_time="0:07")])
+
+    assert model.GetValueByRow(0, main_frame.FLAG_COL_LAP_TIME) == "0:07"
+
+
+def test_flagged_list_model_given_a_miss_row_shows_an_empty_lap_time_cell() -> None:
+    """T-4: a miss row carries no lap time, so its cell is blank."""
+    model = main_frame.FlaggedListModel([_row(lap_time="", flagged=False)])
+
+    assert model.GetValueByRow(0, main_frame.FLAG_COL_LAP_TIME) == ""
 
 
 @pytest.mark.parametrize(
@@ -218,7 +233,11 @@ def test_flagged_list_model_given_rows_keeps_the_six_columns_for_every_size(
     """T-4: an empty review tab is still a six-column model."""
     model = main_frame.FlaggedListModel(rows)
 
-    assert (model.GetCount(), model.GetColumnCount()) == (expected_count, 6)
+    assert (
+        model.GetCount(),
+        model.GetColumnCount(),
+        len(main_frame.FLAG_COLUMN_LABELS),
+    ) == (expected_count, 6, 6)
 
 
 # ---------------------------------------------------------- the columns
@@ -256,10 +275,10 @@ def test_build_flagged_columns_given_the_six_labels_appends_each_with_its_width(
         ("Card", 1, 76),
         ("Plate", 2, 64),
         ("Lap", 3, 52),
-        ("Rider", 4, 256),
-        ("Team", 5, 136),
+        ("Lap time", 4, 48),
+        ("Rider", 5, 256),
     ]
-    assert columns == ("Issue", "Card", "Plate", "Lap", "Rider", "Team")
+    assert columns == ("Issue", "Card", "Plate", "Lap", "Lap time", "Rider")
 
 
 # ------------------------------------------------------------ doubles

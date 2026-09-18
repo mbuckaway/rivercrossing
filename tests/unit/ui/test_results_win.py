@@ -25,7 +25,11 @@ style:
 - :meth:`ResultsWindow._apply_min_size`'s ten-row floor on the three
   standings lists (D16) -- the ``STANDINGS_*`` constants pinned, and
   the ``SetMinSize`` argument captured by a recording control double
-  per list.
+  per list;
+- the dialog's own ``<title>`` and F5's action, both read headlessly:
+  the title from ``results.xrc`` as pure XML (its frozen ``results_dlg``
+  name is pinned beside it), the action from
+  :data:`~rivercrossing.ui.accelerators.ACCELERATOR_TABLE`.
 
 The live layout -- real columns on real controls -- stays with the
 (functional) suite.
@@ -33,15 +37,17 @@ The live layout -- real columns on real controls -- stays with the
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 import pytest
 import wx
+from defusedxml.ElementTree import parse
 from hypothesis import given
 from hypothesis import strategies as st
 
 from rivercrossing.roster import EntryMode, PlateModel
-from rivercrossing.ui import std_dialogs
+from rivercrossing.ui import accelerators, std_dialogs
 from rivercrossing.ui.presenters.data_source import StandingsRow
 from rivercrossing.ui.views import results_win
 from rivercrossing.ui.views.results_win import (
@@ -64,6 +70,11 @@ from rivercrossing.ui.views.results_win import (
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
+    from xml.etree.ElementTree import Element
+
+XRC_DIR = Path(__file__).resolve().parents[3] / "src" / "rivercrossing" / "ui" / "xrc"
+
+RESULTS_DLG = "results_dlg"
 
 
 def _row(  # noqa: PLR0913 -- a fixture builder mirroring StandingsRow's fields
@@ -96,6 +107,44 @@ def _row(  # noqa: PLR0913 -- a fixture builder mirroring StandingsRow's fields
         best_lap=best_lap,
         best_lap_seconds=best_lap_seconds,
     )
+
+
+# ------------------------------ the window title and its accelerator
+#
+# The dialog's ``<title>`` is read as pure XML: wx exposes a window's
+# title only on a loaded window, which needs a display. The F5 row is
+# read straight off the accelerator table, as test_accelerators.py
+# does.
+
+
+def _results_dialog() -> Element:
+    """Return results.xrc's top-level ``results_dlg`` object."""
+    root = parse(XRC_DIR / "results.xrc").getroot()
+    return next(
+        obj
+        for obj in root.findall("object")
+        if obj.get("class") == "wxDialog" and obj.get("name") == RESULTS_DLG
+    )
+
+
+def _text(element: Element, tag: str) -> str:
+    """Return *element*'s ``<tag>`` text, or "" when absent/empty."""
+    child = element.find(tag)
+    return child.text if child is not None and child.text is not None else ""
+
+
+def test_results_dlg_title_given_the_xrc_reads_standings() -> None:
+    """The window is titled "Standings"; its name is unchanged."""
+    dialog = _results_dialog()
+
+    assert (_text(dialog, "title"), dialog.get("name")) == ("Standings", RESULTS_DLG)
+
+
+def test_f5_accelerator_action_given_the_table_drops_the_results_window_wording() -> None:
+    """F5's row names the window, not the dialog's old title."""
+    row = next(row for row in accelerators.ACCELERATOR_TABLE if row.key == "F5")
+
+    assert (row.action, "Results window" in row.action) == ("Standings window", False)
 
 
 # ------------------------------------------------------ the columns
@@ -429,7 +478,8 @@ ASCENDING_IDS = ("ascending", "descending")
 
 @pytest.mark.parametrize(("ascending", "expected"), ASCENDING_CASES, ids=ASCENDING_IDS)
 @pytest.mark.parametrize(("col", "lower", "higher"), ORDER_CASES, ids=ORDER_CASE_IDS)
-def test_standings_compare_given_two_rows_orders_by_the_column_key(  # noqa: PLR0913 -- the two rows, the column and the arrow
+# the two rows, the column and the arrow
+def test_standings_compare_given_two_rows_orders_by_the_column_key(  # noqa: PLR0913
     col: int, lower: StandingsRow, higher: StandingsRow, *, ascending: bool, expected: int
 ) -> None:
     """Each column's key orders the rows; the arrow flips a result."""
@@ -456,7 +506,8 @@ def test_standings_compare_given_reversed_equal_key_rows_orders_by_position() ->
     """T-3: the tie-break follows the row index, not the item."""
     shell = _CompareShell([_row(place=1), _row(place=1)])
 
-    result = StandingsListModel.Compare(shell, 1, 0, COL_PLACE, True)  # noqa: FBT003 -- wx's positional bool
+    # wx's positional bool
+    result = StandingsListModel.Compare(shell, 1, 0, COL_PLACE, True)  # noqa: FBT003
 
     assert result == 1
 
@@ -471,7 +522,8 @@ def test_standings_compare_given_the_laps_column_orders_numerically_not_as_text(
     nine = _row(laps=9)
     shell = _CompareShell([ten, nine])
 
-    result = StandingsListModel.Compare(shell, 0, 1, COL_LAPS, True)  # noqa: FBT003 -- wx's positional bool
+    # wx's positional bool
+    result = StandingsListModel.Compare(shell, 0, 1, COL_LAPS, True)  # noqa: FBT003
 
     assert result == 1
 
@@ -482,7 +534,8 @@ def test_standings_compare_given_the_place_column_orders_numerically_not_as_text
     ninth = _row(place=9)
     shell = _CompareShell([tenth, ninth])
 
-    result = StandingsListModel.Compare(shell, 0, 1, COL_PLACE, True)  # noqa: FBT003 -- wx's positional bool
+    # wx's positional bool
+    result = StandingsListModel.Compare(shell, 0, 1, COL_PLACE, True)  # noqa: FBT003
 
     assert result == 1
 

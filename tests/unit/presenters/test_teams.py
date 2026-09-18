@@ -1020,7 +1020,8 @@ def test_teams_list_model_compare_given_equal_rider_counts_ties_on_the_name() ->
     count_a=st.integers(0, 12),
     count_b=st.integers(0, 12),
 )
-def test_teams_list_model_compare_is_antisymmetric(  # noqa: PLR0913, PLR0917 -- the row's four fields
+# the row's four fields
+def test_teams_list_model_compare_is_antisymmetric(  # noqa: PLR0913, PLR0917
     name_a: str,
     name_b: str,
     count_a: int,
@@ -1054,7 +1055,8 @@ def test_teams_list_model_compare_is_antisymmetric(  # noqa: PLR0913, PLR0917 --
         pytest.param(48, 64, (96, 128), True, (96, 128), id="card_2x_upscales_to_card_box"),
     ],
 )
-def test_logo_fit_size_scales_into_the_bounded_box_preserving_aspect(  # noqa: PLR0913, PLR0917 -- the parametrize row's five fields
+# the parametrize row's five fields
+def test_logo_fit_size_scales_into_the_bounded_box_preserving_aspect(  # noqa: PLR0913, PLR0917
     width: int,
     height: int,
     within: tuple[int, int],

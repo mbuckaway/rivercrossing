@@ -8,6 +8,7 @@ read-only ``EngineDataSource`` serves feed/counters/status, and the
 view is a recording fake. These tests drive the presenter's event
 handlers against a real ``RideEngine``/``Roster``/``Shoe`` (never wx),
 asserting the cue fired (spec §10), the feed/counters refreshed, the
+notice every entry posts (accepted, flagged, missed or refused), the
 field cleared or kept (R-31), the Stop guard flow (R-35), time-column
 forwarding (R-37), tick refresh, and the E6.4.3 finish-gate hook
 consulted before finishing. WS-D/WS-H grow the console with the
@@ -15,7 +16,9 @@ gauge-clock channel (dial fractions from ``planned_duration_s``, the
 stop-light mode mapping) and the review tabs (the flagged feed subset
 and the riders rows, both refreshed in ``tick``). C2 makes
 ``refresh_console_gates`` the single source for Start/Stop/Undo and
-C3 freezes the clock for a closed (FINISHED/REOPENED) ride.
+C3 freezes the clock for a closed (FINISHED/REOPENED) ride;
+``refresh_state`` is the one refresh the console transitions and the
+app's write routes (the simulator close) share.
 
 ``EngineDataSource`` is the first real ``DataSource`` implementation
 over ``(engine, roster)``; its mapping tests pin the feed shape (R-32:
@@ -80,7 +83,8 @@ from rivercrossing.ui.presenters.data_source import (
 
 def _dt(hour: int, minute: int = 0, second: int = 0) -> datetime:
     """Build a naive datetime on the fixed event day."""
-    return datetime(2026, 9, 20, hour, minute, second)  # noqa: DTZ001 -- naive by design, as RideConfig.planned_start
+    # naive by design, as RideConfig.planned_start
+    return datetime(2026, 9, 20, hour, minute, second)  # noqa: DTZ001
 
 
 def _config(*, min_lap_s: int = 1, hold_short_laps: bool = False) -> RideConfig:
@@ -366,7 +370,8 @@ def _make_presenter(
     return presenter
 
 
-def _assert_rejected(  # noqa: PLR0913 -- shared rejection assertion: view + notice/engine + two counts
+# shared rejection assertion: view + notice/engine + two counts
+def _assert_rejected(  # noqa: PLR0913
     view: FakeConsoleView,
     *,
     notice: str,
@@ -1093,6 +1098,52 @@ def test_on_plate_entered_given_a_credited_short_lap_plays_flagged_cue() -> None
     assert (view.cues, flagged, held) == ([Cue.FLAGGED], [True], [False])
 
 
+def test_on_plate_entered_given_accepted_plate_posts_the_recorded_notice() -> None:
+    """A recorded plate says so on the status bar.
+
+    Every accepted entry posts its own notice, so the status line
+    always describes the entry just made.
+    """
+    engine, clock = _running_engine()
+    view = FakeConsoleView()
+    presenter = _make_presenter(engine, view)
+    clock.advance(100)
+
+    presenter.on_plate_entered("12")
+
+    assert view.last_notice == "Recorded plate 12"
+
+
+def test_on_plate_entered_given_flagged_crossing_posts_the_review_notice() -> None:
+    """R-34: a short lap's notice names the review flag."""
+    engine, clock = _running_engine(min_lap_s=60, hold_short_laps=True)
+    view = FakeConsoleView()
+    presenter = _make_presenter(engine, view)
+    clock.advance(5)  # 5 s < 60 s min lap
+
+    presenter.on_plate_entered("12")
+
+    assert view.last_notice == "Recorded plate 12 — short lap flagged for review"
+
+
+def test_on_plate_entered_given_a_later_rejection_replaces_the_recorded_notice() -> None:
+    """The notice is always rewritten, so none goes stale.
+
+    The reported defect: an accepted plate left the previous entry's
+    "Unknown plate X" standing, so the status line described an
+    entry two plates ago.
+    """
+    engine, clock = _running_engine()
+    view = FakeConsoleView()
+    presenter = _make_presenter(engine, view)
+    clock.advance(100)
+    presenter.on_plate_entered("12")
+
+    presenter.on_plate_entered("99")
+
+    assert (view.last_notice, view.cues[-1]) == ("Unknown plate 99", Cue.ERROR)
+
+
 def test_on_plate_entered_given_unknown_plate_plays_error_keeps_focus_and_keeps_text() -> None:
     """R-31: rejection plays ERROR, notifies, never clears the field."""
     engine, _clock = _running_engine()
@@ -1659,7 +1710,8 @@ _GATE_CASE_IDS = (
     _GATE_CASES,
     ids=_GATE_CASE_IDS,
 )
-def test_refresh_console_gates_matches_start_stop_and_undo_enablement_rules(  # noqa: PLR0913 -- (state, crossings, stopped) + the three expected verdicts
+# (state, crossings, stopped) + the three expected verdicts
+def test_refresh_console_gates_matches_start_stop_and_undo_enablement_rules(  # noqa: PLR0913
     ride_state: RideStatus,
     crossings: int,
     *,
@@ -1739,6 +1791,93 @@ def test_on_plate_entered_given_first_crossing_enables_undo_through_the_feed_ren
 
     assert view.undo_enabled is True
     assert view.start_enabled is False
+
+
+# ------------------------------------------------- W5 refresh_state
+# The one refresh the console's own transitions and the app's write
+# routes share: feed, counters, ride state, entry lock and clock. The
+# entry row's R-35 lock follows the engine -- unlocked only by a live
+# RUNNING ride -- so a console rebuilt or refreshed after an engine
+# write cannot keep showing a lock the engine no longer holds.
+
+# The refresh table: one row per ride state, its engine's stop guard,
+# the entry-lock verdict and the clock that state renders.
+_REFRESH_STATE_CASES = (
+    (RideStatus.DRAFT, 0, False, True, ("0:00:00", "0:00:00")),
+    (RideStatus.RUNNING, 0, False, False, ("0:00:00", "6:00:00")),
+    (RideStatus.RUNNING, 2, True, True, ("0:03:20", "5:56:40")),
+    (RideStatus.FINISHED, 2, False, True, ("0:03:20", "5:56:40")),
+    (RideStatus.REOPENED, 2, False, True, ("0:03:20", "5:56:40")),
+)
+_REFRESH_STATE_IDS = ("draft", "running", "stopped", "finished", "reopened")
+
+
+@pytest.mark.parametrize(
+    ("ride_state", "crossings", "stopped", "expected_locked", "expected_clock"),
+    _REFRESH_STATE_CASES,
+    ids=_REFRESH_STATE_IDS,
+)
+# the parametrize row's inputs + the two expected verdicts
+def test_refresh_state_renders_the_ride_state_entry_lock_and_clock(  # noqa: PLR0913
+    ride_state: RideStatus,
+    crossings: int,
+    *,
+    stopped: bool,
+    expected_locked: bool,
+    expected_clock: tuple[str, str],
+) -> None:
+    """refresh_state re-renders the state, its entry lock and the clock.
+
+    The lock is R-35's rule read off the engine: a live RUNNING ride
+    unlocks the entry row, every other state -- stopped, closed or
+    not yet started -- keeps it locked.
+    """
+    engine, _clock = _engine_gated(ride_state, crossings=crossings, stopped=stopped)
+    view = FakeConsoleView()
+    presenter = _make_presenter(engine, view)
+
+    presenter.refresh_state()
+
+    assert (view.last_state, view.last_stopped, view.entry_locked) == (
+        ride_state,
+        stopped,
+        expected_locked,
+    )
+    assert view.last_clock == expected_clock
+
+
+def test_refresh_state_renders_the_feed_and_counters_too() -> None:
+    """The refresh covers the ride's own data, not only its state."""
+    engine, clock = _running_engine()
+    _record(engine, clock, "12", lap_time_s=100)
+    view = FakeConsoleView()
+    presenter = _make_presenter(engine, view)
+
+    presenter.refresh_state()
+
+    assert [row.plate for row in view.last_feed] == ["12"]
+    assert view.last_counters.crossings == 1
+
+
+def test_refresh_state_unlocks_the_entry_row_the_stop_lock_had_locked() -> None:
+    """refresh_state re-reads the lock, never a remembered verdict.
+
+    A console whose entry row is locked by the stop guard must unlock
+    it once the engine is live again -- the R-35 lock is a rendering
+    of the engine, not presenter state.
+    """
+    engine, clock = _running_engine()
+    _record(engine, clock, "12", lap_time_s=100)
+    engine.stop()
+    view = FakeConsoleView()
+    presenter = _make_presenter(engine, view)
+    presenter.refresh_state()
+    locked_at_stop = view.entry_locked
+    engine.start()
+
+    presenter.refresh_state()
+
+    assert (locked_at_stop, view.entry_locked) == (True, False)
 
 
 # ------------------------------------------------------- time columns

@@ -268,7 +268,7 @@ def show_prompt(  # noqa: PLR0913, PLR0917 -- (parent, title, message) + 2 butto
     )
 
 
-def show_three_choice(  # noqa: PLR0913 -- (parent, title, message) + 3 labels + 2 flags
+def show_three_choice(  # noqa: PLR0913 -- (parent, title, message) + 3 button labels
     parent: wx.Window | None,
     title: str,
     message: str,
@@ -276,17 +276,14 @@ def show_three_choice(  # noqa: PLR0913 -- (parent, title, message) + 3 labels +
     yes_label: str,
     no_label: str,
     cancel_label: str,
-    icon: int = wx.ICON_QUESTION,
-    default_cancel: bool = True,
 ) -> int:
     """Show *message* as a three-button choice; return its modal id.
 
     The three outcomes map to Yes = confirm (the record stands), No =
     void (it is discarded) and Cancel = do nothing. Cancel is the
-    default button so a reflex Enter neither confirms nor voids;
-    *default_cancel* can hand the default back to Yes. Yes, No and
-    Cancel name the three buttons verbatim, and *icon* marks the
-    question's severity.
+    default button -- the question icon with ``wx.CANCEL_DEFAULT`` --
+    so a reflex Enter neither confirms nor voids. Yes, No and Cancel
+    name the three buttons verbatim.
 
     Args:
         parent: The owning window, or ``None`` for an unparented
@@ -296,16 +293,12 @@ def show_three_choice(  # noqa: PLR0913 -- (parent, title, message) + 3 labels +
         yes_label: The confirm button's text.
         no_label: The void button's text.
         cancel_label: The do-nothing button's text.
-        icon: The ``wx.ICON_*`` flag for the question's severity.
-        default_cancel: Whether Enter activates the cancel button.
 
     Returns:
         ``ShowModal``'s result (``wx.ID_YES`` on confirm,
         ``wx.ID_NO`` on void, ``wx.ID_CANCEL`` on cancel).
     """
-    flags = wx.YES_NO | wx.CANCEL | wx.CENTRE | icon
-    if default_cancel:
-        flags |= wx.CANCEL_DEFAULT
+    flags = wx.YES_NO | wx.CANCEL | wx.CENTRE | wx.ICON_QUESTION | wx.CANCEL_DEFAULT
     dialog = wx.MessageDialog(parent, message, title, flags)
     try:
         dialog.SetYesNoCancelLabels(yes_label, no_label, cancel_label)
