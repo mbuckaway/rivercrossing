@@ -189,22 +189,25 @@ Select a row on the Needs Review tab and press **Review…**, or double-click it
 
 ## Finishing & standings {: #finishing-standings }
 
-- **Finish ride** — **Ride ▸ Finish Ride…** locks entry, runs the hand evaluator's self-test (a red self-test blocks finishing), and computes the final standings. It publishes nothing by itself. Generate the results yourself from the Results menu.
-- **Finish gate** — the evaluator self-test runs fresh on every finish. A red result blocks it. DNF riders are excluded outright, and held cards never count until you confirm them.
+- **Finish ride** — **Ride ▸ Finish Ride…** locks entry, runs the hand evaluator's self-test, and computes the final standings. It publishes nothing by itself. Generate the results yourself from the Results menu.
+- **Finish gate** — the evaluator self-test runs fresh on every finish. Five of its six checks guard correctness, and any of them can block the finish. The whole-field 180×12 timing check is advisory, so it never blocks. DNF riders are excluded outright, and held cards never count until you confirm them.
+- **Finish anyway** — when a blocking check fails, the app names every failed check and offers this choice. The choice is written to the audit log, and the results are marked self-test unverified.
 - **Reopen for corrections** — **Ride ▸ Reopen Ride** reopens a finished ride for corrections. Entry is locked, edits are highlighted in the crossings list, and Finish again re-locks and re-ranks. After corrections, the Standings dialog flags the published results as stale until you export again.
 - **Continue a reopened ride** — Start stays live while a ride is reopened. Pressing the Start button continues it: entry unlocks, the clock goes live again from the original start, and the recorded finish is discarded.
 
 ### The Standings window {: #results-window }
 
-**Results ▸ Standings** (<kbd>F5</kbd>) shows the full field with place, plate, entry, laps, best-5 cards, and the hand name. A ⚠ badge beside a tied place gives the tie's explanation on a double-click. On a mixed ride the standings sit on two notebook pages, **Teams** and **Solo**, each numbered from 1. On a rider-pooled ride the Teams tab drops its Plate column, because a pooled team's plate comes from its members. The dialog is modal, so close it to get back to the console.
+**Results ▸ Standings** (<kbd>F5</kbd>) shows the full field with place, plate, entry, laps, best-5 cards, hand name, and the drawn card. The **Draw** column holds the card the entry drew for the tie-break draw. It is blank for every entry that drew none.
+
+A ⚠ badge beside a tied place gives the tie's explanation on a double-click. On a mixed ride the standings sit on two notebook pages, **Teams** and **Solo**, each numbered from 1. On a rider-pooled ride the Teams tab drops its Plate column, because a pooled team's plate comes from its members. The dialog is modal, so close it to get back to the console.
 
 ## Publishing results {: #publishing-results }
 
-- **Export HTML…** — one self-contained file you can post anywhere. On a mixed ride it renders per-kind sections: top 3 teams then top 3 solo riders on the podium, Top teams and Top solo riders (five each), Most laps split teams and solo (five each), and the Full field with a compact plate-less Teams subsection followed by the Solo riders with plates. A solo ride keeps the single-kind page.
+- **Export HTML…** — one self-contained file you can post anywhere. A row that drew a tie-break card shows a **draw** badge beside its entry name. On a mixed ride it renders per-kind sections: top 3 teams then top 3 solo riders on the podium, Top teams and Top solo riders (five each), Most laps split teams and solo (five each), and the Full field with a compact plate-less Teams subsection followed by the Solo riders with plates. A solo ride keeps the single-kind page.
 - **Export PDF…** — the same sections as the HTML export, as a printable report.
 - **Podium Poster PDF…** — a single celebratory page for the prize table: top 3 teams plus top 3 solo riders on a mixed ride, or the top 5 solo riders on a solo ride.
 - **Podium Poster HTML…** — the same poster as a self-contained page.
-- **Export Standings CSV…** — place, plate, entry, type, sex, laps, hand, and times when shown.
+- **Export Standings CSV…** — place, plate, entry, type, sex, laps, hand, draw, and times when shown.
 - **Preview HTML in Browser** / **Preview Podium Poster HTML in Browser** / **Preview PDF in Browser** — open this session's last export of that format in your browser. Each needs a finished ride and an export made this session. After a restart the preview is disabled until the next export.
 - **Publish Options** — five checkable rows on the Results menu that shape every export: **Show lap & total times**, **Laps leaderboard**, **Fastest-time leaderboard**, **Full field**, and **All cards drawn**. With show-times off, the exports embed no time data, and the fastest-time leaderboard is cleared and disabled.
 
@@ -275,9 +278,11 @@ While a ride is not finished, the standings board ranks by **most laps, then sho
 
 At the finish, the app ranks every active entry by its best hand, strongest first. Entries with hands that are equal in class, kickers, and joker count tie, and the ride's **tie-break order** resolves the tie. That order is set in the Ride Setup window and locked once the ride starts. It opens on:
 
-1. **High-card draw** at the venue — resolves nothing in the app, so an unresolved pair is flagged "draw required" for the venue to settle.
+1. **High-card draw** — the app draws one card for each tied entry from a fresh deck. Rank decides first. Then suit decides, with spades highest.
 2. **Most laps** — more laps wins.
 3. **Shortest total time** — the faster entry wins.
+
+The drawn card shows in the **Draw** column of the Standings window. The HTML and PDF results show a **draw** badge on the row, and the standings CSV carries a `draw` column. If the draw still leaves a tie, the app flags it **draw required** for the venue to settle. This tie is rare: it happens only when more entries tie than the deck holds.
 
 The app never guesses a tie. When the criteria leave two entries unresolved, they share a place and are flagged. A two-way draw reads 1, 2, 2, 4, because the run after a draw starts one place past it.
 
@@ -324,7 +329,11 @@ The six checks, in order:
 5. **compare() total order** — hand comparison is still a strict total order, so the standings sort by the hands, not by crossing order.
 6. **best_hand() joker bound** — a best hand never plays more than five jokers, even when the pool holds six or seven.
 
-A red self-test blocks finishing a ride. A red one at launch opens the window so you can read it before carrying on. A green launch run stays silent. The self-test never changes anything it reads.
+Five of the six checks guard the evaluator's correctness, and any of them can block a finish. The whole-field 180×12 timing check is advisory. It measures this machine's speed rather than the evaluator's correctness, so it never blocks a ride.
+
+When a blocking check fails, the app names every failed check and offers **Finish anyway**. That choice is written to the audit log, and the results are marked self-test unverified. Cancel leaves the ride unfinished.
+
+A red check at launch opens the window so you can read it before carrying on. A green launch run stays silent. The self-test never changes anything it reads.
 
 ## Troubleshooting & FAQ {: #troubleshooting-faq }
 
@@ -362,10 +371,12 @@ Every roster import and export uses one header-mapped format, with one row per r
 | `FIRSTNAME` | Rider's first name | At least one of FIRSTNAME or LASTNAME must appear in the header and in each data row. |
 | `LASTNAME` | Rider's last name | Optional. A rider with only one name leaves it blank. |
 | `TYPE` | `solo` or `team` | Blank means solo, unless the row names a team. |
-| `TEAMNAME` | The team's name | Blank for solo rows. Rows sharing a team name form one team. Matching ignores case and extra spaces. |
+| `TEAMNAME` | The team's name | Blank for solo rows. Rows sharing a team name form one team. The app stores the name exactly as the file spells it. Matching ignores case and extra spaces. |
 | `NUMBER` | The rider's or team's plate | Optional. When blank, the app assigns the next free plate. |
 | `NOTES` | A note on the rider or team | Optional. Team notes from member rows join into one team note. |
 | `SEX` | The rider's sex, `M` or `F` | Blank means unknown. Any other value is a conflict unless you tick **Map unknown sex to Male**. |
+
+The app tidies rider names as it reads them. A name written all in lowercase or ALL IN UPPERCASE becomes first letter capital plus lowercase. For example, `JOHN` and `john` both store as `John`. A name in mixed case is kept as written, so `McDonald` and `O'Brien` stay unchanged.
 
 Any column whose heading matches nothing is ignored. The app's own export always writes the canonical headers in this order. Rows with no first or last name are skipped, unless such a row still names a plate, team, or type, in which case it is reported as a missing name.
 
