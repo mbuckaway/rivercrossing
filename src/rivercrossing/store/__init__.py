@@ -272,14 +272,19 @@ __all__ = [
 
 
 def default_db_path(override: Path | None = None) -> Path:
-    """Return the rides database path (spec §10, platformdirs).
+    r"""Return the rides database path (spec §10, platformdirs).
 
-    ``platformdirs.user_data_dir("RiverCrossing")`` is the per-user
-    data directory on every platform (``~/Library/Application
-    Support/RiverCrossing`` on macOS, ``%LOCALAPPDATA%`` on Windows) --
-    the settings module's own ``user_config_dir`` precedent, renamed
-    to the RiverCrossing product (the retired mockups' "PokerRunTracker"
-    is superseded). ``rides.db`` is the one database the app opens.
+    ``platformdirs.user_data_dir("RiverCrossing", appauthor=False)``
+    is the per-user data directory on every platform
+    (``~/Library/Application Support/RiverCrossing`` on macOS,
+    ``%LOCALAPPDATA%\RiverCrossing`` on Windows) -- the settings
+    module's own ``user_config_dir`` precedent, renamed to the
+    RiverCrossing product (the retired mockups' "PokerRunTracker" is
+    superseded). ``appauthor=False`` keeps Windows to that single
+    folder: platformdirs' default doubles ``appname`` into
+    ``appauthor``, resolving
+    ``%LOCALAPPDATA%\RiverCrossing\RiverCrossing``. macOS ignores
+    ``appauthor``. ``rides.db`` is the one database the app opens.
 
     Args:
         override: The path to use when the caller knows one (tests,
@@ -288,7 +293,11 @@ def default_db_path(override: Path | None = None) -> Path:
     Returns:
         The resolved database path.
     """
-    return override if override is not None else Path(user_data_dir("RiverCrossing")) / "rides.db"
+    return (
+        override
+        if override is not None
+        else Path(user_data_dir("RiverCrossing", appauthor=False)) / "rides.db"
+    )
 
 
 _INSERT_RIDE_SQL = """

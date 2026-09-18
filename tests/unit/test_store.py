@@ -3185,7 +3185,31 @@ def test_default_db_path_returns_rides_db_under_the_user_data_dir() -> None:
     path = store_module.default_db_path()
 
     assert path.name == "rides.db"
-    assert path.parent == Path(user_data_dir("RiverCrossing"))
+    assert path.parent == Path(user_data_dir("RiverCrossing", appauthor=False))
+
+
+def test_default_db_path_calls_user_data_dir_with_appauthor_false(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    r"""The default db asks for ONE RiverCrossing folder, never two.
+
+    platformdirs defaults ``appauthor`` to ``appname``, so the bare
+    call lands in ``%LOCALAPPDATA%\RiverCrossing\RiverCrossing`` on
+    Windows. ``appauthor=False`` asks for the single folder; macOS
+    ignores ``appauthor`` entirely, so its path is unchanged.
+    """
+    calls: list[tuple[str, dict[str, object]]] = []
+
+    def _record(appname: str, **kwargs: object) -> str:
+        calls.append((appname, kwargs))
+        return str(tmp_path)
+
+    monkeypatch.setattr(store_module, "user_data_dir", _record)
+
+    path = store_module.default_db_path()
+
+    assert calls == [("RiverCrossing", {"appauthor": False})]
+    assert path == tmp_path / "rides.db"
 
 
 def test_default_db_path_given_an_override_returns_it_verbatim() -> None:

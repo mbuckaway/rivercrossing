@@ -81,8 +81,8 @@ show_paths() {
   "${VENV_PYTHON}" - <<'PY'
 from platformdirs import user_config_dir, user_data_dir
 
-data = user_data_dir("RiverCrossing")
-config = user_config_dir("RiverCrossing")
+data = user_data_dir("RiverCrossing", appauthor=False)
+config = user_config_dir("RiverCrossing", appauthor=False)
 print(f"  database : {data}/rides.db")
 print(f"  exports  : {data}/exports")
 print(f"  settings : {config}/settings.json")
