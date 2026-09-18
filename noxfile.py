@@ -31,6 +31,7 @@ nox.options.sessions = [
     "ids_drift",
     "css_drift",
     "assets_drift",
+    "userguide_drift",
     "unit",
 ]
 
@@ -39,6 +40,7 @@ ROOT = Path(__file__).parent
 XRC_DIR = ROOT / "src" / "rivercrossing" / "ui" / "xrc"
 HTMLEXPORT_TEMPLATES = ROOT / "src" / "rivercrossing" / "htmlexport" / "templates"
 GEN_IDS = ROOT / "tools" / "gen_ids.py"
+GEN_USERGUIDE = ROOT / "tools" / "gen_userguide.py"
 GEN_CSS = ROOT / "tools" / "gen_css.py"
 GEN_APP_ICONS = ROOT / "tools" / "gen_app_icons.py"
 SPEC = ROOT / "installers" / "rivercrossing.spec"
@@ -131,6 +133,25 @@ def ids_drift(session):
         return
     session.install(DEV)
     session.run("python", str(GEN_IDS), "--check")
+
+
+@nox.session(python=PYTHON)
+def gen_userguide(session):
+    """Regenerate docs/user-guide.html from its markdown + CSS."""
+    session.install(DEV)
+    session.run("python", str(GEN_USERGUIDE), "--write")
+
+
+@nox.session(python=PYTHON)
+def userguide_drift(session):
+    """Fail if docs/user-guide.html disagrees with its sources.
+
+    The page is a byte-deterministic regeneration of
+    docs/user-guide.md + docs/user-guide.css, so any hand-edit or
+    stale render fails here.
+    """
+    session.install(DEV)
+    session.run("python", str(GEN_USERGUIDE), "--check")
 
 
 @nox.session(python=PYTHON)
