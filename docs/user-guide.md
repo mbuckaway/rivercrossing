@@ -56,7 +56,7 @@ The app opens on the timing console. When no ride is open, the menus are how you
 - **Sound on crossing** — three cues: a click when a crossing records, a two-tone alert when a short-lap crossing is held for review, and a buzz for a refused plate or a miss.
 - **Show Total Times on Crossings Panel** — off by default. Turns the feed's Total column on or off mid-ride. Times are still recorded underneath.
 - **Show Lap Time in Crossings Panel** — on by default. Turns the feed's Lap time column on or off mid-ride. The two time columns are independent.
-- **Verbose logging** — on by default. Writes a diagnostic log for support. Each launch gets its own file, `rivercrossing-<date-time>.log`, in your per-user configuration folder (`~/Library/Application Support/RiverCrossing` on macOS, under `%LOCALAPPDATA%` on Windows). It records the launch, the ride loaded, and any crash as one JSON record per line. While it is on, it also records the action trail of menu picks, dialogs opened, and button events. Turning it off stops the trail at once. The newest 20 session files are kept.
+- **Verbose logging** — on by default. Writes a diagnostic log for support. Each launch gets its own file, `rivercrossing-<date-time>.log`, in your per-user configuration folder (`~/Library/Application Support/RiverCrossing` on macOS, `%LOCALAPPDATA%\RiverCrossing` on Windows). It records the launch, the ride loaded, and any crash as one JSON record per line. While it is on, it also records the action trail of menu picks, dialogs opened, and button events. Turning it off stops the trail at once. The newest 20 session files are kept.
 - **Avg Lap Time (kmh)** — the rider field's average speed, a decimal, 12.0 by default. It sets the simulator's default minutes between laps.
 
 Appearance and text zoom each live on one surface. The theme radios are in Settings only. Text zoom lives on the View menu's Zoom 90%–150% rows only. The two time-column settings each keep two controls, their Settings checkbox and their View-menu item, and each pair stays in sync.
@@ -66,7 +66,7 @@ Appearance and text zoom each live on one surface. The theme radios are in Setti
 All rides live in one SQLite database, `rides.db`, in your per-user data folder. Replace `<username>` in these paths with your own account name:
 
 - **macOS** — `/Users/<username>/Library/Application Support/RiverCrossing/rides.db`
-- **Windows** — `C:\Users\<username>\AppData\Local\RiverCrossing\RiverCrossing\rides.db`
+- **Windows** — `C:\Users\<username>\AppData\Local\RiverCrossing\rides.db`
 
 The same folder holds your settings and diagnostic logs. Every crossing commits as it happens, so a crash loses at most a keystroke. Backups are written on open and hourly while the app is running, into a `rides.db.backups/` folder beside the database, pruned to the newest 20.
 
@@ -226,7 +226,19 @@ The card cap limits how many of an entry's cards score. Disabled (the default) s
 
 ### Fewer than five cards
 
-An entry holding fewer than five cards still ranks. Its cards score as the best partial hand they make. A partial hand can never be a flush or a straight, because both need all five cards. A missing kicker always ranks below a present one, however good the rest of the hand is. An entry with no cards at all has no hand name.
+An entry that credited fewer than five cards still ranks. Its cards score as the best partial hand they make:
+
+- Four aces score as four of a kind.
+- Three sevens score as three of a kind.
+- Two kings score as a pair.
+
+A partial hand can never be a flush or a straight. Both need all five cards.
+
+The app compares the hand class first, so a short hand can beat a longer one. Four aces (four of a kind) beat a five-card pair, and they also beat a five-card flush. In the other direction, a three-card three of a kind loses to a five-card straight, because the straight is the higher class.
+
+Card count decides only between hands of the same class. When two hands are the same class, the hand with more cards wins. The app treats a missing card as lower than any card you hold. So a three-card pair of aces loses to a four-card pair of aces, and it does not help the three-card hand that it also holds a king.
+
+An entry with no cards at all has no hand to name.
 
 ### How hands are compared
 
