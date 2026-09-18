@@ -22,18 +22,23 @@ Handling rules, in order of application:
 - ACTIVE entries sort best hand first (``placed[0]`` is the winner).
   Byte-identical hand ranks tie; each criterion in ``order`` resolves
   a tie in sequence -- ``MOST_LAPS`` (more laps wins), ``TOTAL_TIME``
-  (shorter total time wins) -- until ``HIGH_CARD_DRAW``, the venue
-  event that resolves nothing: an entry pair still unresolved there is
-  flagged ``draw_required=True`` with ``tie_note`` "draw required" and
-  must never be ordered silently (R-43). ``place`` is 1-based, and a
-  draw pair shares its place; the run after a two-way draw starts one
-  place past the whole run (competition numbering: 1, 2, 2, 4).
+  (shorter total time wins), then ``HIGH_CARD_DRAW``: a tie group
+  whose every entry holds the card it drew is ordered by
+  ``cards.draw_key``, highest card first, and the draw is the decider.
+  A group with even one undrawn entry (a live ride, a plain result
+  set) keeps the barrier -- the draw resolves nothing there and an
+  entry pair still unresolved at it is flagged ``draw_required=True``
+  with ``tie_note`` "draw required", never ordered silently (R-43).
+  ``place`` is 1-based, and a draw pair shares its place; the run
+  after a two-way draw starts one place past the whole run
+  (competition numbering: 1, 2, 2, 4).
 
   Phase 3's :data:`DEFAULT_TIEBREAK_ORDER` leads with
-  ``HIGH_CARD_DRAW``, so the stored default flags every hand tie for
-  the venue's draw; :data:`LIVE_TIEBREAK_ORDER` -- most laps, then
-  total time -- is the order ``EngineDataSource.standings`` applies
-  while a ride is not yet FINISHED.
+  ``HIGH_CARD_DRAW``, so an undrawn hand tie stops there and flags for
+  the venue's draw while a drawn one is ordered by it;
+  :data:`LIVE_TIEBREAK_ORDER` -- most laps, then total time -- is the
+  order ``EngineDataSource.standings`` applies while a ride is not yet
+  FINISHED.
 
 - DNF entries are EXCLUDED: they are not listed, placed or exported
   at all, so the ranked list is exactly the ACTIVE field. The ride
@@ -71,6 +76,7 @@ from enum import Enum
 from functools import cmp_to_key
 from typing import TYPE_CHECKING, cast
 
+from rivercrossing.cards import draw_key
 from rivercrossing.hands import EvaluatedHand, HandClass, compare
 
 if TYPE_CHECKING:
@@ -102,7 +108,9 @@ class TieBreak(Enum):
     "total_time", "high_card"), duplicated here because standings may
     not import ``ride`` (module docstring); the member name for the
     venue event is ``HIGH_CARD_DRAW`` even though its stored spelling
-    is ride's "high_card".
+    is ride's "high_card". As a criterion it both orders a fully drawn
+    tie group, by ``cards.draw_key`` highest first, and stands as the
+    barrier that flags an undrawn group's residual tie (R-43).
     """
 
     MOST_LAPS = "laps"
@@ -111,10 +119,11 @@ class TieBreak(Enum):
 
 
 # Phase 3's stored default, and :func:`rank`'s own default argument:
-# the venue's high-card draw first -- it resolves nothing in code, so a
-# finished hand tie is flagged "draw required" (R-43), never silently
-# ordered by laps/time, and the criteria after it are unreachable at
-# that position. A ride's stored order overrides it per ride (R-14).
+# the venue's high-card draw first. A group that has drawn is ordered
+# by those cards; an undrawn one stops there and is flagged "draw
+# required" (R-43), never silently ordered by laps/time -- the criteria
+# after the draw are unreachable either way. A ride's stored order
+# overrides it per ride (R-14).
 DEFAULT_TIEBREAK_ORDER: tuple[TieBreak, ...] = (
     TieBreak.HIGH_CARD_DRAW,
     TieBreak.MOST_LAPS,
@@ -173,6 +182,10 @@ class EntryResult:
     and ``None`` for a team (no single sex) or an unknown rider --
     so the three results exports can render it. ``total_time``/
     ``best_lap`` are seconds; ``laps`` counts completed laps.
+    ``tiebreak_card`` is the card this entry drew for the venue's
+    high-card tie-break, ``None`` until that draw has happened (R-14):
+    :func:`_resolved_runs` orders a fully drawn hand-tie group by
+    ``cards.draw_key`` and never reads an undrawn entry's card.
     """
 
     entry_id: str
@@ -186,6 +199,7 @@ class EntryResult:
     hand: EvaluatedHand
     dnf: bool
     sex: str | None = None
+    tiebreak_card: Card | None = None
 
 
 @dataclass(frozen=True)
@@ -229,14 +243,24 @@ def _resolved_runs(
 ) -> list[list[EntryResult]]:
     """Split one hand-tie *group* into place runs under *order*.
 
-    Every resolver before the first ``HIGH_CARD_DRAW`` contributes one
-    element to a composite sort key; entries still equal on all of
+    Every criterion before the first ``HIGH_CARD_DRAW`` contributes
+    one element to a composite sort key; entries still equal on all of
     them afterwards form one draw run -- they share a place and are
-    flagged, never silently ordered (R-43).
+    flagged, never silently ordered (R-43). ``HIGH_CARD_DRAW`` itself
+    joins the resolvers when every entry in *group* holds the card it
+    drew (:attr:`EntryResult.tiebreak_card`): the key's negated
+    ``cards.draw_key`` term sorts the highest card first, because the
+    runs come out ascending and :func:`_place_runs` gives place 1 to
+    the first of them. One undrawn entry anywhere in *group* keeps the
+    barrier exactly as it was -- the draw is not consulted, so a
+    partially drawn group is never silently ordered.
     """
+    drawn = all(result.tiebreak_card is not None for result in group)
     resolvers: list[TieBreak] = []
     for criterion in order:
         if criterion is TieBreak.HIGH_CARD_DRAW:
+            if drawn:
+                resolvers.append(criterion)
             break
         resolvers.append(criterion)
 
@@ -245,6 +269,8 @@ def _resolved_runs(
         for resolver in resolvers:
             if resolver is TieBreak.MOST_LAPS:
                 values.append(-result.laps)
+            elif resolver is TieBreak.HIGH_CARD_DRAW:
+                values.append(-draw_key(cast("Card", result.tiebreak_card)))
             else:
                 values.append(result.total_time)
         return tuple(values)
@@ -288,17 +314,21 @@ def rank(
     ACTIVE entries sort by precomputed hand strength, index 0 the
     winner; byte-identical hand ranks tie and resolve by *order* in
     sequence -- ``MOST_LAPS`` more laps wins, ``TOTAL_TIME`` shorter
-    total time wins -- until ``HIGH_CARD_DRAW``, where an unresolved
-    pair is flagged ``draw_required`` and never silently ordered
-    (R-43). DNF entries are excluded outright: nothing is placed
-    after the last ACTIVE entry, and an all-DNF field ranks to
-    ``[]`` -- a DNF rider never appears in the results at all.
+    total time wins, ``HIGH_CARD_DRAW`` the higher drawn card wins
+    when the whole group holds one (:attr:`EntryResult.tiebreak_card`,
+    and no criterion after it is read). A group with an undrawn entry
+    stops at the draw there, where the pair is flagged
+    ``draw_required`` and never silently ordered (R-43). DNF entries
+    are excluded outright: nothing is placed after the last ACTIVE
+    entry, and an all-DNF field ranks to ``[]`` -- a DNF rider never
+    appears in the results at all.
 
     Args:
         results: The ride's finished snapshots, in any order.
         order: Tie-break criteria in priority sequence; defaults to
             :data:`DEFAULT_TIEBREAK_ORDER` -- the high-card draw first,
-            so a hand tie flags for the venue (R-14).
+            so a drawn hand tie is ordered by card and an undrawn one
+            flags for the venue (R-14).
 
     Returns:
         One :class:`Placed` per ACTIVE result, best hand first.
@@ -340,7 +370,8 @@ def rank_by_kind(
         results: The ride's finished snapshots, in any order.
         order: Tie-break criteria in priority sequence; defaults to
             :data:`DEFAULT_TIEBREAK_ORDER` -- the high-card draw first,
-            so a hand tie flags for the venue (R-14).
+            so a drawn hand tie is ordered by card and an undrawn one
+            flags for the venue (R-14).
 
     Returns:
         ``(teams, solo)`` -- each a :func:`rank` output over that

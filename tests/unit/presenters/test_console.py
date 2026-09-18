@@ -11,7 +11,9 @@ asserting the cue fired (spec §10), the feed/counters refreshed, the
 notice every entry posts (accepted, flagged, missed or refused), the
 field cleared or kept (R-31), the Stop guard flow (R-35), time-column
 forwarding (R-37), tick refresh, and the E6.4.3 finish-gate hook
-consulted before finishing. WS-D/WS-H grow the console with the
+(exposed as the whole ``SelfTestReport``, so a blocking failure is
+recorded on the finish event rather than silently blocking) consulted
+before finishing. WS-D/WS-H grow the console with the
 gauge-clock channel (dial fractions from ``planned_duration_s``, the
 stop-light mode mapping) and the review tabs (the flagged feed subset
 and the riders rows, both refreshed in ``tick``). C2 makes
@@ -42,6 +44,7 @@ from hypothesis import strategies as st
 
 from conftest import _roster_with_entries, gorba_config
 from rivercrossing.cards import Card, Shoe
+from rivercrossing.hands import SelfTestCheck, SelfTestReport
 from rivercrossing.ride import (
     Crossing,
     Event,
@@ -741,8 +744,13 @@ def test_engine_data_source_standings_reopened_ride_auto_ranks_like_a_live_ride(
     ]
 
 
-def test_engine_data_source_standings_finished_ride_respects_the_stored_order() -> None:
-    """A FINISHED ride ranks by the stored order and flags the draw."""
+def test_engine_data_source_standings_finished_ride_orders_a_tie_by_the_drawn_card() -> None:
+    """R-14: a FINISHED ride's hand tie is settled by the drawn card.
+
+    34 draws AH to 12's 5H under this fixture's seed, so the stored
+    high-card-first order orders the pair rather than flagging it:
+    nothing is left unresolved for the venue to arbitrate.
+    """
     engine = _engine_with_a_hand_tie()
     engine.finish()
     source = EngineDataSource(engine, engine._roster)
@@ -753,8 +761,50 @@ def test_engine_data_source_standings_finished_ride_respects_the_stored_order() 
 
     assert engine.state is RideStatus.FINISHED
     assert [(row.plate, row.place, row.draw_required) for row in rows] == [
-        ("12", 1, True),
-        ("34", 1, True),
+        ("34", 1, False),
+        ("12", 2, False),
+    ]
+
+
+def test_engine_data_source_standings_rows_carry_the_drawn_card_codes() -> None:
+    """R-14: each row carries the card its entry drew, as its code."""
+    engine = _engine_with_a_hand_tie()
+    engine.finish()
+    source = EngineDataSource(engine, engine._roster)
+
+    _teams, rows = source.standings()
+
+    assert {row.plate: row.tiebreak_card for row in rows} == {"12": "5H", "34": "AH"}
+
+
+def test_engine_data_source_standings_given_an_undrawn_pair_leaves_the_draw_blank() -> None:
+    """T-4 nullable: a live ride's tied pair has drawn nothing yet."""
+    engine = _engine_with_a_hand_tie()
+    source = EngineDataSource(engine, engine._roster)
+
+    _teams, rows = source.standings()
+
+    assert [row.tiebreak_card for row in rows] == ["", ""]
+
+
+def test_engine_data_source_standings_finished_draw_rows_carry_the_drawn_card() -> None:
+    """R-14/Part 1: a resolved row shows its card instead of the ⚠ note.
+
+    The recorded draw means the pair is ordered, so neither row is
+    flagged ``draw_required`` and neither carries a tie note: the view
+    explains a ⚠ whose tie the configured order could not separate.
+    """
+    engine = _engine_with_a_hand_tie()
+    engine.finish()
+    source = EngineDataSource(engine, engine._roster)
+
+    _teams, rows = source.standings(
+        order=tiebreak_order_from_spellings(("high_card", "laps", "total_time"))
+    )
+
+    assert [(row.place, row.draw_required, row.tie_note, row.tiebreak_card) for row in rows] == [
+        (1, False, None, "AH"),
+        (2, False, None, "5H"),
     ]
 
 
@@ -812,20 +862,31 @@ def test_engine_data_source_standings_given_a_zero_card_entry_renders_a_blank_ha
     assert teams == []
 
 
-def test_engine_data_source_standings_finished_draw_rows_carry_the_tie_note() -> None:
-    """Part 1: the ⚠ rows carry R-43's own note for the view's alert."""
-    engine = _engine_with_a_hand_tie()
+def test_engine_data_source_standings_given_more_ties_than_the_deck_keeps_the_draw_flag() -> None:
+    """Part 1/R-43: a residual tie flags, and still shows its draw.
+
+    One fresh deck holds 52 naturals, so a tie group larger than that
+    takes the cards the deck holds and the rest stay undrawn
+    (``RideEngine._record_tiebreak_draws``). The group is then only
+    partly drawn, which keeps the configured order's high-card barrier
+    exactly where it was: every row keeps the ⚠ flag and its note --
+    while the 52 that did draw still carry their card, which is what
+    the Draw column shows. 53 entries with no crossings all tie on the
+    empty hand.
+    """
+    roster = _roster_with_entries(*[str(plate) for plate in range(1, 54)])
+    engine, _ = _make_engine(roster=roster)
+    engine.start()
     engine.finish()
     source = EngineDataSource(engine, engine._roster)
 
-    _teams, rows = source.standings(
-        order=tiebreak_order_from_spellings(("high_card", "laps", "total_time"))
-    )
+    _teams, rows = source.standings()
 
-    assert [(row.place, row.draw_required, row.tie_note) for row in rows] == [
-        (1, True, "draw required"),
-        (1, True, "draw required"),
-    ]
+    assert len(rows) == 53
+    assert {row.place for row in rows} == {1}
+    assert all(row.draw_required for row in rows)
+    assert all(row.tie_note == "draw required" for row in rows)
+    assert sum(1 for row in rows if row.tiebreak_card) == 52
 
 
 def test_engine_data_source_standings_given_distinct_hands_leaves_the_tie_note_unset() -> None:
@@ -2700,6 +2761,22 @@ def test_clock_fraction_given_seconds_of_a_planned_duration_clamps_to_the_dial_r
 
 # ------------------------------------------------------------- finish
 
+# xrc-windows.md's own frozen selftest_dlg canvas text, transcribed
+# verbatim -- the multiplication sign included.
+_FIELD_TIMING_CHECK_NAME = "Whole-field 180×12 timing"  # noqa: RUF001
+
+
+def _failed_check(name: str, *, blocking: bool = True) -> SelfTestCheck:
+    """Build one failed self-test check, blocking by default."""
+    return SelfTestCheck(
+        name=name, passed=False, duration_seconds=0.0, detail="", blocking=blocking
+    )
+
+
+def _report(*checks: SelfTestCheck) -> SelfTestReport:
+    """Build a self-test report over *checks*."""
+    return SelfTestReport(checks=checks)
+
 
 def test_on_finish_given_gate_clear_finishes_the_ride() -> None:
     """E4.4.2: the finish-gate hook (stub True) lets the ride finish."""
@@ -2718,9 +2795,15 @@ def test_on_finish_given_gate_clear_finishes_the_ride() -> None:
 def test_on_finish_given_gate_blocked_refuses_and_notices(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """E6.4.3 red path: a failing evaluator self-test blocks Finish."""
+    """E6.4.3 red path: a failing evaluator self-test blocks Finish.
+
+    The defensive, no-dialog path: with no caller running the override
+    confirm, a blocking failure still refuses with the one-line notice.
+    """
     engine, _clock = _running_engine()
-    monkeypatch.setattr(console_module, "FINISH_GATE", lambda: False)
+    monkeypatch.setattr(
+        console_module, "FINISH_GATE", lambda: _report(_failed_check("7,462 distinct ranks"))
+    )
     view = FakeConsoleView()
     presenter = _make_presenter(engine, view)
 
@@ -2729,6 +2812,86 @@ def test_on_finish_given_gate_blocked_refuses_and_notices(
     assert engine.state is RideStatus.RUNNING
     assert view.last_state is None  # no set_state ran on the blocked path
     assert view.last_notice == "Finish blocked: evaluator self-test did not pass"
+
+
+def test_on_finish_given_a_gate_failing_only_the_advisory_check_finishes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """E6.4.3: the advisory timing check can never block a finish.
+
+    A slow machine reds the whole-field timing check; the ride must
+    still finish, because a multi-hour ride is never stranded by the
+    host's speed.
+    """
+    engine, clock = _running_engine()
+    _record(engine, clock, "12", lap_time_s=100)
+    monkeypatch.setattr(
+        console_module,
+        "FINISH_GATE",
+        lambda: _report(_failed_check(_FIELD_TIMING_CHECK_NAME, blocking=False)),
+    )
+    view = FakeConsoleView()
+    presenter = _make_presenter(engine, view)
+
+    presenter.on_finish()
+
+    assert engine.state is RideStatus.FINISHED
+    assert view.last_notice == "Ride is finished. Results are available"
+
+
+def test_on_finish_given_a_blocking_failure_report_finishes_and_records_the_checks() -> None:
+    """E6.4.3: the operator's override finishes and is recorded.
+
+    The ``app`` finish route owns the override confirm and hands the
+    presenter the gate's report: a blocking failure in it means the
+    operator chose Finish anyway, so the ride finishes and the finish
+    event names exactly the checks that were red -- the mark the
+    results display reads.
+    """
+    engine, clock = _running_engine()
+    _record(engine, clock, "12", lap_time_s=100)
+    view = FakeConsoleView()
+    presenter = _make_presenter(engine, view)
+    report = _report(_failed_check("7,462 distinct ranks"), _failed_check("compare() total order"))
+
+    presenter.on_finish(report)
+
+    assert engine.state is RideStatus.FINISHED
+    assert view.last_state is RideStatus.FINISHED
+    assert view.last_notice == "Ride is finished. Results are available"
+    assert engine.events[-1].action == "finish"
+    assert engine.events[-1].payload["self_test_failed_checks"] == [
+        "7,462 distinct ranks",
+        "compare() total order",
+    ]
+
+
+def test_on_finish_given_a_clear_report_records_no_failed_checks() -> None:
+    """A green gate's finish event carries no override (E6.4.3)."""
+    engine, clock = _running_engine()
+    _record(engine, clock, "12", lap_time_s=100)
+    view = FakeConsoleView()
+    presenter = _make_presenter(engine, view)
+    report = _report(SelfTestCheck(name="x", passed=True, duration_seconds=0.0, detail=""))
+
+    presenter.on_finish(report)
+
+    assert engine.state is RideStatus.FINISHED
+    assert "self_test_failed_checks" not in engine.events[-1].payload
+
+
+def test_on_finish_given_an_advisory_only_report_records_no_failed_checks() -> None:
+    """A red advisory check is never named on the event (E6.4.3)."""
+    engine, clock = _running_engine()
+    _record(engine, clock, "12", lap_time_s=100)
+    view = FakeConsoleView()
+    presenter = _make_presenter(engine, view)
+    report = _report(_failed_check(_FIELD_TIMING_CHECK_NAME, blocking=False))
+
+    presenter.on_finish(report)
+
+    assert engine.state is RideStatus.FINISHED
+    assert "self_test_failed_checks" not in engine.events[-1].payload
 
 
 def test_on_finish_given_draft_ride_shows_a_notice() -> None:
@@ -2776,10 +2939,12 @@ def test_on_reopen_given_draft_ride_shows_a_notice() -> None:
 # ---------------------------------------------------- negative import
 
 
-def test_finish_gate_is_a_module_level_callable_defaulting_to_clear() -> None:
+def test_finish_gate_is_a_module_level_callable_defaulting_to_a_clear_report() -> None:
     """The hook E6.4.3 rewires is importable and green by default."""
-    assert callable(console_module.FINISH_GATE)
-    assert console_module.FINISH_GATE() is True
+    report = console_module.FINISH_GATE()
+
+    assert isinstance(report, SelfTestReport)
+    assert (report.passed, report.has_blocking_failure) == (True, False)
 
 
 # ------------------------------------------- T-3/T-7 closure tests
@@ -2801,25 +2966,24 @@ def test_format_duration_round_trips_through_its_hms_parts(seconds: float) -> No
     assert int(hours) * 3600 + int(minutes) * 60 + int(secs) == int(seconds)
 
 
-def test_finish_gate_consults_the_evaluator_self_test(
+def test_finish_gate_returns_the_report_the_evaluator_suite_produced(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """E6.4.3: the gate is the self-test's green report (R-44)."""
+    """E6.4.3: the gate hands back the suite's own report (R-44).
 
-    class _Red:
-        """A report whose suite failed."""
+    Not a boolean: the finish flow needs ``has_blocking_failure`` to
+    decide the override question and ``failed_blocking_checks`` to name
+    the checks in it.
+    """
+    report = _report(_failed_check("7,462 distinct ranks"))
+    # logic-coverage-exempt: T-10 -- hands.self_test is the SUT's own
+    # suite seam; the production gate calls it directly, and stubbing it
+    # here keeps the test off the real (machine-dependent) 180x12 field.
+    monkeypatch.setattr(console_module.hands, "self_test", lambda: report)
 
-        passed = False
+    gated = console_module.FINISH_GATE()
 
-    class _Green:
-        """A report whose suite passed."""
-
-        passed = True
-
-    monkeypatch.setattr(console_module.hands, "self_test", _Green)
-    assert console_module.FINISH_GATE() is True
-    monkeypatch.setattr(console_module.hands, "self_test", _Red)
-    assert console_module.FINISH_GATE() is False
+    assert gated is report
 
 
 # --- E7.2.2 REOPENED corrections-only
@@ -3046,7 +3210,9 @@ def test_on_finish_given_reopened_ride_and_blocked_gate_refuses(
     _record(engine, clock, "12", lap_time_s=100)
     engine.finish()
     engine.reopen()
-    monkeypatch.setattr(console_module, "FINISH_GATE", lambda: False)
+    monkeypatch.setattr(
+        console_module, "FINISH_GATE", lambda: _report(_failed_check("Joker vector table (28)"))
+    )
     view = FakeConsoleView()
     presenter = _make_presenter(engine, view)
 
@@ -3057,12 +3223,29 @@ def test_on_finish_given_reopened_ride_and_blocked_gate_refuses(
     assert view.last_notice == "Finish blocked: evaluator self-test did not pass"
 
 
+def test_on_finish_given_reopened_ride_and_an_overridden_blocking_failure_records_it() -> None:
+    """E7.2.2: "Finish again" may be overridden too, and is recorded."""
+    engine, clock = _running_engine()
+    _record(engine, clock, "12", lap_time_s=100)
+    engine.finish()
+    engine.reopen()
+    view = FakeConsoleView()
+    presenter = _make_presenter(engine, view)
+    report = _report(_failed_check("compare() total order"))
+
+    presenter.on_finish(report)
+
+    assert engine.state is RideStatus.FINISHED
+    assert engine.events[-1].payload["self_test_failed_checks"] == ["compare() total order"]
+
+
 def test_engine_data_source_standings_rerank_after_reopened_correction_and_finish_again() -> None:
     """Finish again re-ranks: the corrected snapshot ranks under rank().
 
-    Two byte-identical hands split by laps (R-14): plate 12 leads with
-    2 laps until a reopened void_card drops one of its cards; the
-    re-lock to FINISHED re-ranks the same snapshot and plate 34 leads.
+    Two byte-identical hands are separated by the recorded draw (R-14):
+    plate 34 leads on its drawn ace until a reopened void_card drops a
+    card from 34's hand; the re-lock to FINISHED re-ranks the corrected
+    snapshot, where 12's pair wins outright and no second draw is made.
     The ranking itself is standings.rank's -- never reimplemented here.
     """
     engine, clock = _running_engine()
@@ -3076,16 +3259,16 @@ def test_engine_data_source_standings_rerank_after_reopened_correction_and_finis
     _teams_before, before_rows = EngineDataSource(engine, engine._roster).standings()
     before = [row.plate for row in before_rows]
     engine.reopen()
-    engine.void_card("12", Card.parse("5D"), "wrong card off the line")
+    engine.void_card("34", Card.parse("5D"), "wrong card off the line")
     engine.finish()
     source = EngineDataSource(engine, engine._roster)
 
     _teams_after, after_rows = source.standings()
     after = [row.plate for row in after_rows]
 
-    assert before[0] == "12"
-    assert after != before
-    assert after[0] == "34"
+    assert before == ["34", "12"]
+    assert after[0] == "12"
+    assert [row.tiebreak_card for row in after_rows] == ["", ""]
 
 
 def test_standings_given_reopened_zero_card_entry_renders_blank_hand_again() -> None:

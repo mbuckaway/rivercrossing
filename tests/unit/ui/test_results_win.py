@@ -5,8 +5,9 @@ Only what genuinely needs no window is pinned here, in the
 ``test_main_frame_riders_list.py`` / ``test_rider_list_columns.py``
 style:
 
-- :data:`STANDINGS_COLUMN_FLAGS` and the shared six-column list, every
-  column pinned to its own width (G6);
+- :data:`STANDINGS_COLUMN_FLAGS` and the shared standings-column list,
+  every column pinned to its own width (G6 plus the R-14 Draw column);
+- :func:`format_draw` -- the Draw cell's card text;
 - :meth:`StandingsListModel.Compare` -- the native header sort's
   per-column keys, its numeric Place/Laps and its non-negated
   row-position tie-break -- driven against a shell that owns only
@@ -22,6 +23,9 @@ style:
   and a recording ``wx.MessageDialog`` double (the ``test_std_dialogs``
   pattern: importing wx is safe without a display, opening a modal is
   not);
+- :meth:`ResultsWindow.set_stale` -- the one code-side banner, which
+  carries the stale-export note or the E6.4.3 self-test note -- against
+  a recording ``wx.InfoBar`` double;
 - :meth:`ResultsWindow._apply_min_size`'s ten-row floor on the three
   standings lists (D16) -- the ``STANDINGS_*`` constants pinned, and
   the ``SetMinSize`` argument captured by a recording control double
@@ -52,6 +56,7 @@ from rivercrossing.ui.presenters.data_source import StandingsRow
 from rivercrossing.ui.views import results_win
 from rivercrossing.ui.views.results_win import (
     COL_BEST5,
+    COL_DRAW,
     COL_ENTRY,
     COL_HAND,
     COL_LAPS,
@@ -61,11 +66,16 @@ from rivercrossing.ui.views.results_win import (
     COLUMN_WIDTHS,
     DRAW_EXPLANATION,
     DRAW_INFO_TITLE,
+    DRAW_WIDTH,
     HAND_WIDTH,
+    JOKER_DISPLAY,
+    SELF_TEST_NOTE,
+    STALE_NOTE,
     STANDINGS_COLUMN_FLAGS,
     TEAM_HAND_WIDTH,
     ResultsWindow,
     StandingsListModel,
+    format_draw,
 )
 
 if TYPE_CHECKING:
@@ -91,6 +101,7 @@ def _row(  # noqa: PLR0913 -- a fixture builder mirroring StandingsRow's fields
     hand: str = "High Card — Ace",
     draw_required: bool = False,
     tie_note: str | None = None,
+    tiebreak_card: str = "",
 ) -> StandingsRow:
     """Build one standings row varying only what a test needs."""
     return StandingsRow(
@@ -106,6 +117,7 @@ def _row(  # noqa: PLR0913 -- a fixture builder mirroring StandingsRow's fields
         tie_note=tie_note,
         best_lap=best_lap,
         best_lap_seconds=best_lap_seconds,
+        tiebreak_card=tiebreak_card,
     )
 
 
@@ -229,7 +241,7 @@ class _BindShell:
         ResultsWindow._on_standings_activated(self, event)
 
 
-def test_build_columns_for_given_a_control_appends_the_six_canvas_columns() -> None:
+def test_build_columns_for_given_a_control_appends_the_seven_canvas_columns() -> None:
     """One column per COLUMN_LABELS entry, in order."""
     control = _ListControl()
 
@@ -262,9 +274,9 @@ def test_build_columns_for_given_a_control_pins_every_column_width() -> None:
     )
 
 
-def test_column_widths_given_the_six_columns_are_the_g6_pins() -> None:
-    """G6: Place 60, Plate 50, Entry 160, Laps 50, Best 5 160, Hand."""
-    assert COLUMN_WIDTHS == (60, 50, 160, 50, 160, 210)
+def test_column_widths_given_the_seven_columns_are_the_pinned_widths() -> None:
+    """G6's six pins plus the R-14 Draw column's own width."""
+    assert COLUMN_WIDTHS == (60, 50, 160, 50, 160, 210, DRAW_WIDTH)
     assert COLUMN_WIDTHS[COL_HAND] == HAND_WIDTH
 
 
@@ -274,9 +286,9 @@ def test_team_hand_width_given_a_pooled_team_frees_the_plate_column() -> None:
     assert HAND_WIDTH + COLUMN_WIDTHS[COL_PLATE] == TEAM_HAND_WIDTH
 
 
-def test_min_size_given_the_solo_columns_fits_the_dialog_at_740() -> None:
-    """G6: 740 = the solo columns 690 plus scrollbar and borders."""
-    assert results_win.MIN_SIZE == (740, 442)
+def test_min_size_given_the_solo_columns_fits_the_dialog_at_800() -> None:
+    """The pinned columns (750 = 690 + Draw) plus the borders."""
+    assert results_win.MIN_SIZE == (800, 442)
 
 
 def test_build_columns_for_given_a_wide_hand_pins_only_the_hand_column() -> None:
@@ -333,14 +345,36 @@ class _ColumnsShell:
         ResultsWindow._build_columns_for(control, hide_plate=hide_plate, hand_width=hand_width)
 
 
-def test_column_labels_given_the_reworked_dialog_are_the_six_g6_columns() -> None:
-    """G6: Total and Best lap leave the header entirely."""
-    assert COLUMN_LABELS == ("Place", "Plate", "Entry", "Laps", "Best 5", "Hand")
+def test_column_labels_given_the_reworked_dialog_are_the_seven_columns() -> None:
+    """G6's six labels plus the R-14 Draw column, appended last."""
+    assert COLUMN_LABELS == ("Place", "Plate", "Entry", "Laps", "Best 5", "Hand", "Draw")
 
 
-def test_column_indexes_given_the_six_columns_are_zero_to_five() -> None:
-    """G6: Best 5 and Hand reindex to 4 and 5."""
-    assert (COL_PLACE, COL_PLATE, COL_ENTRY, COL_LAPS, COL_BEST5, COL_HAND) == (0, 1, 2, 3, 4, 5)
+def test_column_indexes_given_the_seven_columns_are_zero_to_six() -> None:
+    """G6 kept Best 5 and Hand at 4 and 5; Draw appends at 6."""
+    assert (COL_PLACE, COL_PLATE, COL_ENTRY, COL_LAPS, COL_BEST5, COL_HAND, COL_DRAW) == (
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+    )
+
+
+def test_get_column_count_given_the_standings_model_is_seven() -> None:
+    """T-14: the model's count derives from the shared label tuple."""
+    model = StandingsListModel([])
+
+    assert model.GetColumnCount() == len(COLUMN_LABELS)
+
+
+def test_get_column_count_given_a_rendered_row_reads_every_cell() -> None:
+    """The Draw column's cell resolves through the accessor tuple."""
+    model = StandingsListModel([_row(tiebreak_card="10D")])
+
+    assert model.GetValueByRow(0, COL_DRAW) == "10♦"
 
 
 def test_build_columns_given_rider_pooled_hides_the_plate_column_on_the_team_list() -> None:
@@ -469,6 +503,7 @@ ORDER_CASES = (
     (COL_LAPS, _row(laps=1), _row(laps=2)),
     (COL_BEST5, _row(best5=("2C",)), _row(best5=("AC",))),
     (COL_HAND, _row(hand="High Card — Ace"), _row(hand="Pair of twos")),
+    (COL_DRAW, _row(tiebreak_card="2C"), _row(tiebreak_card="AC")),
 )
 ORDER_CASE_IDS = [COLUMN_LABELS[col].replace(" ", "_") for col, _low, _high in ORDER_CASES]
 
@@ -676,6 +711,41 @@ def test_show_standings_given_empty_sections_renders_empty_models() -> None:
     assert shell.solo_standings_list.model.GetCount() == 0
 
 
+# ------------------------------------------- the Draw cell (R-14)
+#
+# The drawn tie-break card is its own column (the columns above), not a
+# reuse of the ⚠ tie flag: a row can carry a drawn card and no flag
+# (the draw separated the hands) and, on a field larger than the draw
+# deck, a flag and no card. The cell renders the canvas card text.
+
+DRAW_CASES = (
+    (_row(tiebreak_card="10D"), "10♦"),
+    (_row(tiebreak_card="AS"), "A♠"),
+    (_row(tiebreak_card="JK"), JOKER_DISPLAY),
+    (_row(tiebreak_card=""), ""),  # T-4 nullable: nothing drawn
+)
+
+
+@pytest.mark.parametrize(("row", "expected"), DRAW_CASES, ids=["ten", "ace", "joker", "blank"])
+def test_format_draw_given_a_standings_row_returns_its_drawn_card_text(
+    row: StandingsRow, expected: str
+) -> None:
+    """The cell is the drawn card's text, blank when none was drawn."""
+    assert format_draw(row) == expected
+
+
+@given(
+    code=st.sampled_from(
+        ["", "AS", "10D", "KC", "9H", "4S", "JK"],
+    )
+)  # the blank cell plus one code per suit and the joker
+def test_format_draw_given_any_stored_code_is_blank_iff_the_code_is_blank(code: str) -> None:
+    """Invariant (T-7): a row draws a card, or the cell stays empty."""
+    text = format_draw(_row(tiebreak_card=code))
+
+    assert (text == "") is (code == "")
+
+
 # ------------------------------------------- the ⚠ explanation (Part 1)
 #
 # A wxDataViewCtrl has no per-row hover tooltip, so the R-43 badge's
@@ -750,10 +820,12 @@ def _draw_model(*, tie_note: str | None = "draw required") -> StandingsListModel
 
 
 # The exact body Part 1 specifies: the row's own tie note, then the one
-# plain sentence saying what the flag means and who decides.
+# plain sentence saying what a residual tie means now that a finished
+# ride's drawn cards have already been applied.
 DRAW_MESSAGE = (
     "draw required\n\n"
-    "Identical best hands were not resolved by the tie-break — the venue draw arbitrates."
+    "Identical best hands were not separated by the configured tie-break order — "
+    "the venue decides."
 )
 
 
@@ -900,6 +972,108 @@ def test_bind_events_given_the_reworked_dialog_binds_no_dialog_control() -> None
     ResultsWindow._bind_events(shell)
 
     assert shell.dialog.bindings == []
+
+
+# ------------------------------- the code-side banner (E7.3.2/E6.4.3)
+#
+# The dialog's one note seam is the code-side wx.InfoBar (XRC cannot
+# author one -- results.xrc's own header), so both facts share it: the
+# stale-export warning takes precedence, and an otherwise-quiet ride
+# that finished over a failed self-test shows that note instead. Driven
+# against a recording bar double; no window is built.
+
+
+class _RecordingInfoBar:
+    """A ``wx.InfoBar`` double recording messages and dismissals."""
+
+    def __init__(self) -> None:
+        """Start with no message shown."""
+        self.messages: list[str] = []
+        self.dismissals = 0
+
+    def ShowMessage(self, message: str, icon: int = 0) -> None:  # noqa: N802, ARG002
+        """Record one shown message."""
+        self.messages.append(message)
+
+    def Dismiss(self) -> None:  # noqa: N802 -- wx API name the double mirrors
+        """Record one dismissal."""
+        self.dismissals += 1
+
+
+class _BannerShell:
+    """A ResultsWindow shell owning the infobar and two note flags."""
+
+    def __init__(self, *, self_test_unverified: bool = False) -> None:
+        """Build the bar double and the ride's two note facts."""
+        self.stale_infobar = _RecordingInfoBar()
+        self._self_test_unverified = self_test_unverified
+        self._stale = False
+        self.dialog = _Dialog()
+
+    def set_stale(self, *, stale: bool) -> None:
+        """Delegate the stale flag to the real view method."""
+        ResultsWindow.set_stale(self, stale=stale)
+
+    def _sync_banner(self) -> None:
+        """Delegate the banner render to the real view method."""
+        ResultsWindow._sync_banner(self)
+
+
+def test_set_stale_given_a_clean_ride_dismisses_the_banner() -> None:
+    """No stale flag, no self-test note: the bar stays dismissed."""
+    shell = _BannerShell()
+
+    ResultsWindow.set_stale(shell, stale=False)
+
+    assert (shell.stale_infobar.messages, shell.stale_infobar.dismissals) == ([], 1)
+
+
+def test_set_stale_given_a_stale_ride_shows_the_stale_export_note() -> None:
+    """E7.3.2: a post-export correction shows the re-export warning."""
+    shell = _BannerShell()
+
+    ResultsWindow.set_stale(shell, stale=True)
+
+    assert shell.stale_infobar.messages == [STALE_NOTE]
+
+
+def test_set_stale_given_a_self_test_unverified_ride_shows_that_note() -> None:
+    """E6.4.3: an unverified ride explains itself in the same seam."""
+    shell = _BannerShell(self_test_unverified=True)
+
+    ResultsWindow.set_stale(shell, stale=False)
+
+    assert shell.stale_infobar.messages == [SELF_TEST_NOTE]
+
+
+def test_set_stale_given_a_stale_and_unverified_ride_prefers_the_stale_note() -> None:
+    """E7.3.2 wins the one bar: staleness is the actionable warning."""
+    shell = _BannerShell(self_test_unverified=True)
+
+    ResultsWindow.set_stale(shell, stale=True)
+
+    assert shell.stale_infobar.messages == [STALE_NOTE]
+
+
+def test_set_stale_given_the_stale_flag_cleared_restores_the_self_test_note() -> None:
+    """A fresh export clears the warning, not the ride's own fact."""
+    shell = _BannerShell(self_test_unverified=True)
+    ResultsWindow.set_stale(shell, stale=True)
+
+    ResultsWindow.set_stale(shell, stale=False)
+
+    assert shell.stale_infobar.messages == [STALE_NOTE, SELF_TEST_NOTE]
+    assert shell.stale_infobar.dismissals == 0
+
+
+@pytest.mark.parametrize("stale", [True, False], ids=["stale", "clean"])
+def test_set_stale_given_either_note_lays_out_the_dialog_once(*, stale: bool) -> None:
+    """T-3: both arms re-layout the dialog exactly once."""
+    shell = _BannerShell(self_test_unverified=True)
+
+    ResultsWindow.set_stale(shell, stale=stale)
+
+    assert shell.dialog.layouts == 1
 
 
 # ------------------------------- the standings lists' ten-row floor

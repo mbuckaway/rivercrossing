@@ -36,9 +36,12 @@ E4.4.1-E4.4.3 behavior (spec §10/§13, R-31/32/34/35/37):
 - ``on_undo``/``on_stop_confirmed``/``on_start``/``on_finish`` drive
   the engine's write side; engine refusals surface as notices, never
   crashes.
-- ``FINISH_GATE`` is the E6.4.3 hook: the finish flow consults it
-  before finishing; the gate runs the real evaluator self-test
-  (``hands.self_test()``) fresh on each finish.
+- ``FINISH_GATE`` is the E6.4.3 hook: it runs the real evaluator
+  self-test (``hands.self_test()``) fresh on each finish and returns
+  the whole ``SelfTestReport``, so the finish flow can tell an
+  advisory failure (the whole-field timing check, which never blocks a
+  ride) from a blocking one, name the failed checks in the app's
+  override confirm, and record them on the finish event.
 
 W5 adds the console-button gates and the native-dialog seams; C2
 makes them the single source for Start/Stop/Undo (the Arm checkbox is
@@ -154,18 +157,24 @@ def is_miss(text: str) -> bool:
     return bool(stripped) and all(character in MISS_SYMBOLS for character in stripped)
 
 
-def _finish_gate_clear() -> bool:
-    """Return whether the evaluator self-test is green (R-44, E6.4.3).
+def _finish_gate_report() -> hands.SelfTestReport:
+    """Return the evaluator self-test report (R-44, E6.4.3).
 
     A fresh run each finish (not a cached launch result): the gate is
-    only as honest as the suite's last pass.
+    only as honest as the suite's last pass. The report -- not a bare
+    boolean -- is what the finish flow needs: its
+    ``has_blocking_failure`` is the verdict, and its
+    ``failed_blocking_checks`` are the names the override confirm
+    shows and the finish event records.
     """
-    return hands.self_test().passed
+    return hands.self_test()
 
 
 # E6.4.3 hook: the gate runs the real evaluator self-test suite
-# (``hands.self_test()``) fresh on each finish (module docstring).
-FINISH_GATE: Callable[[], bool] = _finish_gate_clear
+# (``hands.self_test()``) fresh on each finish (module docstring), and
+# exposes the whole report so the app's finish route can own the
+# override decision (E6.4.3's "never strand a multi-hour ride").
+FINISH_GATE: Callable[[], hands.SelfTestReport] = _finish_gate_report
 
 
 def status_text(status: RideStatus, *, stopped: bool = False) -> str:
@@ -724,21 +733,33 @@ class ConsolePresenter:
         """
         return list(self._rendered_feed)
 
-    def on_finish(self) -> None:
+    def on_finish(self, report: hands.SelfTestReport | None = None) -> None:
         """Handle the Finish Ride flow (E4.4.2, gate hook E6.4.3).
 
-        Consults :data:`FINISH_GATE` first: a failing evaluator
-        self-test blocks finishing with a notice. When clear,
-        ``engine.finish()`` closes the shoe -- from RUNNING, or from
-        REOPENED (E7.2.2's single primary "Finish again": re-locks to
-        FINISHED after corrections, spec §3) -- and the console
-        reflects FINISHED. Engine refusals (DRAFT) surface as notices.
+        *report* is the evaluator self-test verdict the caller already
+        ran to own the override decision (``app``'s finish route): a
+        report whose ``has_blocking_failure`` is True means the
+        operator chose "Finish anyway", so this finishes and records
+        exactly which checks were red on the finish event -- the mark
+        the results display reads as self-test unverified.
+
+        Called with no report (the defensive path -- no dialog was
+        shown), this runs :data:`FINISH_GATE` itself and a blocking
+        failure still refuses with the one-line notice.
+
+        When clear, ``engine.finish()`` closes the shoe -- from
+        RUNNING, or from REOPENED (E7.2.2's single primary "Finish
+        again": re-locks to FINISHED after corrections, spec §3) --
+        and the console reflects FINISHED. Engine refusals (DRAFT)
+        surface as notices.
         """
-        if not FINISH_GATE():
-            self.view.show_notice("Finish blocked: evaluator self-test did not pass")
-            return
+        if report is None:
+            report = FINISH_GATE()
+            if report.has_blocking_failure:
+                self.view.show_notice("Finish blocked: evaluator self-test did not pass")
+                return
         try:
-            self.engine.finish()
+            self.engine.finish(self_test_failed_checks=report.failed_blocking_checks)
         except IllegalStateError as exc:
             self.view.show_notice(f"Cannot finish: {exc}")
             return

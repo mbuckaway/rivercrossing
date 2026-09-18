@@ -438,6 +438,31 @@ def test_add_rider_presenter_submit_given_a_solo_form_creates_the_entry_and_retu
     assert [entry.display_name for entry in roster.entries] == ["Sam Ellis"]
 
 
+def test_add_rider_presenter_submit_given_a_solo_form_canonicalises_the_name() -> None:
+    """A solo Add stores the rider's name in its canonical case."""
+    roster = Roster()
+    presenter = AddRiderPresenter(RecordingAddRiderView(), roster)
+
+    presenter.on_submit(
+        RiderFormValues(plate="1", first_name="sam", last_name="ELLIS", team=SOLO_TEAM_CHOICE)
+    )
+
+    entry = roster.entries[0]
+    assert (entry.display_name, entry.riders[0].full_name) == ("Sam Ellis", "Sam Ellis")
+
+
+def test_add_rider_presenter_submit_given_a_solo_form_keeps_a_mixed_case_surname() -> None:
+    """Only a uniform-case field is re-cased: McDonald is left alone."""
+    roster = Roster()
+    presenter = AddRiderPresenter(RecordingAddRiderView(), roster)
+
+    presenter.on_submit(
+        RiderFormValues(plate="1", first_name="sam", last_name="McDonald", team=SOLO_TEAM_CHOICE)
+    )
+
+    assert roster.entries[0].display_name == "Sam McDonald"
+
+
 def test_add_rider_presenter_submit_given_an_existing_team_name_joins_it() -> None:
     """Add onto an existing pooled team folds the rider in (E3.2)."""
     roster = _draft_mixed_roster()
@@ -450,6 +475,25 @@ def test_add_rider_presenter_submit_given_an_existing_team_name_joins_it() -> No
     assert created is True
     team = roster.entries[0]
     assert [r.full_name for r in team.riders] == ["A. Roy", "K. Singh", "L. Marchetti"]
+
+
+def test_add_rider_presenter_submit_given_a_team_join_canonicalises_the_name() -> None:
+    """A rider folded onto a team is canonicalised like any other."""
+    roster = _draft_mixed_roster()
+    presenter = AddRiderPresenter(RecordingAddRiderView(), roster)
+
+    presenter.on_submit(
+        RiderFormValues(
+            plate="79", first_name="luigi", last_name="marchetti", team="Trail Blazers"
+        )
+    )
+
+    joined = roster.entries[0].riders[-1]
+    assert (joined.first_name, joined.last_name, joined.full_name) == (
+        "Luigi",
+        "Marchetti",
+        "Luigi Marchetti",
+    )
 
 
 def test_add_rider_presenter_submit_given_a_team_join_leaves_no_stray_entry() -> None:
@@ -696,6 +740,46 @@ def test_edit_rider_presenter_submit_given_a_solo_record_renames_the_rider_and_e
     entry = roster.entries[0]
     assert committed is True
     assert (entry.display_name, entry.riders[0].full_name) == ("Samuel Ellis", "Samuel Ellis")
+
+
+def test_edit_rider_presenter_submit_given_lower_case_names_canonicalises_them() -> None:
+    """A committed rename stores the canonical case."""
+    roster = _draft_solo_roster()
+    presenter, _view = _edit_presenter(roster)
+
+    committed = presenter.on_submit(
+        RiderFormValues(plate="123", first_name="JOHN", last_name="ellis", team=SOLO_TEAM_CHOICE)
+    )
+
+    entry = roster.entries[0]
+    assert (committed, entry.display_name) == (True, "John Ellis")
+
+
+def test_edit_rider_presenter_submit_given_a_mixed_case_surname_keeps_it() -> None:
+    """A mixed-case surname is a spelling, not a case artifact."""
+    roster = _draft_solo_roster()
+    presenter, _view = _edit_presenter(roster)
+
+    presenter.on_submit(
+        RiderFormValues(
+            plate="123", first_name="sam", last_name="van der Berg", team=SOLO_TEAM_CHOICE
+        )
+    )
+
+    assert roster.entries[0].display_name == "Sam van der Berg"
+
+
+def test_edit_rider_presenter_submit_given_a_team_member_canonicalises_only_the_rider() -> None:
+    """A team keeps its display name; only the member is re-cased."""
+    roster = _draft_mixed_roster()
+    presenter, _view = _edit_presenter(roster)
+
+    presenter.on_submit(
+        RiderFormValues(plate="77", first_name="ALEX", last_name="roy", team="Trail Blazers")
+    )
+
+    entry = roster.entries[0]
+    assert (entry.display_name, entry.riders[0].full_name) == ("Trail Blazers", "Alex Roy")
 
 
 def test_edit_rider_presenter_submit_given_a_team_member_renames_only_the_rider() -> None:
@@ -2362,8 +2446,8 @@ def test_on_confirm_csv_import_given_warnings_only_commits_and_keeps_the_small_t
     assert result is True
     teams = [entry for entry in roster.entries if entry.type is EntryType.TEAM]
     assert [(entry.display_name, len(entry.riders)) for entry in teams] == [
-        ("wolves", 2),
-        ("solo team", 1),
+        ("Wolves", 2),
+        ("Solo Team", 1),
     ]
 
 

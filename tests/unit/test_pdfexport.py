@@ -36,6 +36,7 @@ import io
 import os
 import re
 import zlib
+from dataclasses import replace
 from datetime import datetime, timedelta
 from typing import TYPE_CHECKING
 
@@ -55,7 +56,7 @@ from pypdf import PdfReader
 from rivercrossing import pdfexport
 from rivercrossing.cards import Card, Rank, Suit
 from rivercrossing.hands import best_hand
-from rivercrossing.htmlexport import ExportOptions, build_payload
+from rivercrossing.htmlexport import SELF_TEST_NOTE, ExportOptions, ResultRow, build_payload
 from rivercrossing.standings import EntryResult, Placed
 
 if TYPE_CHECKING:
@@ -551,6 +552,102 @@ def test_render_zero_card_entry_renders_with_blank_hand(tmp_path: Path) -> None:
     text = _text(_render(tmp_path, (no_show,), ExportOptions(full_field=True)))
 
     assert "No Show" in text
+
+
+# ------------------------------------- R-14 drawn card / E6.4.3 note
+
+
+def test_render_shows_the_drawn_tiebreak_card_beside_the_hand(tmp_path: Path) -> None:
+    """R-14: a row that drew a tie-break card renders that card.
+
+    Both row drawers that carry a hand render it -- the top list's
+    standings row and the full field's solo row -- so the drawn card
+    reads twice on this one-entry page (and the marker's own separator
+    is pinned by the ``_draw_marker`` tests above).
+    """
+    opts = ExportOptions(full_field=True, laps_board=False, time_board=False)
+    placed = (
+        Placed(
+            place=1,
+            result=replace(_entry("88", "Moss Ridge Riders", 11), tiebreak_card=Card.parse("AH")),
+            tie_note=None,
+            draw_required=False,
+        ),
+    )
+
+    text = _text(_render(tmp_path, placed, opts))
+
+    assert text.count("DRAW A♥") == 2
+
+
+def test_render_given_no_drawn_card_renders_no_draw_marker(tmp_path: Path) -> None:
+    """T-3 negative: an undrawn row's hand cell carries no marker."""
+    opts = ExportOptions(full_field=True, laps_board=False, time_board=False)
+
+    text = _text(_render(tmp_path, (_placed_three()[0],), opts))
+
+    assert "DRAW" not in text
+
+
+def test_draw_marker_given_a_row_without_a_draw_is_empty() -> None:
+    """A row that drew nothing renders its hand alone."""
+    row = build_payload(
+        build_ride(), (_placed_three()[0],), ExportOptions(), "Generated 12:00, June 6 2026"
+    ).results[0]
+
+    assert pdfexport._draw_marker(row) == ""
+
+
+def test_draw_marker_given_a_row_that_drew_appends_its_card() -> None:
+    """A drawn row's marker names the card it drew."""
+    row = ResultRow(
+        place=1,
+        plate=88,
+        entry="X",
+        entry_type="SOLO",
+        laps=11,
+        hand="Three of a Kind — Nines",
+        draw=("A", "h"),
+    )
+
+    assert pdfexport._draw_marker(row) == " · DRAW A♥"
+
+
+def test_draw_marker_given_a_zero_card_row_that_drew_is_the_draw_alone() -> None:
+    """T-4 boundary: no hand to lead with, so no leading separator."""
+    row = ResultRow(
+        place=1,
+        plate=1,
+        entry="No Show",
+        entry_type="SOLO",
+        laps=0,
+        hand="",
+        draw=("JK", "j"),
+    )
+
+    assert pdfexport._draw_marker(row) == "DRAW ★"
+
+
+def test_render_given_an_unverified_ride_renders_the_self_test_note(tmp_path: Path) -> None:
+    """E6.4.3: the cover note the export already renders carries it."""
+    out = tmp_path / "results.pdf"
+    pdfexport.render(
+        build_ride(),
+        _placed_three(),
+        ExportOptions(full_field=True),
+        out,
+        created_at=FIXED_CREATED,
+        self_test_unverified=True,
+    )
+
+    assert SELF_TEST_NOTE in _text(out)
+
+
+def test_render_given_a_verified_ride_renders_no_self_test_note(tmp_path: Path) -> None:
+    """T-3 negative: a verified ride's report carries no such note."""
+    out = _render(tmp_path, _placed_three(), ExportOptions(full_field=True))
+
+    assert "Self-test unverified" not in _text(out)
 
 
 def test_render_empty_field_renders(tmp_path: Path) -> None:

@@ -45,6 +45,7 @@ if TYPE_CHECKING:
     from rivercrossing.standings import Placed
 
 __all__ = [
+    "SELF_TEST_NOTE",
     "CardPair",
     "EventInfo",
     "ExportOptions",
@@ -132,9 +133,13 @@ class ResultRow:
 
     ``total``/``best_lap`` are the only fields whose presence in
     ``to_record()`` depends on ``ExportOptions.show_times`` (R-63).
-    ``tie``/``dnf``/``logo``/``sex`` are sparse -- emitted only when
-    set, never as a ``false``/``null`` key, matching the golden pages'
-    shape exactly. ``sex`` is a solo rider's ``"M"``/``"F"`` and None
+    ``tie``/``draw``/``dnf``/``logo``/``sex`` are sparse -- emitted only
+    when set, never as a ``false``/``null`` key, matching the golden
+    pages' shape exactly. ``draw`` is the card the entry drew for the
+    venue's high-card tie-break (R-14), a ``(rank, suit)`` pair or
+    ``None`` when the entry drew nothing: it is deliberately *not*
+    ``tie``, which means the residual tie a configured order could not
+    separate. ``sex`` is a solo rider's ``"M"``/``"F"`` and None
     for a team (no single sex), so a team row renders no marker. The
     field is named ``entry_type`` rather than ``type`` to avoid
     shadowing the builtin; it maps to the JSON key ``"type"``, and
@@ -150,12 +155,15 @@ class ResultRow:
     total: str | None = None
     best_lap: str | None = None
     # The solo rider's sex ("M"/"F"); None for a team, whose members
-    # need not share one. Sparse in the record, like tie/dnf/logo.
+    # need not share one. Sparse in the record, like tie/draw/logo.
     sex: str | None = None
     tie: bool = False
     dnf: bool = False
     cards: tuple[CardPair, ...] = ()
     drawn: tuple[CardPair, ...] = ()
+    # R-14's drawn tie-break card: the entry's own card, present only
+    # when a draw recorded one.
+    draw: CardPair | None = None
     # The entry's logo *card* as a data URI (the team's packaged card
     # bitmap, resolved by the caller), mirroring the org logo's own
     # logo_src mechanism. Sparse in the record -- absent rows have no
@@ -172,7 +180,7 @@ class ResultRow:
         """Return the JSON-record view for one results row.
 
         ``total``/``bestLap`` are included only when ``show_times``;
-        ``sex``/``tie``/``dnf`` are included only when set.
+        ``sex``/``tie``/``dnf``/``draw`` are included only when set.
         """
         record: dict[str, object] = {
             "place": self.place,
@@ -193,6 +201,8 @@ class ResultRow:
             record["dnf"] = True
         record["cards"] = [list(pair) for pair in self.cards]
         record["drawn"] = [list(pair) for pair in self.drawn]
+        if self.draw is not None:
+            record["draw"] = list(self.draw)
         if self.logo is not None:
             record["logo"] = self.logo
         return record
@@ -258,7 +268,13 @@ class RacePayload:
     """The full results record embedded in ``<script id="race-data">``.
 
     ``to_record()`` is the single source of the JSON the golden pages
-    parse back out -- Spec §8's round-trip test target.
+    parse back out -- Spec §8's round-trip test target. ``tie_note``
+    and ``self_test_note`` are the page's two notes: the first explains
+    a residual tie, the second (E6.4.3) records that the ride was
+    finished over a failed evaluator self-test. Both are sparse in the
+    record -- ``tieNote`` is always emitted (the samples carry it, as
+    null), ``selfTestNote`` only when set, so every pre-E6.4.3 record
+    round-trips byte-identically.
     """
 
     event: EventInfo
@@ -267,11 +283,12 @@ class RacePayload:
     results: tuple[ResultRow, ...]
     laps_board: tuple[LapsBoardRow, ...] = ()
     time_board: tuple[TimeBoardRow, ...] = ()
+    self_test_note: str | None = None
 
     def to_record(self) -> dict[str, object]:
         """Return the full camelCase JSON record for the page."""
         show_times = self.options.show_times
-        return {
+        record: dict[str, object] = {
             "event": self.event.to_record(),
             "options": self.options.to_record(),
             "tieNote": self.tie_note,
@@ -279,6 +296,9 @@ class RacePayload:
             "lapsBoard": [row.to_record(show_times=show_times) for row in self.laps_board],
             "timeBoard": [row.to_record() for row in self.time_board],
         }
+        if self.self_test_note is not None:
+            record["selfTestNote"] = self.self_test_note
+        return record
 
 
 # The section plan's per-kind row counts -- the display contract both
@@ -331,6 +351,15 @@ class Sections:
 # ==================================================== E6.2.2 renderer
 
 _KICKER = "Official results · poker run"
+
+# E6.4.3's note: the caption the page and the PDF render when the ride
+# was finished over a failed evaluator self-test, so a published result
+# never hides the fact. Composed here (like ``EventInfo``'s own
+# "Organizer: ..." lines) rather than by each caller, so the page, the
+# report and their tests read one string.
+SELF_TEST_NOTE = (
+    "Self-test unverified — these results were published over a failed evaluator self-test"
+)
 
 # D8's 1x1 transparent PNG fallback: a page without a ride logo must
 # still carry a valid (never empty, never external) img src.
@@ -496,6 +525,7 @@ def _template_context(  # noqa: PLR0913 -- the five context inputs the template 
         "options": payload.options,
         "sections": plan,
         "tie_note": payload.tie_note,
+        "self_test_note": payload.self_test_note,
         "logo_src": logo_src if logo_src is not None else _TRANSPARENT_PNG,
         "logo_alt": payload.event.organizer,
         "payload": payload,
@@ -616,7 +646,9 @@ def _result_row_from_placed(placed: Placed, *, logo: str | None = None) -> Resul
     it is not reproduced (documented seam). *logo* (W8) is the row's
     logo data URI, resolved by the caller from the roster entry that
     holds the placed plate -- ``None`` renders no logo image. ``sex``
-    (E7) is the solo rider's "M"/"F", None for a team.
+    (E7) is the solo rider's "M"/"F", None for a team. ``draw`` (R-14)
+    is the card the entry drew for the venue's tie-break, absent for
+    every entry that drew none.
     """
     result = placed.result
     return ResultRow(
@@ -633,6 +665,7 @@ def _result_row_from_placed(placed: Placed, *, logo: str | None = None) -> Resul
         dnf=result.dnf,
         cards=tuple(_card_pair(card) for card in result.hand.best5),
         drawn=tuple(_card_pair(card) for card in result.cards),
+        draw=_card_pair(result.tiebreak_card) if result.tiebreak_card is not None else None,
         logo=logo,
     )
 
@@ -782,6 +815,8 @@ def build_payload(  # noqa: PLR0913, PLR0917
     opts: ExportOptions,
     generated: str | None,
     team_logos: Mapping[str, str] | None = None,
+    *,
+    self_test_unverified: bool = False,
 ) -> RacePayload:
     """Build the export payload from a ride and its placed standings.
 
@@ -790,7 +825,9 @@ def build_payload(  # noqa: PLR0913, PLR0917
     fixture payloads (which carry the golden boards) reach the page
     through ``_render_payload`` (D15). *team_logos* (W8) maps a placed
     entry's plate to its logo data URI -- the roster-entry lookup seam
-    the app supplies.
+    the app supplies. *self_test_unverified* (E6.4.3) is the engine's
+    flag: when set, the payload carries :data:`SELF_TEST_NOTE` as
+    ``self_test_note``, the caption both exporters render.
 
     Args:
         ride: Ride-like object exposing the six read fields.
@@ -799,6 +836,8 @@ def build_payload(  # noqa: PLR0913, PLR0917
         generated: The pinned footer stamp; None stamps the local now.
         team_logos: Plate -> logo data URI for the entries that carry
             one; rows without a mapping render no logo.
+        self_test_unverified: Whether the ride was finished over a
+            failed evaluator self-test.
 
     Returns:
         The payload the page embeds and both exporters render from.
@@ -824,6 +863,7 @@ def build_payload(  # noqa: PLR0913, PLR0917
         results=results,
         laps_board=laps_board,
         time_board=time_board,
+        self_test_note=SELF_TEST_NOTE if self_test_unverified else None,
     )
 
 
@@ -844,6 +884,7 @@ def render(  # noqa: PLR0913
     generated: str | None = None,
     logo_path: Path | str | None = None,
     team_logos: Mapping[str, str] | None = None,
+    self_test_unverified: bool = False,
 ) -> str:
     """Render one finished ride's results as a self-contained HTML page.
 
@@ -860,6 +901,7 @@ def render(  # noqa: PLR0913
     maps a placed entry's plate to its logo data URI (the team's card
     bitmap), rendered as a small image in the team's Top teams and
     Full field rows; absent entries render nothing.
+    ``self_test_unverified`` (E6.4.3) publishes the self-test note.
 
     Args:
         ride: Ride-like object exposing ``name``/``event_date``/
@@ -873,6 +915,8 @@ def render(  # noqa: PLR0913
             None (R-61's logo-base64 rule).
         team_logos: Plate -> logo data URI for the entries that carry
             one; rows without a mapping render no logo.
+        self_test_unverified: Whether the ride was finished over a
+            failed evaluator self-test.
 
     Returns:
         The full HTML page as a string.
@@ -882,7 +926,14 @@ def render(  # noqa: PLR0913
     """
     if logo_src is None and logo_path is not None:
         logo_src = _logo_data_uri(logo_path)
-    payload = build_payload(ride, placed, opts, generated, team_logos=team_logos)
+    payload = build_payload(
+        ride,
+        placed,
+        opts,
+        generated,
+        team_logos=team_logos,
+        self_test_unverified=self_test_unverified,
+    )
     return _render_payload(payload, logo_src=logo_src, placed=placed)
 
 
@@ -994,6 +1045,18 @@ def _card_pairs(value: object) -> tuple[CardPair, ...]:
     return tuple(pairs)
 
 
+def _optional_card_pair(value: object) -> CardPair | None:
+    """Convert a record's optional single ``draw`` pair to its tuple.
+
+    ``None`` -- the key absent, or explicitly null -- is the ordinary
+    undrawn row, so the caller keeps ``ResultRow.draw`` unset.
+    """
+    if value is None:
+        return None
+    pair = cast("tuple[object, object]", value)
+    return (cast("str", pair[0]), cast("str", pair[1]))
+
+
 def _result_row_from_record(row: Mapping[str, object]) -> ResultRow:
     """Build one ``ResultRow`` from its camelCase record row."""
     return ResultRow(
@@ -1010,6 +1073,7 @@ def _result_row_from_record(row: Mapping[str, object]) -> ResultRow:
         dnf=cast("bool", row.get("dnf", False)),
         cards=_card_pairs(row.get("cards", [])),
         drawn=_card_pairs(row.get("drawn", [])),
+        draw=_optional_card_pair(row.get("draw")),
         logo=cast("str | None", row.get("logo")),
     )
 
@@ -1076,4 +1140,5 @@ def _payload_from_record(record: Mapping[str, object]) -> RacePayload:
             _time_board_row_from_record(cast("Mapping[str, object]", row))
             for row in cast("list[object]", record["timeBoard"])
         ),
+        self_test_note=cast("str | None", record.get("selfTestNote")),
     )

@@ -64,6 +64,7 @@ from rivercrossing.roster import (
     can_edit_structure,
     can_fix_name,
     can_move_rider,
+    canonical_person_name,
     rider_name_key,
     team_name_key,
 )
@@ -87,6 +88,55 @@ def test_rider_name_key_folds_case_and_collapses_whitespace() -> None:
     assert rider_name_key("  mary   anne ", " KNIBBE ") == "mary anne knibbe"
     assert rider_name_key("John", "") == "john"
     assert rider_name_key("JoHN", "") == rider_name_key("john", "")
+
+
+# ------------------------------------------------------ canonical names
+# The canonical case a rider's own name is stored in: a field written
+# in one uniform case is a formatting artifact and gets re-cased; a
+# field with any case mixture is the operator's own spelling and is
+# kept exactly as typed.
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        ("john", "John"),
+        ("JOHN", "John"),
+        ("John", "John"),
+        ("  john  ", "John"),
+        ("j", "J"),
+        ("McDonald", "McDonald"),
+        ("O'Brien", "O'Brien"),
+        ("McDonald Jr.", "McDonald Jr."),
+        ("Van Der Berg", "Van Der Berg"),
+        ("jOhN", "jOhN"),
+        (" van der berg ", "Van der berg"),
+        # A uniform-case field's tail is folded too, so an all-caps
+        # surname reads as one capitalized word.
+        ("MCDONALD", "Mcdonald"),
+        ("J.", "J."),
+        ("", ""),
+        ("   ", ""),
+    ],
+)
+def test_canonical_person_name_given_a_name_returns_its_canonical_form(
+    raw: str, expected: str
+) -> None:
+    """Uniform case is re-cased; a mixed-case name survives."""
+    assert canonical_person_name(raw) == expected
+
+
+# T-7 invariant over the CSV cell domain. U+0149 is the one deprecated
+# character whose titlecase mapping is not a fixed point -- the result
+# carries both an uncased and a capital letter, so a second pass sees
+# mixed case -- and no registration export carries it.
+@given(name=st.text(alphabet=st.characters(blacklist_characters="\u0149"), max_size=100))
+@settings(max_examples=200, deadline=None)
+def test_canonical_person_name_given_any_name_is_a_fixed_point(name: str) -> None:
+    """T-7 invariant: canonicalising a canonical name is stable."""
+    canonical = canonical_person_name(name)
+
+    assert canonical_person_name(canonical) == canonical
 
 
 # ------------------------------------------------------- team_name_key

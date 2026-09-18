@@ -71,6 +71,8 @@ from rivercrossing.ui import ids, require_wx, theme
 from rivercrossing.ui.views._support import FIND_SETTLE_ATTEMPTS, find_window_by_name
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
+
     from rivercrossing.ui.logging import Logging
 
 wx = require_wx()
@@ -91,6 +93,8 @@ __all__ = [
     "first_field_for",
     "reopen_ride_message",
     "run_dialog",
+    "self_test_override_labels",
+    "self_test_override_message",
     "set_default_button",
     "set_initial_focus",
     "wire_close_button",
@@ -341,12 +345,15 @@ def finish_ride_message() -> str:
 
     Phase 11 H2 retired ``finish_confirm_dlg`` for the native
     ``std_dialogs.show_danger``; this is that XRC window's own
-    explanatory line, kept verbatim so the confirm still says what
-    finishing does and that reopening for corrections stays possible.
+    explanatory line, with E6.4.3's parenthetical so the confirm
+    still says what finishing does -- a red evaluator asks again
+    rather than refusing -- and that reopening for corrections stays
+    possible.
     """
     return (
-        "Locks entry and computes final standings (evaluator self-test must be "
-        "green). You can reopen later for corrections."
+        "Locks entry and computes final standings (a blocking evaluator "
+        "self-test failure asks for a second confirm and marks the results "
+        "self-test unverified). You can reopen later for corrections."
     )
 
 
@@ -361,6 +368,45 @@ def finish_again_labels() -> tuple[str, str]:
     :func:`finish_ride_message` / "Finish ride".
     """
     return "Finish again?", "Finish again"
+
+
+def self_test_override_labels() -> tuple[str, str]:
+    """Return the E6.4.3 override confirm's ``(title, ok_label)`` copy.
+
+    Shown only when the evaluator self-test has a blocking failure: a
+    red suite no longer refuses the finish outright, so the question
+    names the failure rather than repeating the plain finish question,
+    and the affirmative button names the override it performs. Cancel
+    stays the default (``show_danger``), so a reflex Enter never
+    overrides a red evaluator by accident.
+    """
+    return "Evaluator Self-Test Failed", "Finish anyway"
+
+
+def self_test_override_message(failed_checks: Sequence[str]) -> str:
+    """Return the override confirm's message, naming every failed check.
+
+    UX-DESKTOP §4: the question names what it is about to do, so the
+    failed checks are listed one per line and the consequence is
+    stated -- the ride finishes with its results recorded as
+    self-test unverified. Cancel is the safe path back: the ride stays
+    unfinished and nothing is published.
+
+    Raises:
+        ValueError: *failed_checks* is empty. The caller only asks this
+            question for a blocking failure, so a confirm naming
+            nothing is a bug, never copy.
+    """
+    if not failed_checks:
+        msg = "self-test override confirm needs at least one failed check"
+        raise ValueError(msg)
+    listed = "\n".join(failed_checks)
+    return (
+        "These evaluator self-test checks failed:\n\n"
+        f"{listed}\n\n"
+        "Finishing anyway marks this ride's results self-test unverified. "
+        "Cancel leaves the ride unfinished."
+    )
 
 
 def dnf_message(plate: str, name: str) -> str:

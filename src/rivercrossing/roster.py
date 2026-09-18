@@ -98,6 +98,7 @@ __all__ = [
     "can_edit_structure",
     "can_fix_name",
     "can_move_rider",
+    "canonical_person_name",
     "rider_name_key",
     "team_name_key",
 ]
@@ -404,6 +405,29 @@ def rider_name_key(first_name: str, last_name: str = "") -> str:
     share the key "mary anne knibbe".
     """
     return " ".join(f"{first_name} {last_name}".casefold().split())
+
+
+def canonical_person_name(raw: str) -> str:
+    """Return *raw*'s canonical display case (CSV import, rider editor).
+
+    Trim, then capitalize a field written in ONE uniform case --
+    "john" and "JOHN" both become "John", because a registration
+    form's own casing is a formatting artifact -- while a field with
+    any case mixture is returned exactly as typed, so a surname the
+    operator spelled deliberately survives: "McDonald", "O'Brien"
+    and "van der Berg" all come back unchanged (" van der berg ",
+    all lower-case, becomes "Van der berg").
+
+    Args:
+        raw: The name field as the operator or the CSV file wrote it.
+
+    Returns:
+        The name in its canonical display case.
+    """
+    trimmed = raw.strip()
+    if trimmed.upper() == trimmed or trimmed.lower() == trimmed:
+        return trimmed.capitalize()
+    return trimmed
 
 
 _FUZZY_QUOTE_TRANSLATION = str.maketrans("", "", "'\"\u2018\u2019\u201c\u201d")

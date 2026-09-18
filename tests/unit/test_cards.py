@@ -40,6 +40,9 @@ from rivercrossing.cards import (
     ShoeClosedError,
     ShoeEmpty,
     Suit,
+    _shuffled_sequence,
+    draw_key,
+    high_card_draw,
     seeded_card_codes,
 )
 
@@ -193,6 +196,23 @@ def test_shoe_cycle_starts_at_one_for_a_freshly_built_shoe() -> None:
     shoe = Shoe(decks=_DECKS, jokers_per_deck=_JOKERS_PER_DECK, seed=_SEED)
 
     assert shoe.cycle == 1
+
+
+def test_shoe_seed_given_a_constructed_shoe_returns_the_constructor_seed() -> None:
+    """Seed is the stored rng_seed a replay rebuilds from."""
+    shoe = Shoe(decks=_DECKS, jokers_per_deck=_JOKERS_PER_DECK, seed=_SEED)
+
+    assert shoe.seed == _SEED
+
+
+def test_shoe_seed_given_a_reshuffle_is_unchanged() -> None:
+    """reshuffle() derives each cycle's seed; the stored one stays."""
+    shoe = Shoe(decks=_DECKS, jokers_per_deck=_JOKERS_PER_DECK, seed=_SEED)
+    _deal_all(shoe)
+
+    shoe.reshuffle()
+
+    assert shoe.seed == _SEED
 
 
 # ------------------------------------------------ jokers_in_cycle (6d)
@@ -933,3 +953,111 @@ def test_shoe_reconfigure_given_a_closed_shoe_raises_shoe_closed_error() -> None
 
     with pytest.raises(ShoeClosedError, match=re.escape("shoe is closed")):
         shoe.reconfigure(_DECKS, 0, jokers_total=False)
+
+
+# =============== high-card tie-break draw (spec §5 rule ①, R-14)
+#
+# A hand tie a FINISHED ride's stored order still reaches is resolved
+# at the venue by ① high-card draw: one fresh natural deck -- jokers
+# are wild, never drawn -- shuffled under the ride's own seed (R-40's
+# replay discipline), from which each tied entry draws a card.
+# draw_key() orders what comes back -- rank major, suit minor with
+# spades highest -- so the drawn pair is separated by the draw itself
+# and never silently ordered (R-43).
+
+
+def test_high_card_draw_given_the_same_seed_returns_the_identical_tuple() -> None:
+    """R-40: the seed reproduces the draw exactly, card for card."""
+    first = high_card_draw(_SEED, 5)
+    second = high_card_draw(_SEED, 5)
+
+    assert first == second
+    assert len(first) == 5
+
+
+@pytest.mark.parametrize("count", [-1, 0], ids=["negative", "zero"])
+def test_high_card_draw_given_a_non_positive_count_returns_an_empty_tuple(count: int) -> None:
+    """T-4 bounds: fewer than one card is not a draw."""
+    assert high_card_draw(_SEED, count) == ()
+
+
+@pytest.mark.parametrize(
+    "count",
+    [1, 2, 51, 52, 53],
+    ids=["one", "two", "fifty_one", "full_deck", "past_the_deck"],
+)
+def test_high_card_draw_given_a_count_returns_the_shuffled_decks_prefix(count: int) -> None:
+    """The draw is one fresh natural deck's own first *count* cards."""
+    deck = _shuffled_sequence(decks=1, jokers_per_deck=0, seed=_SEED)
+
+    assert high_card_draw(_SEED, count) == tuple(deck[:count])
+
+
+def test_high_card_draw_given_a_full_deck_returns_52_distinct_naturals() -> None:
+    """count=52 is the whole deck: unique codes, no joker among them."""
+    codes = _codes(high_card_draw(_SEED, 52))
+
+    assert len(codes) == 52
+    assert len(set(codes)) == 52
+    assert "JK" not in codes
+
+
+@pytest.mark.parametrize(
+    ("rank", "suit", "expected"),
+    [
+        (Rank.TWO, Suit.CLUBS, 8),
+        (Rank.TWO, Suit.SPADES, 11),
+        (Rank.KING, Suit.CLUBS, 52),
+        (Rank.KING, Suit.DIAMONDS, 53),
+        (Rank.KING, Suit.HEARTS, 54),
+        (Rank.KING, Suit.SPADES, 55),
+        (Rank.ACE, Suit.CLUBS, 56),
+        (Rank.ACE, Suit.SPADES, 59),
+    ],
+    ids=[
+        "lowest_key",
+        "two_of_spades",
+        "king_of_clubs",
+        "king_of_diamonds",
+        "king_of_hearts",
+        "king_of_spades",
+        "ace_of_clubs",
+        "highest_key",
+    ],
+)
+def test_draw_key_given_a_natural_is_rank_major_with_spades_highest(
+    rank: Rank, suit: Suit, expected: int
+) -> None:
+    """The key is rank x 4 + suit slot: clubs 0 through spades 3."""
+    assert draw_key(Card(rank=rank, suit=suit)) == expected
+
+
+def test_draw_key_given_all_52_naturals_produces_52_distinct_keys() -> None:
+    """Every natural keys uniquely, so a draw separates a pair."""
+    keys = {draw_key(Card(rank=rank, suit=suit)) for rank in Rank for suit in Suit}
+
+    assert len(keys) == 52
+
+
+def test_draw_key_given_ace_of_spades_exceeds_king_of_spades() -> None:
+    """Rank leads: the highest natural outkeys the rank below it."""
+    ace = draw_key(Card(rank=Rank.ACE, suit=Suit.SPADES))
+    king = draw_key(Card(rank=Rank.KING, suit=Suit.SPADES))
+
+    assert ace > king
+
+
+def test_draw_key_given_king_of_spades_exceeds_king_of_hearts() -> None:
+    """Suit breaks a rank tie: among kings the spade is the higher."""
+    spades = draw_key(Card(rank=Rank.KING, suit=Suit.SPADES))
+    hearts = draw_key(Card(rank=Rank.KING, suit=Suit.HEARTS))
+
+    assert spades > hearts
+
+
+def test_draw_key_given_a_joker_raises_value_error() -> None:
+    """T-5: a joker is wild, never drawn -- it has no draw key."""
+    joker = Card(rank=None, suit=None, joker=True)
+
+    with pytest.raises(ValueError, match=re.escape("a joker has no draw key")):
+        draw_key(joker)

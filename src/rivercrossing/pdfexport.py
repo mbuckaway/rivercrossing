@@ -64,9 +64,9 @@ if TYPE_CHECKING:
     from rivercrossing.hands import EvaluatedHand
     from rivercrossing.htmlexport import (
         CardPair,
-        EventInfo,
         ExportOptions,
         LapsBoardRow,
+        RacePayload,
         ResultRow,
         Sections,
         TimeBoardRow,
@@ -243,6 +243,23 @@ def _hand_label(hand: str) -> str:
     return hand.upper()
 
 
+def _draw_marker(row: ResultRow) -> str:
+    """Return a row's drawn tie-break card marker, "" when it drew none.
+
+    R-14's draw rides after the hand prose in the same cell --
+    "THREE OF A KIND — NINES · DRAW A♥" -- so no layout width moves.
+    The separator is dropped when there is no hand prose to lead with,
+    so a no-show entry's cell reads "DRAW ★" rather than starting with
+    one. The marker is its own run, drawn in the DejaVu face, because
+    Barlow carries no suit glyph (measured: fpdf2 drops ♥ and ★ from
+    it); the caller measures the two runs against the one column.
+    """
+    if row.draw is None:
+        return ""
+    card = _pair_text(row.draw)
+    return f" · DRAW {card}" if row.hand else f"DRAW {card}"
+
+
 def _poster_subtitle(result: EntryResult) -> str:
     """Compose the poster's team/solo line from one result.
 
@@ -401,6 +418,10 @@ _ROW_RIGHT = _TextStyle(_FONT_BODY, 7.5, _INK, align="R")
 _FIELD_STYLE = _TextStyle(_FONT_BODY, 7.0, _INK)
 _FIELD_BOLD = _TextStyle(_FONT_BODY, 7.0, _INK, bold=True)
 _HAND_STYLE = _TextStyle(_FONT_HEADING, 6.5, _STEEL, bold=True)
+# R-14's drawn-card marker: the hand's own size and colour in DejaVu,
+# which carries the suit glyphs and joker star Barlow lacks. Never
+# bold -- DejaVu is registered for the regular style only.
+_DRAW_STYLE = _TextStyle(_FONT_GLYPH, 6.5, _STEEL)
 _BOARD_TOTAL = _TextStyle(_FONT_BODY, 7.5, _INK, bold=True)
 
 
@@ -848,8 +869,8 @@ class _ReportPDF(FPDF):
     export's order, one drawer per planned section.
     """
 
-    # (ride, opts, letter, created_at, logo_path): the report's state
-    # inputs
+    # (ride, opts, letter, created_at, logo_path, self_test_unverified):
+    # the report's state inputs
     def __init__(  # noqa: PLR0913
         self,
         ride: _RideLike,
@@ -858,6 +879,7 @@ class _ReportPDF(FPDF):
         letter: bool,
         created_at: datetime,
         logo_path: Path | str | None = None,
+        self_test_unverified: bool = False,
     ) -> None:
         """Open one report: geometry, fonts, metadata, footer stamp.
 
@@ -872,6 +894,7 @@ class _ReportPDF(FPDF):
         self._opts = opts
         self._generated = htmlexport.format_generated(created_at)
         self._logo_path = logo_path
+        self._self_test_unverified = self_test_unverified
         self.alias_nb_pages("{nb}")
 
     def file_id(self) -> None:
@@ -997,6 +1020,31 @@ class _ReportPDF(FPDF):
         self.line(self.l_margin, y, self.w - self.r_margin, y)
         self.ln(0.05)
 
+    def _hand_cell(self, row: ResultRow, width: float) -> None:
+        """Draw one row's hand cell at the current x, draw marker in.
+
+        The prose renders in the frozen hand style; a row that drew a
+        tie-break card (R-14) renders :func:`_draw_marker` immediately
+        after it, as a measured second run in DejaVu, so the two fonts
+        share one column and no table geometry moves. The prose run is
+        measured too -- the marker sits where the prose ends, not at the
+        column's right edge -- and is bounded by the column so a long
+        hand and a drawn card cannot push each other off the margin. A
+        row that drew nothing draws the single prose cell exactly as
+        before.
+        """
+        marker = _draw_marker(row)
+        if not marker:
+            self._scalar(_Cell(width, _hand_label(row.hand), _HAND_STYLE))
+            return
+        self.set_font(_DRAW_STYLE.font, "B" if _DRAW_STYLE.bold else "", _DRAW_STYLE.size)
+        marker_width = self.get_string_width(marker)
+        self.set_font(_HAND_STYLE.font, "B" if _HAND_STYLE.bold else "", _HAND_STYLE.size)
+        hand = _hand_label(row.hand)
+        hand_width = min(self.get_string_width(hand), max(width - marker_width, 0.0))
+        self._scalar(_Cell(hand_width, hand, _HAND_STYLE))
+        self._scalar(_Cell(marker_width, marker, _DRAW_STYLE))
+
     # -------------------------------------------------------- sections
 
     def build(self, placed: Sequence[Placed]) -> None:
@@ -1006,10 +1054,16 @@ class _ReportPDF(FPDF):
         rows and the plan carries the per-kind sections, so this
         document's drawers only lay them out.
         """
-        payload = htmlexport.build_payload(self._ride, placed, self._opts, self._generated)
+        payload = htmlexport.build_payload(
+            self._ride,
+            placed,
+            self._opts,
+            self._generated,
+            self_test_unverified=self._self_test_unverified,
+        )
         plan = htmlexport.sections(payload, placed)
         self.add_page()
-        self._cover(payload.event)
+        self._cover(payload)
         self._podiums(plan)
         self._top_lists(plan)
         self._laps_boards(plan)
@@ -1017,8 +1071,9 @@ class _ReportPDF(FPDF):
         if self._opts.full_field:
             self._full_field(plan)
 
-    def _cover(self, event: EventInfo) -> None:
-        """Draw the page-1 cover: kicker, title, counters, meta."""
+    def _cover(self, payload: RacePayload) -> None:
+        """Draw the page-1 cover: meta, counters and the two notes."""
+        event = payload.event
         _draw_logo(self, self._logo_path)
         if self._logo_path is not None:
             self.ln(0.42)
@@ -1052,6 +1107,19 @@ class _ReportPDF(FPDF):
             new_y=YPos.NEXT,
         )
         self.ln(0.04)
+        if payload.self_test_note is not None:
+            # E6.4.3: the cover's own note area says whether the ride
+            # was closed over a failed evaluator self-test.
+            self.set_font(_FONT_BODY, "", 8.5)
+            self.set_text_color(*_STEEL)
+            self.multi_cell(
+                0,
+                0.14,
+                text=payload.self_test_note,
+                new_x=XPos.LMARGIN,
+                new_y=YPos.NEXT,
+            )
+            self.ln(0.04)
 
     def _podiums(self, plan: Sections) -> None:
         """Draw the per-kind "Best hands" podium cards."""
@@ -1154,7 +1222,7 @@ class _ReportPDF(FPDF):
         self._cards_cell(row.cards, widths[col])
         col += 1
         self._at_column(widths, col)
-        self._scalar(_Cell(widths[col], _hand_label(row.hand), _HAND_STYLE))
+        self._hand_cell(row, widths[col])
         self._row_rule()
 
     def _laps_boards(self, plan: Sections) -> None:
@@ -1392,9 +1460,7 @@ class _ReportPDF(FPDF):
         self._at_column(widths, last)
         self._cards_cell(row.cards, widths[last])
         remaining = self.l_margin + sum(widths[:last]) + widths[last] - self.get_x()
-        self.set_font(_HAND_STYLE.font, "B" if _HAND_STYLE.bold else "", _HAND_STYLE.size)
-        self.set_text_color(*_HAND_STYLE.color)
-        self.cell(max(remaining, 0.0), _ROW_HEIGHT, text=_hand_label(row.hand))
+        self._hand_cell(row, max(remaining, 0.0))
         self._row_rule()
 
     def _drawn_row(self, cards: Sequence[CardPair]) -> None:
@@ -1430,7 +1496,7 @@ def _atomic_write_bytes(path: Path | str, data: bytes) -> None:
 
 
 # module-skeletons.md's frozen (ride, placed, opts, path) plus the
-# letter/created_at/logo seams
+# letter/created_at/logo/self-test seams
 def render(  # noqa: PLR0913, PLR0917
     ride: _RideLike,
     placed: Sequence[Placed],
@@ -1440,6 +1506,7 @@ def render(  # noqa: PLR0913, PLR0917
     letter: bool = True,
     created_at: datetime | None = None,
     logo_path: Path | str | None = None,
+    self_test_unverified: bool = False,
 ) -> None:
     """Write one finished ride's results report PDF to *path*.
 
@@ -1469,12 +1536,22 @@ def render(  # noqa: PLR0913, PLR0917
             now. Naive stamps are rejected (D14).
         logo_path: Optional organizer-logo PNG drawn at the top right
             of the cover (R-62/5c); None renders no logo.
+        self_test_unverified: E6.4.3: whether the ride was finished
+            over a failed evaluator self-test, which adds that note to
+            the cover.
 
     Raises:
         ValueError: *created_at* is not tz-aware.
     """
     stamp = created_at if created_at is not None else datetime.now(UTC)
-    report = _ReportPDF(ride, opts, letter=letter, created_at=stamp, logo_path=logo_path)
+    report = _ReportPDF(
+        ride,
+        opts,
+        letter=letter,
+        created_at=stamp,
+        logo_path=logo_path,
+        self_test_unverified=self_test_unverified,
+    )
     report.build(placed)
     data = _store_streams_raw(bytes(report.output()))
     _atomic_write_bytes(path, data)

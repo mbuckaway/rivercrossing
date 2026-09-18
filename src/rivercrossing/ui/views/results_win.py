@@ -41,6 +41,12 @@ defaults now persisted in ``AppSettings.publish_*``), and the R-63
 gate between show-times and the Fastest-time board moved with them --
 the dialog no longer owns either.
 
+R-14 added the Draw column beside Hand: the card the row's entry drew
+for the venue's high-card tie-break (``StandingsRow.tiebreak_card``),
+blank on every other row. It is deliberately not the ⚠ flag's own
+column -- a drawn tie is *resolved*, so the badge and its note are for
+the residual tie a configured order could not separate.
+
 Phase 5 adds two display facts the canvas cannot carry:
 
 - the ⚠ badge's explanation (Part 1). A ``wxDataViewCtrl`` has no
@@ -58,6 +64,11 @@ Phase 5 adds two display facts the canvas cannot carry:
 - the Hand column's width (G6): the solo and standalone lists pin it
   at 210, and the Team list at 260 when the Plate column it drops has
   freed 50 more.
+
+E6.4.3 adds the self-test note: a ride the operator finished over a
+failed evaluator self-test reads "Self-test unverified" in the same
+code-side banner the stale-export flag uses (the dialog's one note
+seam), so a published-standing window never hides the fact.
 
 The UI-removals batch retired W11's export-button row: the four
 buttons left ``results.xrc`` for the Results menu's own ``mi_export_*``
@@ -96,6 +107,7 @@ __all__ = [
     "COLUMN_LABELS",
     "COLUMN_WIDTHS",
     "COL_BEST5",
+    "COL_DRAW",
     "COL_ENTRY",
     "COL_HAND",
     "COL_LAPS",
@@ -103,11 +115,14 @@ __all__ = [
     "COL_PLATE",
     "DRAW_EXPLANATION",
     "DRAW_INFO_TITLE",
+    "DRAW_WIDTH",
     "HAND_WIDTH",
     "JOKER_CODE",
     "JOKER_DISPLAY",
     "MIN_SIZE",
+    "SELF_TEST_NOTE",
     "STALE_INFOBAR",
+    "STALE_NOTE",
     "STANDINGS_COLUMN_FLAGS",
     "STANDINGS_HEADER_HEIGHT",
     "STANDINGS_LIST_MIN_HEIGHT",
@@ -120,6 +135,7 @@ __all__ = [
     "draw_info_message",
     "format_best5",
     "format_card",
+    "format_draw",
     "format_place",
 ]
 
@@ -129,10 +145,15 @@ COL_ENTRY = 2
 COL_LAPS = 3
 COL_BEST5 = 4
 COL_HAND = 5
+# R-14's Draw column: appended last so G6's six indexes (and the Team
+# list's Hand-width rule, which reads COL_PLATE) keep their pinned
+# meanings.
+COL_DRAW = 6
 
 # xrc-windows.md D's column order after G6, which dropped the two
 # ride-clock columns (Total and Best lap): the scorer reads place,
-# plate, entry, laps, cards, hand.
+# plate, entry, laps, cards, hand -- and, since R-14, the card each
+# entry drew for the venue's tie-break.
 COLUMN_LABELS: tuple[str, ...] = (
     "Place",
     "Plate",
@@ -140,13 +161,17 @@ COLUMN_LABELS: tuple[str, ...] = (
     "Laps",
     "Best 5",
     "Hand",
+    "Draw",
 )
 
 # G6's pinned widths: the Hand column has two variants (below), every
-# other column is the same on every list. The six total 690px, which is
-# what the dialog's 740px floor is built from.
+# other column is the same on every list. The seven total 750px, which
+# is what the dialog's 800px floor is built from.
 HAND_WIDTH = 210
-COLUMN_WIDTHS: tuple[int, ...] = (60, 50, 160, 50, 160, HAND_WIDTH)
+# Wide enough for a two-character rank plus its suit glyph ("10♦"), or
+# the joker's "JK★".
+DRAW_WIDTH = 60
+COLUMN_WIDTHS: tuple[int, ...] = (60, 50, 160, 50, 160, HAND_WIDTH, DRAW_WIDTH)
 
 # The Team list's Hand width under RIDER_POOLED: its Plate column is
 # hidden, so Hand takes the width it frees (HAND_WIDTH + 50).
@@ -163,20 +188,24 @@ TIE_BADGE = "⚠"
 # (CODINGSTANDARDS-UX-DESKTOP §7), so the badge is explained on the
 # activation gesture -- double-click or Enter -- in an OK-only alert:
 # the row's own tie note (standings' DRAW_TIE_NOTE), then this one plain
-# sentence saying what the flag means and who decides.
+# sentence saying what a residual tie means. R-14 added the Draw column,
+# so a flagged row is one the *configured* order could not separate --
+# never a tie the venue's draw would still settle.
 DRAW_INFO_TITLE = "Draw required"
 DRAW_EXPLANATION = (
-    "Identical best hands were not resolved by the tie-break — the venue draw arbitrates."
+    "Identical best hands were not separated by the configured tie-break order — "
+    "the venue decides."
 )
 
 # D16: XRC has no window-level minsize (results.xrc's own header notes
 # this and defers to code). Width floor measured on wxPython 4.3.1 /
-# wxWidgets 3.3.3: the solo tab's six pinned columns total 690px
-# (G6's COLUMN_WIDTHS), plus the list's scrollbar (16) and its notebook
-# and sizer borders (~34) = 740, so the Solo tab displays fully at the
-# min width. Height is Fit()'s own measurement of the real sizer
-# content -- see this task's own report for how it was measured.
-MIN_SIZE = (740, 442)
+# wxWidgets 3.3.3: the solo tab's seven pinned columns total 750px
+# (G6's COLUMN_WIDTHS plus the R-14 Draw pin), plus the list's
+# scrollbar (16) and its notebook and sizer borders (~34) = 800, so the
+# Solo tab displays fully at the min width. Height is Fit()'s own
+# measurement of the real sizer content -- see this task's own report
+# for how it was measured.
+MIN_SIZE = (800, 442)
 
 # D16's row floor: the three standings lists hold ten rows -- the
 # scorer's own working set -- rather than Fit()'s measurement of
@@ -194,6 +223,12 @@ STANDINGS_LIST_MIN_HEIGHT = STANDINGS_HEADER_HEIGHT + STANDINGS_MIN_ROWS * STAND
 # code-side and named with SetName(), the pattern rider_editor.py's
 # ROSTER_INFOBAR follows.
 STALE_INFOBAR = "stale_infobar"
+
+# The two notes that bar carries. E7.3.2's stale-export warning was a
+# literal inside ``set_stale``; E6.4.3's self-test note joins it, and
+# both live here so the tests pin the exact copy the operator reads.
+STALE_NOTE = "Results are stale — re-export to refresh"
+SELF_TEST_NOTE = "Self-test unverified — the ride finished over a failed evaluator self-test"
 
 # AppendTextColumn's own default flags include
 # wxDATAVIEW_COL_RESIZABLE, but an explicit flags= argument *replaces*
@@ -230,6 +265,19 @@ def format_place(standing: StandingsRow) -> str:
     return str(standing.place)
 
 
+def format_draw(standing: StandingsRow) -> str:
+    """Return the Draw cell text for *standing* (R-14).
+
+    The card the entry drew for the venue's high-card tie-break, in the
+    canvas's own card text (``format_card``: ``"10♦"``, ``"JK★"``). A
+    row whose entry drew nothing -- no hand tie, or a board read before
+    the finish's draw -- renders an empty cell.
+    """
+    if not standing.tiebreak_card:
+        return ""
+    return format_card(standing.tiebreak_card)
+
+
 def draw_info_message(standing: StandingsRow) -> str:
     """Return the ⚠ explanation alert's body for *standing*.
 
@@ -249,10 +297,13 @@ _TEXT_ACCESSORS: tuple[Callable[[StandingsRow], str], ...] = (
     lambda standing: str(standing.laps),
     lambda standing: format_best5(standing.best5),
     lambda standing: standing.hand,
+    format_draw,
 )
 
 # The native header sort's per-column key, in ``COLUMN_LABELS`` order:
-# Place and Laps are ints, the rest are strings.
+# Place and Laps are ints, the rest are strings -- the Draw column keys
+# on the stored code, which orders by rank letter then suit the same
+# way the card text reads.
 _STANDINGS_SORT_KEYS: tuple[Callable[[StandingsRow], Any], ...] = (
     lambda standing: standing.place,
     lambda standing: standing.plate,
@@ -260,6 +311,7 @@ _STANDINGS_SORT_KEYS: tuple[Callable[[StandingsRow], Any], ...] = (
     lambda standing: standing.laps,
     lambda standing: format_best5(standing.best5),
     lambda standing: standing.hand,
+    lambda standing: standing.tiebreak_card,
 )
 
 
@@ -277,7 +329,7 @@ class StandingsListModel(wx.dataview.DataViewIndexListModel):  # type: ignore[mi
         self._rows = tuple(rows)
 
     def GetColumnCount(self) -> int:
-        """Return the standings' fixed six columns."""
+        """Return the standings' fixed column count (COLUMN_LABELS)."""
         return len(COLUMN_LABELS)
 
     def GetColumnType(self, col: int) -> str:  # noqa: ARG002 -- every column is text here
@@ -401,6 +453,12 @@ class ResultsWindow(DialogFindMixin):  # _find: ui.views._support
         self._solo_model: StandingsListModel | None = None
 
         self.stale_infobar = self._build_infobar()
+        # The one note seam's two facts: E7.3.2's stale-export flag is
+        # driven by the presenter (``set_stale``), E6.4.3's self-test
+        # note is read here once -- it describes the ride's last finish,
+        # and a window is rebuilt when that changes.
+        self._stale = False
+        self._self_test_unverified = bool(data_source.results_self_test_unverified())
 
         self.presenter = ResultsPresenter(
             self,
@@ -421,7 +479,7 @@ class ResultsWindow(DialogFindMixin):  # _find: ui.views._support
         self._apply_min_size()
 
     def _build_columns(self) -> None:
-        """Build every standings list's six columns (Part 2 + G6).
+        """Build every standings list's seven columns (Part 2/G6/R-14).
 
         The Team list drops its Plate column under ``RIDER_POOLED``
         (Part 2): a pooled team's plate is derived from its members, so
@@ -447,7 +505,7 @@ class ResultsWindow(DialogFindMixin):  # _find: ui.views._support
         hide_plate: bool = False,
         hand_width: int = HAND_WIDTH,
     ) -> None:
-        """Append one list's six columns in canvas order.
+        """Append one list's seven columns in canvas order.
 
         Args:
             control: The ``DataViewCtrl`` to append to.
@@ -546,13 +604,26 @@ class ResultsWindow(DialogFindMixin):  # _find: ui.views._support
 
         Hidden by default; E7.3.2 shows it after reopened corrections
         and clears it on re-export. ``wx.InfoBar`` starts hidden
-        (measured), so constructing the bar is all the "hidden"
-        state needs.
+        (measured), so constructing the bar is all the "hidden" state
+        needs. The bar is the dialog's one note seam, so
+        :meth:`_sync_banner` also carries E6.4.3's self-test note when
+        the ride's results are unverified.
         """
-        if stale:
-            self.stale_infobar.ShowMessage(
-                "Results are stale — re-export to refresh", wx.ICON_WARNING
-            )
+        self._stale = stale
+        self._sync_banner()
+
+    def _sync_banner(self) -> None:
+        """Apply the two note facts to the one code-side InfoBar.
+
+        Stale results take precedence: that is the actionable warning
+        (re-export refreshes them), while the self-test note is a
+        standing fact about how the ride was closed. Neither is true,
+        the bar dismisses.
+        """
+        if self._stale:
+            self.stale_infobar.ShowMessage(STALE_NOTE, wx.ICON_WARNING)
+        elif self._self_test_unverified:
+            self.stale_infobar.ShowMessage(SELF_TEST_NOTE, wx.ICON_WARNING)
         else:
             self.stale_infobar.Dismiss()
         self.dialog.Layout()

@@ -15,6 +15,9 @@
                    slices rows itself.
       tie_note     str or None; rendered under each top-list table whose rows
                    include a tie
+      self_test_note  str or None; the E6.4.3 caption rendered under the
+                   publish-setting note when the ride was finished over a
+                   failed evaluator self-test
       logo_src     data: URI in production (base64); URL only in dev samples
       logo_alt     organizer name for the logo
       payload      the full record for the race-data block
@@ -75,7 +78,8 @@
 
   <p class="mt-4 text-sm text-ink/60 max-w-2xl">It's not a race, it's a poker run — placings are by best poker hand. Lap counts{% if options.show_times %} and times{% endif %} below are unofficial and shown for bragging rights only.</p>
 
-  <div class="mt-4 text-xs text-ink/50">{% if options.show_times %}Published with times — the organizer's export setting decides; there is no toggle on the page.{% else %}Published without times — the organizer's export setting decides; there is no toggle on the page, and no time data is embedded in it.{% endif %}</div>
+  <div class="mt-4 text-xs text-ink/50">{% if options.show_times %}Published with times — the organizer's export setting decides; there is no toggle on the page.{% else %}Published without times — the organizer's export setting decides; there is no toggle on the page, and no time data is embedded in it.{% endif %}</div>{% if self_test_note %}
+  <p class="mt-2 text-xs font-semibold text-steel-700">{{ self_test_note }}</p>{% endif %}
 
 {% set team_event = (sections.teams | length) > 0 %}
   <!-- Podium -->

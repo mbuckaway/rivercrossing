@@ -224,11 +224,16 @@ class StandingsRow:
     ``draw_required`` backs the ⚠ badge column xrc-windows.md calls
     out as code-side for byte-identical tied hands (Spec §5), and
     ``tie_note`` is the row's own explanation of that flag ("draw
-    required" when the venue draw must arbitrate) -- the results
-    window's double-click alert renders it. ``total_seconds``/
-    ``best_lap_seconds`` are the numeric companions to the rendered
-    ``total``/``best_lap`` text, so each time column's native header
-    sort orders by time rather than by its ``h:mm:ss`` string.
+    required" when the configured tie-break order could not separate
+    the hands) -- the results window's double-click alert renders it.
+    ``tiebreak_card`` is the card the row's entry drew for the venue's
+    high-card tie-break (R-14), as its stored code, ``""`` when the
+    draw has not happened (or the entry was never in a tie) -- the
+    results window's Draw column renders it and never a flag.
+    ``total_seconds``/``best_lap_seconds`` are the numeric companions
+    to the rendered ``total``/``best_lap`` text, so each time column's
+    native header sort orders by time rather than by its ``h:mm:ss``
+    string.
     """
 
     place: int
@@ -243,6 +248,7 @@ class StandingsRow:
     tie_note: str | None = None
     best_lap: str = ""
     best_lap_seconds: float = 0.0
+    tiebreak_card: str = ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -325,6 +331,16 @@ class DataSource(Protocol):
         action) landed at/after *export_watermark* -- the engine event
         count captured at the last export. ``None`` (never exported) is
         never stale.
+        """
+        ...
+
+    def results_self_test_unverified(self) -> bool:
+        """Return whether the published results are unverified.
+
+        E6.4.3: ``True`` when the ride's last finish overrode a red
+        evaluator self-test, so the results window and the exports can
+        say so. ``False`` for a cleanly finished ride, a live one, and
+        every source with no ride at all.
         """
         ...
 
@@ -415,13 +431,21 @@ def _audit_entry(event: Event) -> str:
     without it (an event recorded before the display was carried, or a
     hand-written one) keeps the plain ``entry_id``/``plate`` reading,
     exactly like the store-backed projection
-    (``store.audit_rows``). Every other action reads those two keys and
-    nothing else.
+    (``store.audit_rows``). A ``tiebreak_draw`` event renders the
+    payload's own ``summary`` the engine wrote naming every entry and
+    the card it drew (``ride.py``'s ``_record_tiebreak_draws``), since
+    that payload's ``draws`` row list is not one entry id and the cell
+    would otherwise stay blank. Every other action reads those two keys
+    and nothing else.
     """
     if event.action == "dnf":
         carried = event.payload.get("display")
         if carried:
             return str(carried)
+    if event.action == "tiebreak_draw":
+        summary = event.payload.get("summary")
+        if summary:
+            return str(summary)
     return str(event.payload.get("entry_id") or event.payload.get("plate") or "")
 
 
@@ -974,7 +998,9 @@ class EngineDataSource:
         rank to name and renders ``""`` instead of crashing.
         ``tie_note`` (R-43) is the placed row's own note -- the draws
         dialog's body -- and ``best_lap`` renders the snapshot's
-        quickest lap beside its numeric seconds.
+        quickest lap beside its numeric seconds. ``tiebreak_card`` is
+        the entry's recorded draw as its card code (``""`` while the
+        draw has not happened), which the window's Draw column renders.
         """
         if self._engine.state is not RideStatus.FINISHED:
             order = LIVE_TIEBREAK_ORDER
@@ -1001,6 +1027,11 @@ class EngineDataSource:
                         tie_note=item.tie_note,
                         best_lap=format_duration(item.result.best_lap),
                         best_lap_seconds=item.result.best_lap,
+                        tiebreak_card=(
+                            item.result.tiebreak_card.code()
+                            if item.result.tiebreak_card is not None
+                            else ""
+                        ),
                     )
                 )
             return built
@@ -1035,6 +1066,16 @@ class EngineDataSource:
         is exactly what trips the stale banner.
         """
         return has_correction_since(self._engine.events, export_watermark)
+
+    def results_self_test_unverified(self) -> bool:
+        """Return whether the finished ride's results are unverified.
+
+        E6.4.3: the engine's own read-only view
+        (``RideEngine.self_test_unverified``) -- the flag the results
+        window's self-test note is shown from, and the one the app's
+        export call sites pass to the HTML and PDF writers.
+        """
+        return self._engine.self_test_unverified
 
 
 class EmptyDataSource:
@@ -1094,4 +1135,8 @@ class EmptyDataSource:
     # DataSource's signature; the empty state has no events
     def results_stale(self, export_watermark: int | None) -> bool:  # noqa: ARG002
         """Return False: no ride, no events, nothing to go stale."""
+        return False
+
+    def results_self_test_unverified(self) -> bool:
+        """Return False: no ride, so no results to qualify."""
         return False

@@ -14,11 +14,17 @@ footer/empty rows registration exports carry), unless they still
 name a plate/team/type, which is a missing-name conflict instead
 of a silent drop. TYPE is ``solo``/``team`` after case folding
 (blank derives: team when a TEAMNAME is present, else solo); team
-rows group by TEAMNAME's
-normalized form -- trim, collapse internal whitespace, lowercase, "a
-team name is its normalized form" -- across the whole file, never by
-adjacency, so "BNBA1" and "BNBA 1" are two teams while "Full Send" and
-"full   send" are one. NUMBER auto-assigns sequential numeric plates
+rows group by TEAMNAME's normalized KEY -- trim, collapse internal
+whitespace, lowercase, "a team name's key is its identity" -- across
+the whole file, never by adjacency, so "BNBA1" and "BNBA 1" are two
+teams while "Full Send" and "full   send" are one. The team's own
+``display_name`` is its group's first-seen ORIGINAL spelling,
+whitespace-collapsed but case-PRESERVED, so a CSV's "Moss Ridge
+Riders" reaches the roster spelled the way the file spells it. A
+rider's name cell is canonicalised
+(:func:`~rivercrossing.roster.canonical_person_name`): a field
+written in one uniform case is re-cased, a mixed-case one survives.
+NUMBER auto-assigns sequential numeric plates
 from :meth:`Roster.next_free_plate` when blank; under
 ``rider_pooled`` each rider owns their row's plate, under
 ``team_relay`` a team's member rows share the team's single plate
@@ -151,7 +157,7 @@ import os
 import re
 from collections import Counter
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, NamedTuple, cast
 
 from rivercrossing.ride import RideStatus
 from rivercrossing.roster import (
@@ -165,6 +171,7 @@ from rivercrossing.roster import (
     Roster,
     can_edit_structure,
     can_move_rider,
+    canonical_person_name,
     rider_name_key,
     team_name_key,
 )
@@ -274,7 +281,9 @@ def _normalize_team_name(name: str) -> str:
 
     Trim, collapse every run of internal whitespace to one space, and
     lowercase: "Full Send", " full   send " and "FULL SEND" are one
-    team ("full send"), while "BNBA1" and "BNBA 1" stay distinct.
+    team ("full send"), while "BNBA1" and "BNBA 1" stay distinct. A
+    row's ``team_key`` carries this form; its ``team_name`` keeps the
+    file's own spelling for display.
     """
     return " ".join(name.split()).lower()
 
@@ -313,7 +322,8 @@ class ParsedEntry:
     share it), the lowest-numbered rider's plate under
     ``rider_pooled`` -- so :func:`commit` can hand these straight to
     those constructors without re-deriving anything. ``display_name``
-    is a solo entry's rider full name or a team's normalized name. A
+    is a solo entry's rider full name or a team's own name as its
+    first member row spelled it. A
     row with a *content* conflict (a duplicate plate, a missing name,
     an over/under-sized team) still becomes one of these -- its shape
     parsed fine -- but a row that fails shape validation (an unknown
@@ -610,8 +620,8 @@ def export(ride: Roster, path: Path, *, placed: Sequence[Placed] | None = None) 
 def export_standings(placed: Sequence[Placed], path: Path, *, show_times: bool = False) -> None:
     """Write *placed* as the spec §15 standings CSV to *path* (E6.4.2).
 
-    Rows are ``place, plate, entry, type, sex, laps, hand`` with a
-    ``total_time`` column appended when *show_times* -- raw numeric
+    Rows are ``place, plate, entry, type, sex, laps, hand, draw`` with
+    a ``total_time`` column appended when *show_times* -- raw numeric
     seconds, consistent with :func:`export`'s finished-ride columns
     (CSVs are machine-readable; human formatting is the HTML/PDF
     exports' job). ``type`` is each row's entry kind -- ``team`` or
@@ -619,12 +629,17 @@ def export_standings(placed: Sequence[Placed], path: Path, *, show_times: bool =
     split: the caller feeds the two ranked groups Teams-then-Solo, so
     the kind column labels each section and the places are per-kind).
     ``sex`` (E7) is the solo rider's ``M``/``F`` and blank for a team,
-    which has no single sex. DNF rows never reach this function --
+    which has no single sex. ``draw`` (R-14) is the card the entry drew
+    for the venue's high-card tie-break as its stored code (``"AH"``,
+    ``"JK"``), blank for every entry that drew none -- a
+    machine-readable companion to the window's Draw column and the
+    page's draw badge. DNF rows never reach this function --
     ``standings.rank`` excludes them outright (per-rider DNF) -- so
     every row here is an active entry; an entry that never crossed
-    renders a blank hand. The write is atomic (R-52), exactly like
-    :func:`export`: staged in a same-directory temp file, then swapped
-    over *path* with :func:`os.replace`.
+    renders a blank hand. The write
+    is atomic (R-52), exactly like :func:`export`: staged in a
+    same-directory temp file, then swapped over *path* with
+    :func:`os.replace`.
 
     Args:
         placed: Ranked standings, one row each (teams then solo).
@@ -633,7 +648,7 @@ def export_standings(placed: Sequence[Placed], path: Path, *, show_times: bool =
         show_times: Append the ``total_time`` column (R-63: times
             only when the export setting says so).
     """
-    header = ["place", "plate", "entry", "type", "sex", "laps", "hand"]
+    header = ["place", "plate", "entry", "type", "sex", "laps", "hand", "draw"]
     if show_times:
         header.append("total_time")
     rows: list[list[str]] = []
@@ -647,6 +662,7 @@ def export_standings(placed: Sequence[Placed], path: Path, *, show_times: bool =
             result.sex or "",
             str(result.laps),
             hand_name(result.hand) if result.cards else "",
+            result.tiebreak_card.code() if result.tiebreak_card is not None else "",
         ]
         if show_times:
             row.append(repr(result.total_time))
@@ -656,13 +672,24 @@ def export_standings(placed: Sequence[Placed], path: Path, *, show_times: bool =
 
 @dataclass(frozen=True)
 class _DataRow:
-    """One usable rider row parsed from the file, pre-assembly."""
+    """One usable rider row parsed from the file, pre-assembly.
+
+    ``team_name`` is the row's TEAMNAME cell ready for display -- trim,
+    collapse every run of internal whitespace, case PRESERVED, so the
+    file's own "Moss Ridge Riders" reaches the roster spelled that way
+    -- while ``team_key`` is that name's normalized identity
+    (:func:`_normalize_team_name`, lower-cased), the value every
+    grouping and duplicate-matching decision uses. ``first_name`` and
+    ``last_name`` are already canonicalised
+    (:func:`~rivercrossing.roster.canonical_person_name`).
+    """
 
     row: int
     first_name: str
     last_name: str
     is_team: bool
     team_name: str
+    team_key: str
     number: str
     notes: str
     sex: str | None = None
@@ -692,7 +719,10 @@ def _read_data_rows(
     SEX normalizes to M/F/unknown; an unrecognized value conflicts and
     is excluded the same way -- unless *map_unknown_sex_to_male*, the
     operator's explicit opt-in, which maps both blank and unrecognized
-    cells to ``"M"`` so no row is dropped for that reason.
+    cells to ``"M"`` so no row is dropped for that reason. A rider
+    name cell is canonicalised on the way in, so every
+    :class:`ParsedRider`/:class:`~rivercrossing.roster.Rider` built
+    from these rows inherits the canonical case.
     """
     rows: list[_DataRow] = []
     conflicts: list[ImportConflict] = []
@@ -713,24 +743,25 @@ def _read_data_rows(
         if sex_problem is not None:
             conflicts.append(ImportConflict(row_num, sex_problem))
             continue
-        team_name = _normalize_team_name(team_raw) if team_raw else ""
+        team_name = " ".join(team_raw.split())
         kind = _classify_row(type_field, team_name)
         if kind == "solo":
             is_team = False
             team_key = ""
         elif kind == "team":
             is_team = True
-            team_key = team_name
+            team_key = _normalize_team_name(team_name)
         else:
             conflicts.append(ImportConflict(row_num, kind))
             continue
         rows.append(
             _DataRow(
                 row=row_num,
-                first_name=first_name,
-                last_name=last_name,
+                first_name=canonical_person_name(first_name),
+                last_name=canonical_person_name(last_name),
                 is_team=is_team,
-                team_name=team_key,
+                team_name=team_name,
+                team_key=team_key,
                 number=number,
                 notes=notes,
                 sex=sex,
@@ -917,15 +948,15 @@ def _duplicate_rider_warnings(rows: Sequence[_DataRow]) -> list[ImportConflict]:
 def _converted_team_names(
     rows: Sequence[_DataRow], ride: Roster, *, convert_teams_of_one_to_solo: bool
 ) -> frozenset[str]:
-    """Return the names ``convert_teams_of_one_to_solo`` turns solo.
+    """Return the team keys ``convert_teams_of_one_to_solo`` turns solo.
 
-    A name whose team group holds exactly one rider converts on a DRAFT
+    A key whose team group holds exactly one rider converts on a DRAFT
     ride; an empty set otherwise. Used only to keep the raw-row
     near-duplicate scan from naming a team the preview no longer holds.
     """
     if not convert_teams_of_one_to_solo or ride.status is not RideStatus.DRAFT:
         return frozenset()
-    counts = Counter(row.team_name for row in rows if row.is_team)
+    counts = Counter(row.team_key for row in rows if row.is_team)
     return frozenset(name for name, count in counts.items() if count == 1)
 
 
@@ -934,23 +965,25 @@ def _near_duplicate_team_warnings(
 ) -> list[ImportConflict]:
     """Return one warning per pair of near-duplicate team names.
 
-    Two distinct normalized team names that share a fuzzy key
+    Two distinct team keys that share a fuzzy key
     (:func:`~rivercrossing.roster.team_name_key`) are near-duplicates;
-    the warning names
-    both, first-seen first, at the second name's first row. A name in
-    *converted_team_names* was reshaped to solo, so it is skipped --
-    the warning would otherwise name a team the preview no longer has.
+    the warning names both keys, first-seen first, at the second
+    key's first row. A key in *converted_team_names* was reshaped to
+    solo, so it is skipped -- the warning would otherwise name a team
+    the preview no longer has. Working on the key (not the display
+    spelling) is what keeps one team's own case variants from reading
+    as two near-duplicates of each other.
     """
     first_row: dict[str, int] = {}
     order: list[str] = []
     for row in rows:
         if (
             row.is_team
-            and row.team_name not in converted_team_names
-            and (row.team_name not in first_row)
+            and row.team_key not in converted_team_names
+            and (row.team_key not in first_row)
         ):
-            first_row[row.team_name] = row.row
-            order.append(row.team_name)
+            first_row[row.team_key] = row.row
+            order.append(row.team_key)
     fuzzy_groups: dict[str, list[str]] = {}
     for name in order:
         fuzzy_groups.setdefault(team_name_key(name), []).append(name)
@@ -965,11 +998,15 @@ def _near_duplicate_team_warnings(
 
 
 def _group_team_rows(rows: Sequence[_DataRow]) -> dict[str, list[_DataRow]]:
-    """Group team rows by normalized team name, first-seen order."""
+    """Group team rows by their normalized team key, first-seen order.
+
+    The key groups; the group's display name is its first row's own
+    :attr:`_DataRow.team_name`, the file's spelling of it.
+    """
     groups: dict[str, list[_DataRow]] = {}
     for row in rows:
         if row.is_team:
-            groups.setdefault(row.team_name, []).append(row)
+            groups.setdefault(row.team_key, []).append(row)
     return groups
 
 
@@ -1045,7 +1082,7 @@ def _relay_group_plate(
 def _assemble_relay(
     rows: Sequence[_DataRow], ride: Roster, *, convert_teams_of_one_to_solo: bool = False
 ) -> tuple[list[ParsedEntry], list[ImportConflict], list[ImportConflict]]:
-    """Build relay entries: solo rows plus normalized-name team groups.
+    """Build relay entries: solo rows plus normalized-key team groups.
 
     A team's member rows share the team's single plate: the rows must
     name one plate between them (or none, which auto-assigns); rows
@@ -1060,9 +1097,9 @@ def _assemble_relay(
     for row in rows:
         if not row.is_team:
             plan.append((row.row, row))
-        elif row.team_name not in seen_groups:
-            seen_groups.add(row.team_name)
-            plan.append((row.row, groups[row.team_name]))
+        elif row.team_key not in seen_groups:
+            seen_groups.add(row.team_key)
+            plan.append((row.row, groups[row.team_key]))
     entries: list[ParsedEntry] = []
     conflicts: list[ImportConflict] = []
     warnings: list[ImportConflict] = []
@@ -1229,6 +1266,20 @@ def _pooled_solo_problem(
     return None
 
 
+class _PooledTeamRow(NamedTuple):
+    """One rider_pooled team member row, pre-assembly (spec S7).
+
+    ``team_name`` is the file's own spelling of the team the row
+    belongs to -- what the assembled team is named after, should this
+    row be the group's first.
+    """
+
+    row: int
+    rider: ParsedRider
+    notes: str
+    team_name: str
+
+
 def _assemble_pooled(
     rows: Sequence[_DataRow], ride: Roster, *, convert_teams_of_one_to_solo: bool = False
 ) -> tuple[list[ParsedEntry], list[ImportConflict], list[ImportConflict]]:
@@ -1240,7 +1291,7 @@ def _assemble_pooled(
     existing_index = _pooled_owner_index(ride)
     allocator = _PlateAllocator(ride, (row.number for row in rows))
     solo_entries: list[ParsedEntry] = []
-    groups: dict[str, list[tuple[int, ParsedRider, str]]] = {}
+    groups: dict[str, list[_PooledTeamRow]] = {}
     conflicts: list[ImportConflict] = []
     seen_plates: set[str] = set()
     for row in rows:
@@ -1258,7 +1309,11 @@ def _assemble_pooled(
             first_name=row.first_name, last_name=row.last_name, plate=plate, sex=row.sex
         )
         if row.is_team:
-            groups.setdefault(row.team_name, []).append((row.row, parsed_rider, row.notes))
+            groups.setdefault(row.team_key, []).append(
+                _PooledTeamRow(
+                    row=row.row, rider=parsed_rider, notes=row.notes, team_name=row.team_name
+                )
+            )
             continue
         problem = _pooled_solo_problem(existing_index, plate, ride.status)
         if problem is not None:
@@ -1296,12 +1351,17 @@ def _pooled_team_target(
 
 
 def _assemble_pooled_teams(
-    groups: Mapping[str, Sequence[tuple[int, ParsedRider, str]]],
+    groups: Mapping[str, Sequence[_PooledTeamRow]],
     ride: Roster,
     *,
     convert_teams_of_one_to_solo: bool = False,
 ) -> tuple[list[ParsedEntry], list[ImportConflict], list[ImportConflict]]:
-    """Build one team ParsedEntry per team_name group (spec S7, R-12).
+    """Build one team ParsedEntry per team key (spec S7, R-12).
+
+    *groups* is keyed by each team's normalized key and holds its
+    member rows; the entry is named with the group's first-seen
+    display name, so the file's own spelling of the team reaches the
+    roster.
 
     A group of exactly one rider still becomes a team entry -- the
     2026-08-09 follow-on decision defers the 2-rider floor to this
@@ -1328,19 +1388,19 @@ def _assemble_pooled_teams(
     entries: list[ParsedEntry] = []
     conflicts: list[ImportConflict] = []
     warnings: list[ImportConflict] = []
-    for team_name, rows in groups.items():
+    for rows in groups.values():
         if convert_teams_of_one_to_solo and len(rows) == 1:
-            row_num, rider, note = rows[0]
-            plate = cast("str", rider.plate)
+            first = rows[0]
+            plate = cast("str", first.rider.plate)
             problem = _pooled_solo_problem(existing_index, plate, ride.status)
             if ride.status is RideStatus.DRAFT and problem is None:
                 entries.append(
                     ParsedEntry(
                         plate=plate,
-                        display_name=rider.full_name,
+                        display_name=first.rider.full_name,
                         type=EntryType.SOLO,
-                        riders=(rider,),
-                        notes=note,
+                        riders=(first.rider,),
+                        notes=first.notes,
                     )
                 )
                 continue
@@ -1348,15 +1408,15 @@ def _assemble_pooled_teams(
                 # The conversion the operator asked for is refused (a
                 # matched existing team outside DRAFT): report it, and
                 # emit no entry rather than the team the flag replaced.
-                conflicts.append(ImportConflict(row_num, problem))
+                conflicts.append(ImportConflict(first.row, problem))
                 continue
-        riders = tuple(rider for _, rider, _ in rows)
-        notes = "; ".join(note for _, _, note in rows if note)
+        riders = tuple(team_row.rider for team_row in rows)
+        notes = "; ".join(team_row.notes for team_row in rows if team_row.notes)
         plate = _lowest_rider_plate(riders)
         entries.append(
             ParsedEntry(
                 plate=plate,
-                display_name=team_name,
+                display_name=rows[0].team_name,
                 type=EntryType.TEAM,
                 riders=riders,
                 notes=notes,
@@ -1365,9 +1425,9 @@ def _assemble_pooled_teams(
         size_problem = _team_size_problem(len(riders), ride.max_team_size)
         if size_problem is not None:
             if len(riders) < MIN_TEAM_SIZE and ride.status is RideStatus.DRAFT:
-                warnings.append(ImportConflict(row=rows[0][0], problem=size_problem))
+                warnings.append(ImportConflict(row=rows[0].row, problem=size_problem))
             else:
-                conflicts.append(ImportConflict(row=rows[0][0], problem=size_problem))
+                conflicts.append(ImportConflict(row=rows[0].row, problem=size_problem))
         if len(riders) <= ride.max_team_size:
             conflicts.extend(_pooled_team_structural_conflicts(rows, existing_index, ride.status))
     return entries, conflicts, warnings
@@ -1394,7 +1454,7 @@ def _solo_to_team_problem(status: RideStatus) -> str:
 
 
 def _pooled_team_structural_conflicts(
-    rows: Sequence[tuple[int, ParsedRider, str]],
+    rows: Sequence[_PooledTeamRow],
     existing_index: Mapping[str, tuple[Entry, Rider]],
     status: RideStatus,
 ) -> list[ImportConflict]:
@@ -1408,10 +1468,11 @@ def _pooled_team_structural_conflicts(
     member is gated by :func:`~rivercrossing.roster.can_edit_structure`
     instead -- DRAFT only, in every case, existing or forming target.
     """
-    riders = [rider for _, rider, _ in rows]
+    riders = [team_row.rider for team_row in rows]
     target = _pooled_team_target(existing_index, riders)
     conflicts: list[ImportConflict] = []
-    for row_num, rider, _notes in rows:
+    for team_row in rows:
+        row_num, rider = team_row.row, team_row.rider
         owner = existing_index.get(rider.plate) if rider.plate else None
         if owner is not None and owner[0] is target:
             continue

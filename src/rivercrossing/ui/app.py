@@ -101,6 +101,7 @@ from rivercrossing.ui import (
     help as help_module,
 )
 from rivercrossing.ui.logging import Logging, build_log_path, prune_logs
+from rivercrossing.ui.presenters import console as console_module
 from rivercrossing.ui.presenters import settings as settings_store
 from rivercrossing.ui.presenters.console import ConsolePresenter
 from rivercrossing.ui.presenters.data_source import (
@@ -117,6 +118,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
     from types import TracebackType
 
+    from rivercrossing.hands import SelfTestReport
     from rivercrossing.ride import Crossing, Event
     from rivercrossing.ui.presenters.data_source import FeedRow
     from rivercrossing.ui.presenters.settings import AppSettings
@@ -2267,8 +2269,8 @@ def _team_logo_srcs(roster: Roster | None) -> dict[str, str]:
     return srcs
 
 
-# (config, teams, solo, opts, target, path, team_logos): the pure
-# writer's inputs
+# (config, teams, solo, opts, target, path, team_logos,
+# self_test_unverified): the pure writer's inputs
 def _write_export(  # noqa: PLR0913, PLR0917
     config: RideConfig,
     teams: tuple[Placed, ...],
@@ -2277,13 +2279,16 @@ def _write_export(  # noqa: PLR0913, PLR0917
     target: str,
     path: Path,
     team_logos: dict[str, str] | None = None,
+    *,
+    self_test_unverified: bool = False,
 ) -> None:
     """Render and write one results export to *path* (E6.4.2).
 
     Pure -- no wx, no context: it runs on the off-loop thread, so it
     must never touch wx (measured: a wx call from the worker thread
     bus-errors the process). The handler captures *config*/*teams*/
-    *solo*/*opts*/*team_logos* on the main thread first.
+    *solo*/*opts*/*team_logos*/*self_test_unverified* on the main
+    thread first.
 
     Phase 3 (team/solo results split): the two groups merge
     Teams-then-Solo into the single ``placed`` sequence each frozen
@@ -2291,7 +2296,9 @@ def _write_export(  # noqa: PLR0913, PLR0917
     two sections on ``result.kind``, and the standings CSV emits the
     ``type`` column. W8: *team_logos* (the :func:`_team_logo_srcs`
     map) reaches the HTML renderer only -- the PDF report keeps no
-    team logos (W8 scope note).
+    team logos (W8 scope note). E6.4.3: *self_test_unverified* reaches
+    the HTML page and the PDF report (the two surfaces that render the
+    note); the poster and the standings CSV carry no note.
 
     R-52: the HTML page lands atomically like the PDF and CSV ones --
     staged in a same-directory temp sibling and swapped over *path* --
@@ -2300,7 +2307,12 @@ def _write_export(  # noqa: PLR0913, PLR0917
     placed = (*teams, *solo)
     if target == "export_html":
         html = htmlexport.render(
-            config, placed, opts, logo_path=config.logo_path, team_logos=team_logos
+            config,
+            placed,
+            opts,
+            logo_path=config.logo_path,
+            team_logos=team_logos,
+            self_test_unverified=self_test_unverified,
         )
         # R-52: the page is staged in a same-directory temp sibling and
         # swapped in, the atomic write the PDF/CSV siblings already use
@@ -2310,7 +2322,14 @@ def _write_export(  # noqa: PLR0913, PLR0917
             path, html.encode("utf-8")
         )
     elif target == "export_pdf":
-        pdfexport.render(config, placed, opts, path, logo_path=config.logo_path)
+        pdfexport.render(
+            config,
+            placed,
+            opts,
+            path,
+            logo_path=config.logo_path,
+            self_test_unverified=self_test_unverified,
+        )
     elif target == "export_poster":
         pdfexport.podium_poster(config, placed, path, logo_path=config.logo_path)
     elif target == "export_poster_html":
@@ -2339,6 +2358,7 @@ def _run_export_offloop(  # noqa: PLR0913 -- context + the captured export input
     opts: ExportOptions,
     watermark: int,
     team_logos: dict[str, str] | None = None,
+    self_test_unverified: bool = False,
 ) -> None:
     """Write the export on a background thread; notice via CallAfter.
 
@@ -2364,7 +2384,16 @@ def _run_export_offloop(  # noqa: PLR0913 -- context + the captured export input
 
     def write() -> None:
         try:
-            _write_export(config, teams, solo, opts, target, path, team_logos=team_logos)
+            _write_export(
+                config,
+                teams,
+                solo,
+                opts,
+                target,
+                path,
+                team_logos=team_logos,
+                self_test_unverified=self_test_unverified,
+            )
         except Exception as exc:  # noqa: BLE001 -- a failed export is a notice, not a crash
             _log_warn(context, f"Export failed: {exc}")
             wx = require_wx()
@@ -2457,7 +2486,7 @@ def _handle_export_command(context: _RouteContext, target: str) -> None:
     watermark = len(engine.events)
     # W8: the roster's team logos are captured on the main thread like
     # every other export input (the off-loop writer never touches the
-    # live context).
+    # live context). E6.4.3: so is the engine's self-test flag.
     team_logos = _team_logo_srcs(context.roster)
     _run_export_offloop(
         context,
@@ -2469,6 +2498,7 @@ def _handle_export_command(context: _RouteContext, target: str) -> None:
         opts=opts,
         watermark=watermark,
         team_logos=team_logos,
+        self_test_unverified=engine.self_test_unverified,
     )
 
 
@@ -2593,12 +2623,19 @@ def _handle_finish_route(context: _RouteContext) -> None:
     retired ``finish_confirm_dlg``'s copy), naming the ride and
     defaulting to Cancel because finishing locks entry; only a
     confirmed ``wx.ID_OK`` fires the live console presenter's
-    ``on_finish``, which consults ``FINISH_GATE`` -- the hook that runs
-    the evaluator's real self-test suite -- and calls
-    ``engine.finish()``. Mirrors the
+    ``on_finish``. Mirrors the
     ``undo_last_crossing`` route's presenter-first shape: with no live
     presenter threaded (route-level tests), a notice stands in for the
     action after a confirmed dialog.
+
+    E6.4.3: this route owns the evaluator self-test decision. It runs
+    ``console.FINISH_GATE`` once and, when that report holds a BLOCKING
+    failure, asks one more danger confirm naming every failed check
+    (:func:`_confirm_self_test_override`); Cancel there aborts the
+    finish exactly as Cancel on the first confirm does, so a red
+    evaluator never strands a multi-hour ride and is never overridden
+    silently. The report is then handed to ``on_finish``, which records
+    the failed checks on the finish event.
 
     F: the finish publishes nothing. Every results file comes from the
     operator's own Results-menu request, so both finish paths (this
@@ -2630,7 +2667,42 @@ def _handle_finish_route(context: _RouteContext) -> None:
         label = commands.route_for_id("mi_finish_ride").label
         context.frame.SetStatusText(f"{label} — not yet implemented")
         return
-    presenter.on_finish()
+    report = console_module.FINISH_GATE()
+    if report.has_blocking_failure and not _confirm_self_test_override(context, report):
+        return
+    presenter.on_finish(report)
+
+
+def _confirm_self_test_override(context: _RouteContext, report: SelfTestReport) -> bool:
+    """Ask E6.4.3's override question for a red evaluator; OK or Cancel.
+
+    The second half of the finish route's own decision: *report* holds
+    at least one failed BLOCKING check, and this is the operator's one
+    chance to finish anyway. The danger confirm names every failed
+    check (``report.failed_blocking_checks``) and defaults to Cancel,
+    so declining is the safe path -- the ride stays unfinished, still
+    finishable, with every export locked.
+
+    Args:
+        context: The route context whose frame owns the confirm.
+        report: The gated self-test report, already known to hold a
+            blocking failure.
+
+    Returns:
+        ``True`` when the operator chose to finish anyway.
+    """
+    from rivercrossing.ui import std_dialogs  # noqa: PLC0415 -- deferred, see app.py
+    from rivercrossing.ui.views import dialogs  # noqa: PLC0415 -- deferred, see app.py
+
+    title, ok_label = dialogs.self_test_override_labels()
+    result = std_dialogs.show_danger(
+        context.frame,
+        title,
+        dialogs.self_test_override_message(report.failed_blocking_checks),
+        ok_label,
+        "Cancel",
+    )
+    return result == int(require_wx().ID_OK)
 
 
 # H2: the title and affirmative button label for each native ride

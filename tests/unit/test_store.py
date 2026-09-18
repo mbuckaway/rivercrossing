@@ -3148,6 +3148,63 @@ def test_store_audit_rows_given_a_dnf_row_without_a_display_falls_back(
     assert rows[0].entry == "9"
 
 
+def test_store_audit_rows_given_a_tiebreak_draw_row_renders_the_payload_summary(
+    tmp_path: Path,
+) -> None:
+    """R-14: a tiebreak_draw row reads its own summary, never blank.
+
+    The draw's payload carries one row per entry plus the human
+    ``summary`` naming them ("12 · 5H, 34 · AH"); the row list is not a
+    single entry id, so the Entry cell reads the summary the engine
+    wrote for exactly this projection.
+    """
+    db_path = tmp_path / "rides.db"
+    store = Store.open(db_path)
+    try:
+        ride_id = store.create_ride(_config(min_lap_s=1))
+        store.append(
+            ride_id,
+            Event(
+                action="tiebreak_draw",
+                payload={
+                    "draws": [
+                        {"entry_id": "12", "card": "5H"},
+                        {"entry_id": "34", "card": "AH"},
+                    ],
+                    "summary": "12 · 5H, 34 · AH",
+                },
+            ),
+        )
+
+        rows = store.audit_rows(ride_id)
+    finally:
+        store.close()
+
+    assert rows[0].entry == "12 · 5H, 34 · AH"
+
+
+def test_store_audit_rows_given_a_tiebreak_draw_without_a_summary_stays_blank(
+    tmp_path: Path,
+) -> None:
+    """T-4 nullable: a row with no summary keeps the empty-cell default.
+
+    A hand-written or half-written draw row carries neither an entry id
+    nor a summary, so the existing ``entry_id``/``plate`` chain still
+    answers -- the summary is read *when present*, never assumed.
+    """
+    db_path = tmp_path / "rides.db"
+    store = Store.open(db_path)
+    try:
+        ride_id = store.create_ride(_config(min_lap_s=1))
+        store.append(ride_id, Event(action="tiebreak_draw", payload={"draws": []}))
+
+        rows = store.audit_rows(ride_id)
+    finally:
+        store.close()
+
+    assert rows[0].entry == ""
+
+
 def test_store_load_engine_ignores_a_roster_plate_change_row(tmp_path: Path) -> None:
     """Replay skips a plate-change row: ``apply`` never sees it."""
     db_path = tmp_path / "rides.db"

@@ -37,9 +37,11 @@ class FakeSelfTestView:
         self.calls.append(("set_rerun_busy", (busy,)))
 
 
-def _report(*, passed: bool, name: str = "check") -> SelfTestReport:
+def _report(*, passed: bool, name: str = "check", blocking: bool = True) -> SelfTestReport:
     """Build a one-check report, all-pass or all-fail."""
-    check = SelfTestCheck(name=name, passed=passed, duration_seconds=0.0, detail="")
+    check = SelfTestCheck(
+        name=name, passed=passed, duration_seconds=0.0, detail="", blocking=blocking
+    )
     return SelfTestReport(checks=(check,))
 
 
@@ -93,6 +95,23 @@ def test_format_check_line_when_failed_renders_the_fail_suffix() -> None:
     )
 
     assert format_check_line(check) == "7,462 distinct ranks ........ FAIL"
+
+
+def test_format_check_line_when_a_failing_advisory_check_renders_the_same_fail_suffix() -> None:
+    """E6.4.3: advisory or blocking is not a display distinction.
+
+    The dialog still reports the timing check's own verdict as FAIL --
+    what changed is only that this check no longer blocks a finish.
+    """
+    check = SelfTestCheck(
+        name="Whole-field 180×12 timing",  # noqa: RUF001 -- the frozen canvas text
+        passed=False,
+        duration_seconds=0.0,
+        detail="9.99 s",
+        blocking=False,
+    )
+
+    assert format_check_line(check) == "Whole-field 180×12 timing ... 9.99 s FAIL"  # noqa: RUF001
 
 
 def test_format_report_renders_one_line_per_check_in_order() -> None:
