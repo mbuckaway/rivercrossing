@@ -88,7 +88,12 @@ h2, h3 { scroll-margin-top: 1rem; }
 </ul>
 <p>Appearance and text zoom each live on one surface. The theme radios are in Settings only. Text zoom lives on the View menu's Zoom 90%–150% rows only. The two time-column settings each keep two controls, their Settings checkbox and their View-menu item, and each pair stays in sync.</p>
 <h3>Where your data lives</h3>
-<p>All rides live in one SQLite database, <code>rides.db</code>, in your user data folder. Every crossing commits as it happens, so a crash loses at most a keystroke. Backups are written on open and hourly while the app is running, into a <code>rides.db.backups/</code> sibling folder, pruned to the newest 20.</p>
+<p>All rides live in one SQLite database, <code>rides.db</code>, in your per-user data folder. Replace <code>&lt;username&gt;</code> in these paths with your own account name:</p>
+<ul>
+<li><strong>macOS</strong> — <code>/Users/&lt;username&gt;/Library/Application Support/RiverCrossing/rides.db</code></li>
+<li><strong>Windows</strong> — <code>C:\Users\&lt;username&gt;\AppData\Local\RiverCrossing\RiverCrossing\rides.db</code></li>
+</ul>
+<p>The same folder holds your settings and diagnostic logs. Every crossing commits as it happens, so a crash loses at most a keystroke. Backups are written on open and hourly while the app is running, into a <code>rides.db.backups/</code> folder beside the database, pruned to the newest 20.</p>
 <h2 id="setting-up-a-ride">Setting up a ride</h2>
 <p><strong>Ride ▸ New Ride…</strong> opens the setup window for a new ride. <strong>Ride ▸ Edit Ride…</strong> reopens the same window preloaded with the open ride's settings. New Ride… is enabled only while no ride is open. Edit Ride… is enabled only while one is. Existing rides open from the ride library.</p>
 <p>The setup window has these fields:</p>

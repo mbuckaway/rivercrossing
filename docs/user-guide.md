@@ -63,7 +63,12 @@ Appearance and text zoom each live on one surface. The theme radios are in Setti
 
 ### Where your data lives
 
-All rides live in one SQLite database, `rides.db`, in your user data folder. Every crossing commits as it happens, so a crash loses at most a keystroke. Backups are written on open and hourly while the app is running, into a `rides.db.backups/` sibling folder, pruned to the newest 20.
+All rides live in one SQLite database, `rides.db`, in your per-user data folder. Replace `<username>` in these paths with your own account name:
+
+- **macOS** — `/Users/<username>/Library/Application Support/RiverCrossing/rides.db`
+- **Windows** — `C:\Users\<username>\AppData\Local\RiverCrossing\RiverCrossing\rides.db`
+
+The same folder holds your settings and diagnostic logs. Every crossing commits as it happens, so a crash loses at most a keystroke. Backups are written on open and hourly while the app is running, into a `rides.db.backups/` folder beside the database, pruned to the newest 20.
 
 ## Setting up a ride {: #setting-up-a-ride }
 
