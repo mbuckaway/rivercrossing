@@ -292,7 +292,7 @@ DNF entries are excluded entirely: not placed, not listed, not exported. On a mi
 
 This list is the exact order the app uses, strongest first. A hand lower on the list beats every hand below it.
 
-1. **Five of a kind** — needs a joker, or five identical physical cards from a multi-deck shoe.
+1. **Five of a kind** — needs a joker (wild).
 2. **Royal flush** — A-K-Q-J-10 of one suit.
 3. **Straight flush** — five in a row of one suit.
 4. **Four of a kind**.
@@ -304,7 +304,7 @@ This list is the exact order the app uses, strongest first. A hand lower on the 
 10. **One pair**.
 11. **High card**.
 
-Duplicates across one entry are legal. A multi-deck shoe can deal the same card twice, so 9H 9H is a pair of nines. Two entries can also hold the same card code, because the shoe is shuffled, not dealt from a single deck.
+Duplicates across one entry are legal. A multi-deck shoe can deal the same card twice, so 9H 9H is a pair of nines. Five natural cards of one rank score as four of a kind, because five of a kind needs a joker. Two entries can also hold the same card code, because the shoe is shuffled, not dealt from a single deck.
 
 ## Scoring references {: #scoring-references }
 
@@ -324,7 +324,7 @@ The six checks, in order:
 
 1. **7,462 distinct ranks** — the packaged rank table sorts to exactly the 7,462 natural 5-card ranks, with no gap and no repeat.
 2. **Joker vector table (28)** — the 28 hand-authored wild-card vectors each still evaluate to their expected hand class and kickers.
-3. **Five-of-a-kind ordering** — five of a kind outranks a royal flush, and a natural five of a kind outranks a wild one.
+3. **Five-of-a-kind ordering** — five of a kind outranks a royal flush.
 4. **Whole-field 180×12 timing** — a seeded 180-entry field of 12-card hands scores inside its budget.
 5. **compare() total order** — hand comparison is still a strict total order, so the standings sort by the hands, not by crossing order.
 6. **best_hand() joker bound** — a best hand never plays more than five jokers, even when the pool holds six or seven.
