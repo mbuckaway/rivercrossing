@@ -10,7 +10,7 @@ plate, with the entry's own plate derived -- the rider's own plate
 for a solo entry, the lowest-numbered rider's plate for a team.
 Every entry's and pooled rider's plate shares one namespace per
 ride (R-20), and every plate -- ``rider_pooled`` or ``team_relay`` --
-is a whole-number string: the CSV NUMBER column's domain, and what
+is a whole-number string: the CSV PLATE column's domain, and what
 "lowest-numbered" needs to compare. W7 refuses blank plates
 everywhere and every plate entry point refuses non-numeric ones;
 ``next_free_plate`` still ignores a non-numeric plate, which only
@@ -312,7 +312,7 @@ def _require_max_team_size(max_team_size: int) -> None:
 def _require_whole_plate(plate: str) -> None:
     """Raise PlateShapeError unless *plate* is a whole-number string.
 
-    Every plate this module accepts is the NUMBER column's domain
+    Every plate this module accepts is the PLATE column's domain
     (spec S7), relay plates included: they feed the same per-ride
     namespace and the same CSV round trip. Pooled plates additionally
     feed ``_lowest_plate``'s "lowest-numbered" derivation, which needs

@@ -7,8 +7,12 @@ one-row-per-rider ``plate,name,team_name,notes``, selected by the ride's
 plate model -- with ONE unified, header-mapped format. The file's actual
 header row resolves to canonical fields (:func:`_map_header`) through an
 ordered matcher list -- TEAMNAME, TYPE, FIRSTNAME, LASTNAME, SEX,
-NUMBER, NOTES -- first match per column wins, all case-insensitive, and
-a column matching nothing is ignored. Every data row is one RIDER;
+PLATE, NOTES -- first match per column wins, all case-insensitive, and
+a column matching nothing is ignored. The PLATE column whole-matches
+the legacy ``number`` and ``bib`` spellings and the two-word
+``plate number`` (:data:`_PLATE_PATTERN`), so an older registration
+export -- or an older version of this app's own export -- still
+imports. Every data row is one RIDER;
 rows with neither first nor last name are skipped (the trailing
 footer/empty rows registration exports carry), unless they still
 name a plate/team/type, which is a missing-name conflict instead
@@ -24,15 +28,15 @@ Riders" reaches the roster spelled the way the file spells it. A
 rider's name cell is canonicalised
 (:func:`~rivercrossing.roster.canonical_person_name`): a field
 written in one uniform case is re-cased, a mixed-case one survives.
-NUMBER auto-assigns sequential numeric plates
+PLATE auto-assigns sequential numeric plates
 from :meth:`Roster.next_free_plate` when blank; under
 ``rider_pooled`` each rider owns their row's plate, under
 ``team_relay`` a team's member rows share the team's single plate
-(solo rows get their own). An explicit NUMBER cell must be a whole
+(solo rows get their own). An explicit PLATE cell must be a whole
 number under every plate model -- a non-digit "77A"-style cell is
 a per-row conflict, never a crash, for a pooled rider and a relay
 solo or team row alike. Blank plates are still refused by the
-roster, and this module auto-assigns a blank NUMBER cell before the
+roster, and this module auto-assigns a blank PLATE cell before the
 roster ever sees it, so a blank cell never reaches that refusal.
 SEX is the rider's sex: the registration forms' ``Male``/``Female``
 and this app's own ``M``/``F`` both normalize to the one canonical
@@ -123,7 +127,7 @@ commit-then-export-then-preview round trip reproduces the same
 **Export (E3.3.3).** ``export(ride, path, *, placed=None)`` writes
 *ride*'s current roster in the same unified shape :func:`preview`
 reads -- one row per rider, header ``FIRSTNAME,LASTNAME,TYPE,TEAMNAME,
-NUMBER,NOTES,SEX`` -- so an export of a conflict-free preview's target
+PLATE,NOTES,SEX`` -- so an export of a conflict-free preview's target
 therefore previews clean again (spec §7's own "export mirrors the
 columns"; task-briefs.md E3.3.3's round-trip property). Under
 ``rider_pooled`` each row carries its
@@ -200,12 +204,16 @@ _FINISHED_COLUMNS = ("laps", "cards", "best_hand", "total_time")
 _MISSING_NAME_PROBLEM = "missing name"
 _NOT_UTF8_PROBLEM = "file is not valid UTF-8 text"
 _SOLO_ONLY_TEAM_PROBLEM = "team entries are not allowed on a solo-only ride"
-_UNIFIED_COLUMNS = ("FIRSTNAME", "LASTNAME", "TYPE", "TEAMNAME", "NUMBER", "NOTES", "SEX")
+_UNIFIED_COLUMNS = ("FIRSTNAME", "LASTNAME", "TYPE", "TEAMNAME", "PLATE", "NOTES", "SEX")
 
 _TEAM_NAME_PATTERN = re.compile(r"team\s*name", re.IGNORECASE)
 _FIRST_NAME_PATTERN = re.compile(r"first\s*name", re.IGNORECASE)
 _LAST_NAME_PATTERN = re.compile(r"last\s*name", re.IGNORECASE)
-_NUMBER_PATTERN = re.compile(r"\s*(?:number|plate|bib)\s*", re.IGNORECASE)
+# PLATE is whole-header only (fullmatch, never search), so a "Race
+# Number" or "Emergency Contact Number (…)" column stays unmapped
+# while "plate number" is accepted with one or more spaces between
+# the words, either case.
+_PLATE_PATTERN = re.compile(r"\s*(?:plate\s+number|number|plate|bib)\s*", re.IGNORECASE)
 _NOTES_PATTERN = re.compile(r"\bnotes?\b", re.IGNORECASE)
 _SEX_PATTERN = re.compile(r"\bsex\b", re.IGNORECASE)
 
@@ -230,7 +238,7 @@ def _map_header(header_row: Sequence[str]) -> dict[str, int]:
     r"""Map each header column to one canonical field (Phase 2 spec).
 
     The ordered matcher list is TEAMNAME, TYPE, FIRSTNAME, LASTNAME,
-    SEX, NUMBER, NOTES; for every column the first matcher that fires
+    SEX, PLATE, NOTES; for every column the first matcher that fires
     claims it, and a column matching nothing is ignored. All matching is
     case-insensitive. The canonical export tokens map too -- FIRSTNAME
     via ``first\\s*name``, TEAMNAME via ``team\\s*name``, SEX via
@@ -250,7 +258,7 @@ def _map_header(header_row: Sequence[str]) -> dict[str, int]:
         ("FIRSTNAME", lambda header: _FIRST_NAME_PATTERN.search(header) is not None),
         ("LASTNAME", lambda header: _LAST_NAME_PATTERN.search(header) is not None),
         ("SEX", lambda header: _SEX_PATTERN.search(header) is not None),
-        ("NUMBER", lambda header: _NUMBER_PATTERN.fullmatch(header) is not None),
+        ("PLATE", lambda header: _PLATE_PATTERN.fullmatch(header) is not None),
         ("NOTES", lambda header: _NOTES_PATTERN.search(header) is not None),
     )
     mapping: dict[str, int] = {}
@@ -567,7 +575,7 @@ def export(ride: Roster, path: Path, *, placed: Sequence[Placed] | None = None) 
     """Write *ride*'s current roster to *path* as CSV (R-21, spec S7).
 
     The header is the unified ``FIRSTNAME,LASTNAME,TYPE,TEAMNAME,
-    NUMBER,NOTES`` -- one row per rider, the same shape :func:`preview`
+    PLATE,NOTES`` -- one row per rider, the same shape :func:`preview`
     reads -- so re-importing the result against an equivalent roster
     previews with zero conflicts (module docstring's round-trip note).
     Passing *placed* -- a finished ride's standings -- appends spec
@@ -690,7 +698,7 @@ class _DataRow:
     is_team: bool
     team_name: str
     team_key: str
-    number: str
+    plate: str
     notes: str
     sex: str | None = None
 
@@ -712,7 +720,7 @@ def _read_data_rows(
     """Parse every usable data row *reader* yields (Phase 2 spec).
 
     A row with neither first nor last name is a footer/empty row and is
-    skipped -- unless it still names a NUMBER/TEAMNAME/TYPE, in which
+    skipped -- unless it still names a PLATE/TEAMNAME/TYPE, in which
     case it is a missing-name conflict (a plated rider is never
     silently dropped). TYPE resolves to solo/team (blank derives from
     TEAMNAME); an unrecognized type value conflicts and is excluded.
@@ -731,10 +739,10 @@ def _read_data_rows(
         last_name = _cell(raw_row, mapping, "LASTNAME")
         type_field = _cell(raw_row, mapping, "TYPE")
         team_raw = _cell(raw_row, mapping, "TEAMNAME")
-        number = _cell(raw_row, mapping, "NUMBER")
+        plate = _cell(raw_row, mapping, "PLATE")
         notes = _cell(raw_row, mapping, "NOTES")
         if not first_name and not last_name:
-            if number or team_raw or type_field:
+            if plate or team_raw or type_field:
                 conflicts.append(ImportConflict(row_num, _MISSING_NAME_PROBLEM))
             continue
         sex, sex_problem = _classify_sex(
@@ -762,7 +770,7 @@ def _read_data_rows(
                 is_team=is_team,
                 team_name=team_name,
                 team_key=team_key,
-                number=number,
+                plate=plate,
                 notes=notes,
                 sex=sex,
             )
@@ -853,14 +861,14 @@ def _assemble(
 class _PlateAllocator:
     """Assign sequential numeric plates that collide with nothing.
 
-    Blank NUMBER cells auto-assign from :meth:`Roster.next_free_plate`,
+    Blank PLATE cells auto-assign from :meth:`Roster.next_free_plate`,
     skipping every plate already in use on the roster or named anywhere
     else in the file (R-20: one plate namespace per ride).
     """
 
-    def __init__(self, ride: Roster, explicit_numbers: Iterable[str]) -> None:
+    def __init__(self, ride: Roster, explicit_plates: Iterable[str]) -> None:
         """Reserve explicit and roster plates; find the first free."""
-        self._used = {number for number in explicit_numbers if number} | _roster_plates(ride)
+        self._used = {plate for plate in explicit_plates if plate} | _roster_plates(ride)
         self._next = self._first_free(ride)
 
     def _first_free(self, ride: Roster) -> int:
@@ -894,19 +902,19 @@ def _duplicate_plate_problem(plate: str) -> str:
     return f"duplicate plate {plate}"
 
 
-def _non_digit_plate_problem(number: str) -> str:
-    """Return the conflict text for a non-whole-number NUMBER cell."""
-    return f"plate {number!r} must be a whole number"
+def _non_digit_plate_problem(plate: str) -> str:
+    """Return the conflict text for a non-whole-number PLATE cell."""
+    return f"plate {plate!r} must be a whole number"
 
 
-def _explicit_non_digit_plate(number: str) -> bool:
-    """Return True when *number* is a non-blank, non-whole-number cell.
+def _explicit_non_digit_plate(plate: str) -> bool:
+    """Return True when *plate* is a non-blank, non-whole-number cell.
 
-    An explicit NUMBER cell must be a whole number under every plate
+    An explicit PLATE cell must be a whole number under every plate
     model (module docstring); a blank one is not explicit -- it
     auto-assigns instead.
     """
-    return bool(number) and not number.isdigit()
+    return bool(plate) and not plate.isdigit()
 
 
 def _team_size_problem(size: int, max_team_size: int) -> str | None:
@@ -1054,9 +1062,9 @@ def _relay_structural_problem(
     )
 
 
-def _plate_disagreement_problem(numbers: set[str]) -> str:
+def _plate_disagreement_problem(plates: set[str]) -> str:
     """Return the conflict text for relay team rows naming plates."""
-    ordered = ", ".join(sorted(numbers))
+    ordered = ", ".join(sorted(plates))
     return f"team rows carry different plates ({ordered})"
 
 
@@ -1066,14 +1074,14 @@ def _relay_group_plate(
     """Return a relay team group's one shared plate and any conflict.
 
     The member rows must name one plate between them (or none, which
-    auto-assigns); an explicit NUMBER cell must also be a whole number
+    auto-assigns); an explicit PLATE cell must also be a whole number
     under every plate model (module docstring). A plate of ``""``
     always comes with the blocking conflict text barring the group.
     """
-    numbers = {row.number for row in group_rows if row.number}
-    if len(numbers) > 1:
-        return "", _plate_disagreement_problem(numbers)
-    plate = next(iter(numbers), "")
+    plates = {row.plate for row in group_rows if row.plate}
+    if len(plates) > 1:
+        return "", _plate_disagreement_problem(plates)
+    plate = next(iter(plates), "")
     if _explicit_non_digit_plate(plate):
         return "", _non_digit_plate_problem(plate)
     return plate or allocator.allocate(), None
@@ -1091,7 +1099,7 @@ def _assemble_relay(
     unchanged; that helper owns the explicit DRAFT check.
     """
     groups = _group_team_rows(rows)
-    allocator = _PlateAllocator(ride, (row.number for row in rows))
+    allocator = _PlateAllocator(ride, (row.plate for row in rows))
     plan: list[tuple[int, _DataRow | list[_DataRow]]] = []
     seen_groups: set[str] = set()
     for row in rows:
@@ -1137,15 +1145,15 @@ def _relay_solo_entry(
 ) -> tuple[ParsedEntry | None, str | None]:
     """Build one relay solo ParsedEntry from *row*.
 
-    An explicit non-whole-number NUMBER cell contributes no entry --
+    An explicit non-whole-number PLATE cell contributes no entry --
     the same per-row conflict a ``rider_pooled`` row reports, since an
-    explicit NUMBER cell must be a whole number under every plate
+    explicit PLATE cell must be a whole number under every plate
     model (module docstring) -- never a non-numeric plate reaching
     the roster through :func:`commit`.
     """
-    if _explicit_non_digit_plate(row.number):
-        return None, _non_digit_plate_problem(row.number)
-    plate = row.number or allocator.allocate()
+    if _explicit_non_digit_plate(row.plate):
+        return None, _non_digit_plate_problem(row.plate)
+    plate = row.plate or allocator.allocate()
     parsed_rider = ParsedRider(first_name=row.first_name, last_name=row.last_name, sex=row.sex)
     parsed = ParsedEntry(
         plate=plate,
@@ -1175,7 +1183,7 @@ def _relay_team_entry(  # noqa: PLR0913 -- (group_rows, allocator, ride, convert
     non-blocking warnings (a DRAFT under-min size). The under-min
     case never skips the structural check.
 
-    An explicit NUMBER cell must be a whole number under every plate
+    An explicit PLATE cell must be a whole number under every plate
     model (module docstring), so a group naming a "77A"-style shared
     plate contributes no entry -- one blocking conflict instead,
     before anything is built.
@@ -1289,19 +1297,19 @@ def _assemble_pooled(
     unchanged; that branch owns the explicit DRAFT check.
     """
     existing_index = _pooled_owner_index(ride)
-    allocator = _PlateAllocator(ride, (row.number for row in rows))
+    allocator = _PlateAllocator(ride, (row.plate for row in rows))
     solo_entries: list[ParsedEntry] = []
     groups: dict[str, list[_PooledTeamRow]] = {}
     conflicts: list[ImportConflict] = []
     seen_plates: set[str] = set()
     for row in rows:
-        if _explicit_non_digit_plate(row.number):
-            # A pooled rider's plate is the NUMBER column's domain:
+        if _explicit_non_digit_plate(row.plate):
+            # A pooled rider's plate is the PLATE column's domain:
             # roster derivation ("lowest-numbered") needs digits, so a
             # "77A"-style cell is a per-row conflict, not a crash.
-            conflicts.append(ImportConflict(row.row, _non_digit_plate_problem(row.number)))
+            conflicts.append(ImportConflict(row.row, _non_digit_plate_problem(row.plate)))
             continue
-        plate = row.number or allocator.allocate()
+        plate = row.plate or allocator.allocate()
         if plate in seen_plates:
             conflicts.append(ImportConflict(row.row, _duplicate_plate_problem(plate)))
         seen_plates.add(plate)
@@ -1845,7 +1853,7 @@ def _entry_rows(ride: Roster, entry: Entry) -> list[list[str]]:
             rider.last_name,
             type_field,
             team_name,
-            _rider_number(ride, entry, rider),
+            _rider_plate(ride, entry, rider),
             entry.notes if index == 0 else "",
             rider.sex or "",
         ]
@@ -1853,8 +1861,8 @@ def _entry_rows(ride: Roster, entry: Entry) -> list[list[str]]:
     ]
 
 
-def _rider_number(ride: Roster, entry: Entry, rider: Rider) -> str:
-    """Return one exported row's NUMBER cell for its plate model (S1).
+def _rider_plate(ride: Roster, entry: Entry, rider: Rider) -> str:
+    """Return one exported row's PLATE cell for its plate model (S1).
 
     ``rider_pooled`` riders each carry their own plate;
     ``team_relay`` riders carry none, so every member row of a team

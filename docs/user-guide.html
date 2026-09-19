@@ -392,9 +392,9 @@ h2, h3 { scroll-margin-top: 1rem; }
 <td>Blank for solo rows. Rows sharing a team name form one team. The app stores the name exactly as the file spells it. Matching ignores case and extra spaces.</td>
 </tr>
 <tr>
-<td><code>NUMBER</code></td>
+<td><code>PLATE</code></td>
 <td>The rider's or team's plate</td>
-<td>Optional. When blank, the app assigns the next free plate.</td>
+<td>Optional. When blank, the app assigns the next free plate. The importer also accepts <code>number</code>, <code>plate number</code> and <code>bib</code> as this column's heading.</td>
 </tr>
 <tr>
 <td><code>NOTES</code></td>
@@ -411,7 +411,7 @@ h2, h3 { scroll-margin-top: 1rem; }
 <p>The app tidies rider names as it reads them. A name written all in lowercase or ALL IN UPPERCASE becomes first letter capital plus lowercase. For example, <code>JOHN</code> and <code>john</code> both store as <code>John</code>. A name in mixed case is kept as written, so <code>McDonald</code> and <code>O'Brien</code> stay unchanged.</p>
 <p>Any column whose heading matches nothing is ignored. The app's own export always writes the canonical headers in this order. Rows with no first or last name are skipped, unless such a row still names a plate, team, or type, in which case it is reported as a missing name.</p>
 <h3>Example</h3>
-<pre><code class="language-text">FIRSTNAME,LASTNAME,TYPE,TEAMNAME,NUMBER,NOTES
+<pre><code class="language-text">FIRSTNAME,LASTNAME,TYPE,TEAMNAME,PLATE,NOTES
 Luca,Ferrari,solo,,7,
 Dev,Patel,team,Moss Ridge Riders,,shifts at the hour
 Jo,Lindqvist,team,Moss Ridge Riders,,shifts at the hour

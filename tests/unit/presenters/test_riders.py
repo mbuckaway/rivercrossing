@@ -2521,5 +2521,5 @@ def test_on_export_csv_writes_the_rosters_own_header(tmp_path: Path) -> None:
 
     assert (
         path.read_text(encoding="utf-8").splitlines()[0]
-        == "FIRSTNAME,LASTNAME,TYPE,TEAMNAME,NUMBER,NOTES,SEX"
+        == "FIRSTNAME,LASTNAME,TYPE,TEAMNAME,PLATE,NOTES,SEX"
     )

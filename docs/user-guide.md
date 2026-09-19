@@ -372,7 +372,7 @@ Every roster import and export uses one header-mapped format, with one row per r
 | `LASTNAME` | Rider's last name | Optional. A rider with only one name leaves it blank. |
 | `TYPE` | `solo` or `team` | Blank means solo, unless the row names a team. |
 | `TEAMNAME` | The team's name | Blank for solo rows. Rows sharing a team name form one team. The app stores the name exactly as the file spells it. Matching ignores case and extra spaces. |
-| `NUMBER` | The rider's or team's plate | Optional. When blank, the app assigns the next free plate. |
+| `PLATE` | The rider's or team's plate | Optional. When blank, the app assigns the next free plate. The importer also accepts `number`, `plate number` and `bib` as this column's heading. |
 | `NOTES` | A note on the rider or team | Optional. Team notes from member rows join into one team note. |
 | `SEX` | The rider's sex, `M` or `F` | Blank means unknown. Any other value is a conflict unless you tick **Map unknown sex to Male**. |
 
@@ -383,7 +383,7 @@ Any column whose heading matches nothing is ignored. The app's own export always
 ### Example
 
 ```text
-FIRSTNAME,LASTNAME,TYPE,TEAMNAME,NUMBER,NOTES
+FIRSTNAME,LASTNAME,TYPE,TEAMNAME,PLATE,NOTES
 Luca,Ferrari,solo,,7,
 Dev,Patel,team,Moss Ridge Riders,,shifts at the hour
 Jo,Lindqvist,team,Moss Ridge Riders,,shifts at the hour

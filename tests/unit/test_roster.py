@@ -2925,10 +2925,10 @@ def test_add_rider_to_team_pooled_non_numeric_plate_raises_and_keeps_the_team() 
 
 # ------- review fix: relay plates are whole numbers too (W7 extended)
 # W7 closed the relay-blank hole; this closes the rest. A relay plate
-# is the CSV NUMBER column's domain exactly like a pooled one, so every
+# is the CSV PLATE column's domain exactly like a pooled one, so every
 # plate this module accepts is a whole-number string. The refused values
 # are a letter, an alphanumeric, a blank, and the two punctuation plates
-# a NUMBER cell carries; the accepted ones are the brief's.
+# a PLATE cell carries; the accepted ones are the brief's.
 
 _RELAY_NON_WHOLE_PLATES = [
     ("", "plate '' must not be empty"),

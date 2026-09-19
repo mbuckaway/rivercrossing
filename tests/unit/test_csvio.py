@@ -18,22 +18,24 @@ RUNNING/REOPENED; only solo<->team *conversions* stay DRAFT-only).
 The unified contract under test:
 
 - Header mapping order is TEAMNAME, TYPE, FIRSTNAME, LASTNAME, SEX,
-  NUMBER, NOTES, first match per column wins, all case-insensitive;
-  canonical export tokens round-trip through the same map.
+  PLATE, NOTES, first match per column wins, all case-insensitive;
+  canonical export tokens round-trip through the same map, and the
+  legacy ``number``/``plate``/``bib`` spellings plus the two-word
+  ``plate number`` still whole-match the PLATE column.
 - Rows with neither first nor last name are skipped (trailing
-  footer/empty rows); a row that still names a number/team/type is a
+  footer/empty rows); a row that still names a plate/team/type is a
   missing-name conflict instead of a silent drop.
 - TYPE is ``solo``/``team`` after case folding; blank TYPE derives from
   TEAMNAME presence; TEAMNAME groups rows by its normalized form
   (trim, collapse internal whitespace, lowercase) across the whole
   file, never by adjacency.
-- NUMBER auto-assigns from :meth:`Roster.next_free_plate` when blank;
+- A blank PLATE cell auto-assigns from :meth:`Roster.next_free_plate`;
   under rider_pooled each rider owns their row's plate, under
   team_relay a team's member rows share the team's one plate.
 - SEX normalizes Male/male/M/m to ``M`` and Female/female/F/f to ``F``;
   blank or absent is unknown (``None``), any other non-blank cell is a
   per-row conflict. Export writes ``M``/``F``/blank.
-- Export writes ``FIRSTNAME,LASTNAME,TYPE,TEAMNAME,NUMBER,NOTES,SEX``,
+- Export writes ``FIRSTNAME,LASTNAME,TYPE,TEAMNAME,PLATE,NOTES,SEX``,
   one row per rider; a FINISHED ride's *placed* columns append after
   them.
 
@@ -100,8 +102,11 @@ _NOT_UTF8_PROBLEM = "file is not valid UTF-8 text"
 _CSV_MALFORMED_PREFIX = "malformed CSV data:"
 _SOLO_ONLY_TEAM_PROBLEM = "team entries are not allowed on a solo-only ride"
 
+# The test corpus writes the legacy ``number`` spelling, so every
+# preview test below also exercises the lenient alias; the canonical
+# export header spells the column PLATE.
 _UNIFIED_HEADER = "firstname,lastname,type,teamname,number,notes,sex"
-_CANONICAL_HEADER = "FIRSTNAME,LASTNAME,TYPE,TEAMNAME,NUMBER,NOTES,SEX"
+_CANONICAL_HEADER = "FIRSTNAME,LASTNAME,TYPE,TEAMNAME,PLATE,NOTES,SEX"
 # The SEX column's own header matcher, spelled the two ways a real
 # registration export and this app's own export spell it.
 _SEX_HEADER_TOKENS = ("Sex", "SEX", "sex")
@@ -206,7 +211,7 @@ def _read_csv_rows(path: Path) -> list[list[str]]:
                 "LASTNAME": 1,
                 "TYPE": 2,
                 "TEAMNAME": 3,
-                "NUMBER": 4,
+                "PLATE": 4,
                 "NOTES": 5,
                 "SEX": 6,
             },
@@ -214,7 +219,7 @@ def _read_csv_rows(path: Path) -> list[list[str]]:
         # Case and whitespace are ignored everywhere.
         (
             "  First  Name , LASTNAME , TYPE ,What is your Team name?,number,Notes",
-            {"TEAMNAME": 3, "TYPE": 2, "FIRSTNAME": 0, "LASTNAME": 1, "NUMBER": 4, "NOTES": 5},
+            {"TEAMNAME": 3, "TYPE": 2, "FIRSTNAME": 0, "LASTNAME": 1, "PLATE": 4, "NOTES": 5},
         ),
     ],
 )
@@ -228,7 +233,7 @@ def test_map_header_given_header_row_maps_the_expected_columns(
 @pytest.mark.parametrize(
     "header",
     [
-        # NUMBER is whole-header only (never "Emergency Contact…").
+        # PLATE is whole-header only (never "Emergency Contact…").
         "Emergency Contact Number (xxx-xxx-xxxx)",
         # TEAMNAME needs the literal word "name" after "team".
         "Team Size",
@@ -239,8 +244,13 @@ def test_map_header_given_header_row_maps_the_expected_columns(
         "Medical conditions or allergies we need to be aware of in case of emergency",
         "Would you prefer a vegetarian meal?",
         "T-shirt size?",
-        # A fuller "Race Number" is not the whole-header NUMBER token.
+        # A fuller "Race Number" is not the whole-header PLATE token.
         "Race Number",
+        # "plate number" needs the words adjacent, in that order, with
+        # whitespace between them.
+        "PlateNumber",
+        "Plate Numbers",
+        "Number Plate",
         # SEX needs the standalone word, not "sex" inside "Unisex".
         "Unisex t-shirt size?",
     ],
@@ -253,11 +263,17 @@ def test_map_header_given_an_unmapped_column_ignores_it(header: str) -> None:
 @pytest.mark.parametrize(
     ("header", "expected"),
     [
-        # NUMBER accepts only whole-header number/plate/bib spellings.
-        ("number", {"NUMBER": 0}),
-        ("Plate", {"NUMBER": 0}),
-        ("Bib", {"NUMBER": 0}),
-        ("NUMBER", {"NUMBER": 0}),
+        # PLATE accepts whole-header number/plate/bib spellings, and the
+        # two-word "plate number" in either case.
+        ("number", {"PLATE": 0}),
+        ("Plate", {"PLATE": 0}),
+        ("Bib", {"PLATE": 0}),
+        ("NUMBER", {"PLATE": 0}),
+        ("PLATE", {"PLATE": 0}),
+        # T-4 boundary: one space, a double space, and all-lowercase.
+        ("Plate Number", {"PLATE": 0}),
+        ("PLATE  NUMBER", {"PLATE": 0}),
+        ("plate number", {"PLATE": 0}),
         # TYPE fires only when the header contains both words (or is the
         # canonical token "type" itself, so an app export round-trips).
         ("Are you riding Solo or on a Team?", {"TYPE": 0}),
@@ -1304,13 +1320,13 @@ def test_preview_relay_team_rows_carrying_different_plates_conflict(tmp_path: Pa
     assert "carry different plates" in result.conflicts[0].problem
 
 
-# ================================================= NUMBER auto-assign
+# =================================================== PLATE auto-assign
 
 
 def test_preview_relay_solo_and_team_without_numbers_auto_assign_sequential_plates(
     tmp_path: Path,
 ) -> None:
-    """Blank NUMBER cells auto-assign from next_free_plate()."""
+    """Blank PLATE cells auto-assign from next_free_plate()."""
     path = _unified_file(
         tmp_path,
         [
@@ -1354,7 +1370,7 @@ def test_preview_relay_auto_assigned_plate_avoids_an_explicit_file_plate(tmp_pat
 
 
 def test_preview_pooled_blank_numbers_auto_assign_one_plate_per_rider(tmp_path: Path) -> None:
-    """rider_pooled: blank NUMBER means a fresh plate for that rider."""
+    """rider_pooled: blank PLATE means a fresh plate for that rider."""
     path = _unified_file(
         tmp_path,
         [
@@ -2818,11 +2834,11 @@ def test_export_finished_relay_total_time_column_round_trips_as_float(
 def test_preview_gorba_fixture_imports_as_is_against_a_relay_roster() -> None:
     """The real registration export: header-mapped, grouped, plated.
 
-    The GORBA file has no NUMBER column at all, so every entry plate is
+    The GORBA file has no PLATE column at all, so every entry plate is
     auto-assigned; its trailing footer rows (empty lines, "Basic info…",
     "Filters", "event: …") have no rider name and are skipped; and its
     "Emergency Contact Number (xxx-xxx-xxxx)" column is never treated
-    as the race-plate NUMBER column.
+    as the race-plate PLATE column.
     """
     roster = Roster(entry_mode=EntryMode.MIXED, plate_model=PlateModel.TEAM_RELAY)
 
@@ -3130,7 +3146,7 @@ def test_commit_relay_matched_team_with_no_changes_reports_zero_updates(
 def test_preview_pooled_team_non_digit_plate_cell_conflicts_and_excludes_the_row(
     tmp_path: Path,
 ) -> None:
-    """A "77A" NUMBER cell is one per-row conflict (R-21)."""
+    """A "77A" PLATE cell is one per-row conflict (R-21)."""
     path = _unified_file(
         tmp_path,
         [
@@ -3154,7 +3170,7 @@ def test_preview_pooled_team_non_digit_plate_cell_conflicts_and_excludes_the_row
 
 
 def test_preview_pooled_solo_non_digit_plate_cell_is_a_conflict(tmp_path: Path) -> None:
-    """A solo row's non-digit NUMBER cell conflicts too."""
+    """A solo row's non-digit PLATE cell conflicts too."""
     path = _unified_file(tmp_path, [_Row(first="Alex", last="Doe", type_="solo", number="77A")])
     roster = _pooled_roster()
 
@@ -3165,7 +3181,7 @@ def test_preview_pooled_solo_non_digit_plate_cell_is_a_conflict(tmp_path: Path) 
 
 
 def test_preview_relay_solo_non_digit_plate_cell_is_a_conflict(tmp_path: Path) -> None:
-    """team_relay: a solo row's non-digit NUMBER cell conflicts."""
+    """team_relay: a solo row's non-digit PLATE cell conflicts."""
     path = _unified_file(tmp_path, [_Row(first="Alex", last="Doe", type_="solo", number="77A")])
     roster = _relay_roster()
 
@@ -3178,7 +3194,7 @@ def test_preview_relay_solo_non_digit_plate_cell_is_a_conflict(tmp_path: Path) -
 def test_preview_relay_team_non_digit_plate_cell_conflicts_once_and_excludes_the_group(
     tmp_path: Path,
 ) -> None:
-    """team_relay: a team's non-digit NUMBER cell conflicts once."""
+    """team_relay: a team's non-digit PLATE cell conflicts once."""
     path = _unified_file(
         tmp_path,
         [
@@ -3214,7 +3230,7 @@ def test_preview_relay_team_non_digit_plate_cell_conflicts_once_and_excludes_the
 def test_preview_relay_whole_number_plate_cell_imports_cleanly(
     tmp_path: Path, row: _Row, expected_plate: str
 ) -> None:
-    """team_relay: an explicit whole-number NUMBER cell imports."""
+    """team_relay: an explicit whole-number PLATE cell imports."""
     path = _unified_file(tmp_path, [row])
     roster = _relay_roster()
 
@@ -3226,7 +3242,7 @@ def test_preview_relay_whole_number_plate_cell_imports_cleanly(
 def test_preview_utf8_bom_before_the_number_header_keeps_the_plate_column(
     tmp_path: Path,
 ) -> None:
-    """A UTF-8 BOM must not silently disable the first NUMBER column."""
+    """A UTF-8 BOM must not silently disable the first plate column."""
     path = tmp_path / "bom_roster.csv"
     path.write_bytes(
         "\ufeffNUMBER,FIRSTNAME,LASTNAME,TYPE,TEAMNAME,NOTES\n7,Alex,Doe,solo,,\n".encode("utf-8")
@@ -3237,6 +3253,22 @@ def test_preview_utf8_bom_before_the_number_header_keeps_the_plate_column(
 
     assert result.conflicts == ()
     assert [(entry.plate, entry.display_name) for entry in result.entries] == [("7", "Alex Doe")]
+
+
+@pytest.mark.parametrize("header_token", ["NUMBER", "number"])
+def test_preview_given_a_legacy_number_header_still_imports_the_plate_column(
+    tmp_path: Path, header_token: str
+) -> None:
+    """A legacy NUMBER header still imports as the plate column."""
+    path = _write_csv(
+        tmp_path,
+        [f"{header_token},FIRSTNAME,LASTNAME,TYPE,TEAMNAME,NOTES", "7,Alex,Doe,solo,,"],
+    )
+    roster = _pooled_roster()
+
+    result = preview(path, roster)
+
+    assert (result.conflicts, [entry.plate for entry in result.entries]) == ((), ["7"])
 
 
 def test_preview_non_utf8_file_reports_a_row_one_file_conflict(tmp_path: Path) -> None:
@@ -3280,7 +3312,7 @@ def test_export_roster_with_zero_rider_teams_writes_only_entries_with_riders(
     """W8: an empty team exports nothing; its members join later."""
     path = tmp_path / "out.csv"
     roster = _relay_roster()
-    # Every plate is the NUMBER column's domain now, relay included:
+    # Every plate is the PLATE column's domain now, relay included:
     # "RC 88" is refused by the roster before export is reached.
     roster.create_empty_team(display_name="Trail Blazers", plate="88")
     roster.create_solo_entry(first_name="Alex", last_name="Tremblay", plate="1")
@@ -3546,7 +3578,21 @@ def test_export_header_lists_the_sex_column_last(tmp_path: Path) -> None:
 
     export(roster, path)
 
-    assert _read_lines(path)[0] == "FIRSTNAME,LASTNAME,TYPE,TEAMNAME,NUMBER,NOTES,SEX"
+    assert _read_lines(path)[0] == "FIRSTNAME,LASTNAME,TYPE,TEAMNAME,PLATE,NOTES,SEX"
+
+
+def test_export_given_a_roster_writes_the_plate_header_and_cell(tmp_path: Path) -> None:
+    """The export names the plate column PLATE and fills it (S7)."""
+    path = tmp_path / "out.csv"
+    roster = _pooled_roster()
+    roster.create_solo_entry(first_name="Alex", last_name="Tremblay", plate="7")
+
+    export(roster, path)
+
+    assert _read_lines(path) == [
+        "FIRSTNAME,LASTNAME,TYPE,TEAMNAME,PLATE,NOTES,SEX",
+        "Alex,Tremblay,solo,,7,,",
+    ]
 
 
 @pytest.mark.parametrize(("sex", "cell"), [(None, ""), ("M", "M"), ("F", "F")])
