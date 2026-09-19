@@ -33,6 +33,14 @@ from rivercrossing.ui import help as help_module
 _GEN_USERGUIDE_PATH = Path(__file__).resolve().parents[2] / "tools" / "gen_userguide.py"
 _DOCS_DIR = Path(__file__).resolve().parents[2] / "docs"
 
+# Windows builds its ``OSError`` text from the path's *repr*, which
+# doubles every backslash, so on ``windows-latest`` the raw path is
+# not a substring of ``str(exc)``: the CI failure this file pins. A
+# name carrying a backslash on every platform reproduces that
+# escaping on macOS too, so this suite catches the regression with no
+# Windows runner.
+_BACKSLASHED_GUIDE_NAME = "no-such\\guide.md"
+
 DEFAULT_TITLE = "RiverCrossing — User Guide"
 TITLE = "Snowflake Classic Guide"
 
@@ -156,6 +164,17 @@ def _cli_args(mode: str, paths: tuple[Path, Path, Path]) -> list[str]:
         "--out",
         str(out_path),
     ]
+
+
+def _raise_oserror_without_filename(*_args: object, **_kwargs: object) -> str:
+    """Stand in for ``Path.read_text`` raising a filename-less error.
+
+    Real filesystem calls always set ``OSError.filename``; this fake
+    reaches the tool's no-filename fallback branch, and it patches
+    the filesystem boundary rather than any module of the tool.
+    """
+    msg = "read failed"
+    raise OSError(msg)
 
 
 @pytest.fixture
@@ -486,6 +505,100 @@ def test_main_check_error_message_names_the_file_it_could_not_read(
     )
 
     assert str(missing_markdown) in capsys.readouterr().err
+
+
+def test_main_check_error_message_names_a_backslashed_path_plainly(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A path with backslashes reaches stderr un-escaped on every OS.
+
+    ``str(OSError)`` repr-escapes its filename, so the exit-2 message
+    must lead with the plain path for this to hold on
+    ``windows-latest``.
+    """
+    css_path = tmp_path / "user-guide.css"
+    css_path.write_text(GUIDE_CSS, encoding="utf-8")
+    missing_markdown = tmp_path / _BACKSLASHED_GUIDE_NAME
+
+    exit_code = gen_userguide.main(
+        _cli_args("--check", (missing_markdown, css_path, tmp_path / "user-guide.html"))
+    )
+
+    assert exit_code == 2
+    assert f"error: {missing_markdown}: " in capsys.readouterr().err
+
+
+def test_main_check_error_message_without_a_filename_invents_no_path(
+    guide_paths: tuple[Path, Path, Path],
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A filename-less ``OSError`` keeps the exception's own text."""
+    monkeypatch.setattr(Path, "read_text", _raise_oserror_without_filename)
+
+    exit_code = gen_userguide.main(_cli_args("--check", guide_paths))
+
+    assert exit_code == 2
+    assert capsys.readouterr().err == "error: read failed\n"
+
+
+# --------------------------------------------------- _error_message
+
+
+@pytest.mark.parametrize(
+    "filename",
+    [
+        "/home/runner/guide dir/no-such-guide.md",
+        r"C:\Users\runner\no-such-guide.md",
+        r"\\?\C:\guide\no-such-guide.md",
+    ],
+)
+def test_error_message_present_filename_is_named_plainly_before_the_exception_text(
+    filename: str,
+) -> None:
+    """The message leads with the raw path, not with its repr."""
+    exc = FileNotFoundError(2, "No such file or directory", filename)
+
+    message = gen_userguide._error_message(exc)
+
+    assert message == f"{filename}: [Errno 2] No such file or directory: {filename!r}"
+
+
+@pytest.mark.parametrize(
+    ("filename", "expected"),
+    [
+        (None, "[Errno 2] No such file or directory"),
+        ("", "[Errno 2] No such file or directory: ''"),
+    ],
+)
+def test_error_message_absent_filename_renders_the_exception_text_alone(
+    filename: str | None, expected: str
+) -> None:
+    """No usable ``filename`` means no path is invented."""
+    exc = OSError(2, "No such file or directory", filename)
+
+    message = gen_userguide._error_message(exc)
+
+    assert message == expected
+
+
+def test_error_message_unicode_decode_error_renders_the_decoder_text_alone() -> None:
+    """A ``UnicodeDecodeError`` has no ``filename``: keep its text."""
+    exc = UnicodeDecodeError("utf-8", b"\xff\xfe", 0, 1, "invalid start byte")
+
+    message = gen_userguide._error_message(exc)
+
+    assert message == "'utf-8' codec can't decode byte 0xff in position 0: invalid start byte"
+
+
+@given(filename=st.text(min_size=1))
+def test_error_message_arbitrary_filename_reaches_the_message_un_escaped(filename: str) -> None:
+    """Whatever the path, it reaches the message un-escaped."""
+    exc = FileNotFoundError(2, "No such file or directory", filename)
+
+    message = gen_userguide._error_message(exc)
+
+    assert message == f"{filename}: [Errno 2] No such file or directory: {filename!r}"
 
 
 # ------------------------------------------------- content assertions

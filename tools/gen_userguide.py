@@ -159,6 +159,21 @@ def _run_check(markdown_path: Path, css_path: Path, out_path: Path) -> int:
     return 0
 
 
+def _error_message(exc: OSError | UnicodeDecodeError) -> str:
+    """Render *exc* as one line naming the path it could not read.
+
+    ``str(OSError)`` embeds ``repr(exc.filename)``, which doubles
+    every backslash, so on Windows the raw path is *not* a substring
+    of the text printed. ``OSError.filename`` holds the path
+    un-repr'd, so lead with that whenever there is one.
+    ``UnicodeDecodeError`` has no ``filename`` and keeps the
+    exception's own text.
+    """
+    if isinstance(exc, OSError) and exc.filename:
+        return f"{exc.filename}: {exc}"
+    return str(exc)
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     """Run the CLI: dispatch to ``--write`` or ``--check``."""
     args = _build_parser().parse_args(argv)
@@ -167,7 +182,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             return _run_write(args.markdown, args.css, args.out)
         return _run_check(args.markdown, args.css, args.out)
     except (OSError, UnicodeDecodeError) as exc:
-        print(f"error: {exc}", file=sys.stderr)
+        print(f"error: {_error_message(exc)}", file=sys.stderr)
         return 2
 
 
