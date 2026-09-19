@@ -259,14 +259,6 @@ def test_compare_fewer_jokers_beats_more_jokers() -> None:
     assert compare(fewer, more) == 1
 
 
-def test_compare_natural_five_of_a_kind_beats_wild_five_of_a_kind() -> None:
-    """Five natural aces beat four aces plus a wild joker."""
-    natural = eval5(_cards("AS AD AH AC AD"))
-    wild = eval5(_cards("AS AD AH AC JK"))
-
-    assert compare(natural, wild) == 1
-
-
 def test_compare_natural_partial_beats_wild_partial() -> None:
     """A 4-card natural quads beats an equal 4-card wild quads.
 
@@ -491,16 +483,17 @@ def test_eval5_duplicate_card_flush_kickers_are_not_grouped_by_count() -> None:
     assert evaluated.tiebreak == (NATURAL_HAND_SIZE, 13, 12, 9, 9, 2)
 
 
-def test_eval5_five_identical_natural_cards_score_as_five_of_a_kind() -> None:
-    """5 physically identical natural cards are FIVE_OF_A_KIND.
+def test_eval5_five_identical_natural_cards_score_as_four_of_a_kind() -> None:
+    """5 identical natural cards are QUADS, never five of a kind.
 
-    No joker involved at all -- reachable only via a 5+ deck shoe
-    (spec section 4), the natural counterpart to E2.1.2's wild
-    five-of-a-kind.
+    No joker is involved at all, and E2.1.2's five-of-a-kind class
+    needs one; the 5+ deck shoe (spec section 4) that can deal one
+    entry 9H 9H 9H 9H 9H can only ever reach four of a kind with it,
+    on the usual count-led tiebreak shape.
     """
     evaluated = eval5(_cards("9H 9H 9H 9H 9H"))
 
-    assert evaluated.cls == HandClass.FIVE_OF_A_KIND
+    assert evaluated.cls == HandClass.QUADS
     assert evaluated.tiebreak == (NATURAL_HAND_SIZE, 9)
 
 
@@ -712,6 +705,27 @@ def test_best_hand_pooled_scale_completes_within_measured_budget(
     assert elapsed < budget_seconds
 
 
+def _wild_class_restored(evaluated: EvaluatedHand, fill: tuple[Card, ...]) -> EvaluatedHand:
+    """Return *evaluated* classed as the substitution really plays.
+
+    Each *fill* card stands for one joker -- the oracle's own
+    substitution -- but ``eval5`` receives it as a natural card and so
+    cannot see that, which matters for exactly one class: five of a
+    kind is wild-only (E2.1.2), while five same-rank naturals are four
+    of a kind (E2.1.3). A candidate that played a joker and resolved
+    all 5 cards to one rank is therefore the wild five of a kind, and
+    shares the count-led tiebreak either way.
+    """
+    if fill and all(card.rank == evaluated.best5[0].rank for card in evaluated.best5):
+        return EvaluatedHand(
+            cls=HandClass.FIVE_OF_A_KIND,
+            tiebreak=evaluated.tiebreak,
+            best5=evaluated.best5,
+            jokers_played_as=evaluated.jokers_played_as,
+        )
+    return evaluated
+
+
 def _exhaustive_best_hand(cards: list[Card]) -> EvaluatedHand:
     """Compute the ORIGINAL exhaustive subset+substitution search.
 
@@ -731,7 +745,7 @@ def _exhaustive_best_hand(cards: list[Card]) -> EvaluatedHand:
         else [()]
     )
     candidates = (
-        eval5((*subset, *fill))
+        _wild_class_restored(eval5((*subset, *fill)), fill)
         for subset in itertools.combinations(naturals, need)
         for fill in fills
     )
@@ -838,40 +852,16 @@ def test_self_test_five_of_a_kind_check_passes_with_no_timing_detail() -> None:
 def test_self_test_five_of_a_kind_check_fails_when_wild_five_loses_to_the_royal(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Check (c) fails on its first clause: wild five beats royal flush.
+    """Check (c) fails when the wild five stops outranking the royal.
 
     Monkeypatches ``hands.compare`` -- the module's own comparison
     seam, so the failure is deterministic -- to report every pair as
-    equal. The check's ``and`` then short-circuits on its left operand
-    (T-3), which the real vectors can never exercise.
+    equal, which the check's one remaining clause reads as a loss.
     """
     # logic-coverage-exempt: T-10 -- hands.compare is the SUT's own
     # comparison seam, patched here only to force this check's failure
     # path deterministically; no I/O boundary is involved.
     monkeypatch.setattr(hands, "compare", lambda _a, _b: 0)
-
-    report = self_test()
-
-    assert report.checks[2].passed is False
-
-
-def test_self_test_five_of_a_kind_check_fails_when_natural_five_loses_to_wild(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Check (c) fails on its second clause: natural five beats wild.
-
-    The stub reports a wild hand as better and a natural one as equal,
-    so the first clause passes, the ``and`` does *not* short-circuit,
-    and only the natural-beats-wild clause can fail the check (T-3).
-    """
-
-    def wild_only_compare(a: EvaluatedHand, _b: EvaluatedHand) -> int:
-        return 1 if a.jokers_played_as else 0
-
-    # logic-coverage-exempt: T-10 -- hands.compare is the SUT's own
-    # comparison seam, patched here only to force this check's failure
-    # path deterministically; no I/O boundary is involved.
-    monkeypatch.setattr(hands, "compare", wild_only_compare)
 
     report = self_test()
 

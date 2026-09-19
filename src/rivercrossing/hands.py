@@ -7,19 +7,22 @@ its 7,462 distinct ranks onto this project's local :class:`HandClass`
 ordering, a Royal-Flush-above-Straight-Flush split that phevaluator
 itself does not make, and (E2.1.2) a five-of-a-kind check ranked above
 every natural hand: jokers are wild and always resolve to whichever
-natural completion maximizes the hand.
+natural completion maximizes the hand, and five of a kind is reached
+through one of them alone -- five same-rank naturals are four of a kind.
 
 Physical-cards semantics (E2.1.3, spec section 5): a multi-deck shoe can
 legally deal one entry two identical cards, so a "natural" 5-card hand
 is not always 5 pairwise-distinct codes -- 9H 9H is simply a pair of
 nines, and 9H 9H KH QH 2H is a king-high flush whose kickers happen to
-include a paired card. phevaluator's native evaluator is undefined
-(observed to segfault) on a repeated card id, so any hand with one
-takes ``classify_pattern``'s first-principles path instead of
-phevaluator's; both paths feed the same :func:`_kicker_tiebreak`, so a
-hand's class and tiebreak always compare consistently regardless of
-which path produced it. ``tools/gen_rank_vectors.py`` imports
-``classify_pattern`` rather than keeping its own copy.
+include a paired card. Repeating a card never conjures the wild-only
+class either: 9H 9H 9H 9H 9H is four of a kind. phevaluator's native
+evaluator is undefined (observed to segfault) on a repeated card id,
+so any hand with one takes ``classify_pattern``'s first-principles
+path instead of phevaluator's; both paths feed the same
+:func:`_kicker_tiebreak`, so a hand's class and tiebreak always
+compare consistently regardless of which path produced it.
+``tools/gen_rank_vectors.py`` imports ``classify_pattern`` rather
+than keeping its own copy.
 
 ``best_hand`` finds the best 5-of-N hand (spec section 5's
 ``best_hand`` pseudocode). For 5 or more cards (E2.3.1) it builds one
@@ -114,10 +117,10 @@ class HandClass(IntEnum):
     """Hand categories, worst to best (spec section 5 table, reversed).
 
     Values increase with strength, so a plain ``IntEnum`` comparison
-    already orders hand classes correctly. ``FIVE_OF_A_KIND`` needs
-    either a joker (E2.1.2) or 5 physically identical cards from a
-    multi-deck shoe (E2.1.3); :func:`eval5` never produces it from 5
-    pairwise-distinct natural cards.
+    already orders hand classes correctly. ``FIVE_OF_A_KIND`` needs a
+    joker (E2.1.2) and only a joker: no all-natural hand reaches it,
+    however many physically identical cards a multi-deck shoe deals
+    (E2.1.3) -- five same-rank naturals are ``QUADS``.
     """
 
     HIGH_CARD = 1
@@ -229,7 +232,8 @@ def classify_pattern(ranks: Sequence[int], suits: Sequence[str]) -> HandClass:
     and the rest follows the rank-value multiset -- never consults a
     phevaluator rank, so it can independently confirm one. Duplicate
     ranks and suits are not a foul (physical-cards semantics, module
-    docstring): 5 cards sharing one rank is FIVE_OF_A_KIND, and a
+    docstring): 5 cards sharing one rank is QUADS -- five of a kind
+    is wild-only, so no arrangement of naturals reaches it -- and a
     flush's "5 matching suits" is exactly as true when 2 of those 5
     happen to be the same physical card.
 
@@ -244,8 +248,11 @@ def classify_pattern(ranks: Sequence[int], suits: Sequence[str]) -> HandClass:
     if not ranks:
         return HandClass.HIGH_CARD
     counts = sorted(Counter(ranks).values(), reverse=True)
+    # Only a 5-card hand reaches this, and all 5 of its cards share
+    # one rank -- exactly four of a kind's kickerless top end, never
+    # five of a kind, which no natural card can make.
     if counts[0] >= NATURAL_HAND_SIZE:
-        return HandClass.FIVE_OF_A_KIND
+        return HandClass.QUADS
 
     is_full_hand = len(ranks) == NATURAL_HAND_SIZE
     is_flush = is_full_hand and len(set(suits)) == 1
@@ -731,6 +738,11 @@ def _spend_leftover_jokers(
     return spent
 
 
+def _all_one_rank(cards: Sequence[Card]) -> bool:
+    """Return True when every card in *cards* holds the same rank."""
+    return len({card.rank for card in cards}) == 1
+
+
 def _evaluate_candidate(
     chosen_naturals: Sequence[Card], jokers_played_as: Sequence[Card], jokers: Sequence[Card]
 ) -> EvaluatedHand:
@@ -743,10 +755,21 @@ def _evaluate_candidate(
     with the *original* joker placeholders in ``best5`` (module
     docstring: ``jokers_played_as`` holds the resolution, ``best5``
     keeps the raw joker markers).
+
+    The one label that does need the caller is five of a kind:
+    :func:`_evaluate_five_naturals` sees the resolved cards alone, so
+    a wild five and five same-rank naturals both reach it as 5 cards
+    of one rank and both come back QUADS (E2.1.3). With a joker
+    playing one of those cards it is the wild five of a kind
+    (E2.1.2), and with none it really is four of a kind. The two
+    classes share the count-led ``(5, rank)`` tiebreak, so only the
+    class has to be restored here.
     """
-    evaluated = _evaluate_five_naturals((*chosen_naturals, *jokers_played_as))
+    played = (*chosen_naturals, *jokers_played_as)
+    evaluated = _evaluate_five_naturals(played)
+    cls = HandClass.FIVE_OF_A_KIND if jokers_played_as and _all_one_rank(played) else evaluated.cls
     return EvaluatedHand(
-        cls=evaluated.cls,
+        cls=cls,
         tiebreak=evaluated.tiebreak,
         best5=(*chosen_naturals, *jokers),
         jokers_played_as=tuple(jokers_played_as),
@@ -1141,13 +1164,13 @@ def _check_joker_vectors() -> tuple[bool, str]:
 def _check_five_of_a_kind_ordering() -> tuple[bool, str]:
     """Check (c): five of a kind outranks a royal flush.
 
-    Also checks that a natural five of a kind outranks a wild one of
-    the same rank -- fewer jokers wins once class and kicker tie.
+    The five of a kind here is the only kind there is -- a wild one.
+    Five same-rank naturals are four of a kind (E2.1.3), so no natural
+    hand can reach this class at all, let alone rank against a wild one.
     """
     wild_five = eval5([Card.parse(code) for code in ["AS", "AD", "AH", "AC", "JK"]])
-    natural_five = eval5([Card.parse(code) for code in ["AS", "AD", "AH", "AC", "AD"]])
     royal_flush = eval5([Card.parse(code) for code in ["AS", "KS", "QS", "JS", "10S"]])
-    passed = compare(wild_five, royal_flush) == 1 and compare(natural_five, wild_five) == 1
+    passed = compare(wild_five, royal_flush) == 1
     return passed, ""
 
 
@@ -1312,7 +1335,7 @@ def self_test() -> SelfTestReport:
     Six independently-timed checks. The four frozen selftest_dlg canvas
     lines lead, in their own order: the 7,462-rank sweep, the 28
     authored joker vectors, five-of-a-kind ordering (above the royal
-    flush, and natural above wild), and the whole 180x12 field scoring
+    flush), and the whole 180x12 field scoring
     inside its R-42 budget. The two follow-up checks then cover the
     comparison the field is sorted by (``compare()``'s total order
     over a seeded sample) and the joker cap ``best_hand`` must respect

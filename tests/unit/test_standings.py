@@ -1000,6 +1000,19 @@ def test_hand_name_each_hand_class_matches_golden_string(codes: str, expected: s
     assert hand_name(best_hand(_cards(codes))) == expected
 
 
+def test_hand_name_five_identical_natural_cards_names_the_quads_rank() -> None:
+    """Five identical naturals name their rank, and never raise.
+
+    Those five cards are QUADS -- five of a kind needs a joker -- so
+    the group rank appears five times where a quads hand usually
+    shows four; a namer requiring an exact group size raises instead
+    of naming it.
+    """
+    name = hand_name(best_hand(_cards("9H 9H 9H 9H 9H")))
+
+    assert name == "Four of a Kind — Nines"
+
+
 def test_hand_name_joker_completed_full_house_names_jokers_played_as() -> None:
     """A joker resolving to an ace names aces over fours (golden)."""
     assert hand_name(best_hand(_cards("AS AD JK 4C 4H"))) == "Full House — Aces over Fours"
