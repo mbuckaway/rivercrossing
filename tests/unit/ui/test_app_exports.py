@@ -396,6 +396,69 @@ def test_write_export_poster_html_writes_the_podium_page(tmp_path: Path) -> None
     assert "Four of a Kind — Nines" in text
 
 
+def _pdf_text(path: Path) -> str:
+    """Extract a PDF's every-page text, joined with newlines."""
+    return "\n".join(page.extract_text() or "" for page in PdfReader(str(path)).pages)
+
+
+def test_write_export_poster_given_an_unverified_ride_writes_the_note(
+    tmp_path: Path,
+) -> None:
+    """E6.4.3: the handler's flag reaches the PDF poster's note seam."""
+    context = _context(engine=_StubEngine(_snapshot()))
+    out = tmp_path / "podium.pdf"
+
+    config, groups, opts = _export_inputs(context)
+    teams, solo = _unpack_groups(groups)
+    app_module._write_export(
+        config, teams, solo, opts, "export_poster", out, self_test_unverified=True
+    )
+
+    assert "Self-test unverified" in _pdf_text(out)
+
+
+def test_write_export_poster_given_a_verified_ride_writes_no_note(tmp_path: Path) -> None:
+    """T-3 negative: the default poster export carries no such note."""
+    context = _context(engine=_StubEngine(_snapshot()))
+    out = tmp_path / "podium.pdf"
+
+    config, groups, opts = _export_inputs(context)
+    teams, solo = _unpack_groups(groups)
+    app_module._write_export(config, teams, solo, opts, "export_poster", out)
+
+    assert "Self-test unverified" not in _pdf_text(out)
+
+
+def test_write_export_poster_html_given_an_unverified_ride_writes_the_note(
+    tmp_path: Path,
+) -> None:
+    """E6.4.3: the flag reaches the poster page's note seam."""
+    context = _context(engine=_StubEngine(_snapshot()))
+    out = tmp_path / "podium.html"
+
+    config, groups, opts = _export_inputs(context)
+    teams, solo = _unpack_groups(groups)
+    app_module._write_export(
+        config, teams, solo, opts, "export_poster_html", out, self_test_unverified=True
+    )
+
+    assert "Self-test unverified" in out.read_text(encoding="utf-8")
+
+
+def test_write_export_poster_html_given_a_verified_ride_writes_no_note(
+    tmp_path: Path,
+) -> None:
+    """T-3 negative: the default poster page carries no such note."""
+    context = _context(engine=_StubEngine(_snapshot()))
+    out = tmp_path / "podium.html"
+
+    config, groups, opts = _export_inputs(context)
+    teams, solo = _unpack_groups(groups)
+    app_module._write_export(config, teams, solo, opts, "export_poster_html", out)
+
+    assert "Self-test unverified" not in out.read_text(encoding="utf-8")
+
+
 def test_write_export_csv_writes_the_s15_header(tmp_path: Path) -> None:
     """The standings CSV carries the spec §15 header (type and sex)."""
     context = _context(engine=_StubEngine(_snapshot()))

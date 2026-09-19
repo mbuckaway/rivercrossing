@@ -85,6 +85,7 @@ from typing import TYPE_CHECKING, Any
 import wx
 import wx.dataview
 
+from rivercrossing.cards import Card, draw_key
 from rivercrossing.ride import DEFAULT_TIEBREAK_ORDER
 from rivercrossing.roster import EntryMode, PlateModel
 from rivercrossing.standings import DRAW_TIE_NOTE
@@ -300,10 +301,34 @@ _TEXT_ACCESSORS: tuple[Callable[[StandingsRow], str], ...] = (
     format_draw,
 )
 
+# The blank Draw cell's key: below every card ``cards.draw_key`` can
+# return (its floor is the two of clubs' 8), so a row that drew nothing
+# is "no card at all" -- an ascending sort lists the drawn cards last,
+# and the downward arrow reads the highest card first.
+_NO_DRAW_SORT_KEY = -1
+
+
+def _draw_sort_key(standing: StandingsRow) -> int:
+    """Return the Draw column's rank-then-suit key for *standing*.
+
+    The stored code parses back to its card and keys through
+    ``cards.draw_key`` -- the finish's own order, rank major and suit
+    minor (clubs < diamonds < hearts < spades), which is also how
+    ``standings`` orders a drawn tie group -- so the column orders by
+    the card, never by the code's text (which reads "10D" before "2C").
+    A row that drew nothing keys below every card
+    (:data:`_NO_DRAW_SORT_KEY`). The parse and the key both refuse what
+    the draw's jokerless deck cannot deal -- a joker, a malformed code
+    -- the same loud refusal ``standings``' key makes.
+    """
+    if not standing.tiebreak_card:
+        return _NO_DRAW_SORT_KEY
+    return draw_key(Card.parse(standing.tiebreak_card))
+
+
 # The native header sort's per-column key, in ``COLUMN_LABELS`` order:
-# Place and Laps are ints, the rest are strings -- the Draw column keys
-# on the stored code, which orders by rank letter then suit the same
-# way the card text reads.
+# Place and Laps are ints, the strings sort as text -- except the Draw
+# column, which keys on the parsed card (:func:`_draw_sort_key`).
 _STANDINGS_SORT_KEYS: tuple[Callable[[StandingsRow], Any], ...] = (
     lambda standing: standing.place,
     lambda standing: standing.plate,
@@ -311,7 +336,7 @@ _STANDINGS_SORT_KEYS: tuple[Callable[[StandingsRow], Any], ...] = (
     lambda standing: standing.laps,
     lambda standing: format_best5(standing.best5),
     lambda standing: standing.hand,
-    lambda standing: standing.tiebreak_card,
+    _draw_sort_key,
 )
 
 

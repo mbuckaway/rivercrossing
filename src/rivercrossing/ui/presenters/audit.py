@@ -28,7 +28,10 @@ ALL_ACTIONS = "All actions"
 # (``ride.py``'s ``apply`` dispatch) plus the roster mutations Store
 # persists as ``user_action`` rows -- so the filter is a straight
 # equality test on the row's own action. ``test_audit.py`` pins this
-# tuple against the .xrc's item order, so the two cannot drift.
+# tuple against the .xrc's item order and against ``ride``'s own
+# ``REPLAY_ACTIONS`` set, so neither a new engine event nor an .xrc
+# edit can drift unnoticed. "High-card Draw" is R-14's finish-time
+# draw, labelled with ride_setup_dlg's own words for criterion ①.
 ACTION_CHOICES: tuple[tuple[str, str], ...] = (
     ("Record Crossing", "record_crossing"),
     ("Add Crossing at Time", "add_crossing_at"),
@@ -52,6 +55,7 @@ ACTION_CHOICES: tuple[tuple[str, str], ...] = (
     ("Remove Rider", "remove_rider"),
     ("Mark DNF", "dnf"),
     ("Shoe Reshuffle", "shoe_reshuffle"),
+    ("High-card Draw", "tiebreak_draw"),
     ("Start Ride", "start"),
     ("Continue Ride", "continue"),
     ("Set Start Time", "set_start_time"),

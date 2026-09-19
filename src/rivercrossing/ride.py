@@ -139,11 +139,15 @@ TIEBREAK_LAPS = "laps"
 TIEBREAK_TOTAL_TIME = "total_time"
 TIEBREAK_HIGH_CARD = "high_card"
 
-# Phase 3's stored default leads with the venue's high-card draw: a
-# finished ride's hand tie is flagged "draw required" (R-43) rather
-# than silently ordered by laps/time, and any criterion after the draw
-# is unreachable. The operator drags tiebreak_list to reorder it
-# (R-14); a live (unfinished) board auto-ranks by laps/time instead
+# Phase 3's stored default leads with the venue's high-card draw: the
+# finish itself draws one card per tied entry from a fresh deck (R-14,
+# ``_record_tiebreak_draws``), so standings orders a fully drawn tie
+# group by ``cards.draw_key`` and only a group the draw still cannot
+# separate -- no card held, or more tied entries than the 52-card deck
+# holds -- is flagged "draw required" (R-43). Any criterion after the
+# draw is unreachable either way. The order is set (and reordered with
+# tiebreak_list's own Up/Down buttons) in ride_setup_dlg, R-14; a live
+# (unfinished) board auto-ranks by laps/time instead
 # (standings.LIVE_TIEBREAK_ORDER).
 DEFAULT_TIEBREAK_ORDER: tuple[str, str, str] = (
     TIEBREAK_HIGH_CARD,

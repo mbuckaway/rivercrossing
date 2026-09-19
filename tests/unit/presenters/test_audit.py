@@ -11,7 +11,7 @@ search text and selected action, and renders through
 ``AuditView.show_audit_rows``.
 
 ``action_choice`` is flat: ``audit.xrc`` declares "All actions" plus one
-item per audited action (29 in all), so the filter keeps exactly the
+item per audited action (30 in all), so the filter keeps exactly the
 selected action's rows -- there is no bucket mapping any more. These
 tests pin the flat list against the ``.xrc``'s own declared order and
 against every action the app can audit, then drive the filters against
@@ -25,6 +25,7 @@ from pathlib import Path
 import pytest
 from defusedxml.ElementTree import parse
 
+from rivercrossing import ride
 from rivercrossing.roster import EntryMode, PlateModel, Rider, Roster
 from rivercrossing.ui.presenters.audit import (
     ACTION_CHOICES,
@@ -36,24 +37,11 @@ from rivercrossing.ui.presenters.data_source import AuditRow
 
 XRC_DIR = Path(__file__).resolve().parents[3] / "src" / "rivercrossing" / "ui" / "xrc"
 
-# Every action the app can put in the audit trail: the engine's own
-# event actions (ride.py's ``apply`` dispatch) plus the roster
-# mutations Store persists as user_action rows.
-AUDITED_ACTIONS = frozenset(
+# The roster mutations the app can persist as an audit row: the rider
+# editor's own action spellings (``Roster._log``'s call sites), which
+# live below the engine and so appear in no ride module's set.
+ROSTER_ACTIONS = frozenset(
     {
-        "record_crossing",
-        "add_crossing_at",
-        "edit_crossing",
-        "void_crossing",
-        "undo",
-        "reassign",
-        "record_miss",
-        "assign_plate_to_miss",
-        "deal_manual",
-        "confirm_held",
-        "void_held",
-        "return_to_held",
-        "void_card",
         "move_rider",
         "add_rider_to_team",
         "extract_rider_to_solo",
@@ -61,16 +49,16 @@ AUDITED_ACTIONS = frozenset(
         "change_pooled_rider_plate",
         "change_team_plate",
         "remove_rider",
-        "dnf",
-        "shoe_reshuffle",
-        "start",
-        "continue",
-        "set_start_time",
-        "stop",
-        "finish",
-        "reopen",
     }
 )
+
+# Every action the app can put in the audit trail: the engine's own
+# event actions (``ride.REPLAY_ACTIONS`` -- the mutations ``apply``
+# dispatches, and so exactly the engine rows a rebuild may hand it)
+# plus the roster mutations above. Derived from the engine's own set
+# rather than re-listed here, so a new engine event cannot be silently
+# forgotten: the filter list and this expectation move together.
+AUDITED_ACTIONS = ride.REPLAY_ACTIONS | ROSTER_ACTIONS
 
 # ------------------------------------------------------------- fakes
 
@@ -290,6 +278,13 @@ def test_action_choices_given_every_audited_action_cover_it_exactly_once() -> No
     assert len(ACTION_CHOICES) == len(AUDITED_ACTIONS)
 
 
+def test_action_choices_given_the_tiebreak_draw_offer_its_own_label() -> None:
+    """R-14: the finish's own draw is a filterable action, titled."""
+    labels = {action: label for label, action in ACTION_CHOICES}
+
+    assert labels["tiebreak_draw"] == "High-card Draw"
+
+
 def test_action_choices_given_the_dropdown_labels_are_unique() -> None:
     """Two rows cannot share a label: the choice would be ambiguous."""
     labels = [label for label, _action in ACTION_CHOICES]
@@ -307,7 +302,7 @@ def test_action_choices_given_the_all_actions_item_never_carries_an_action() -> 
     "action", [action for _label, action in ACTION_CHOICES], ids=[a for _l, a in ACTION_CHOICES]
 )
 def test_audit_action_choice_given_a_selected_action_keeps_only_its_rows(action: str) -> None:
-    """T-13: every one of the 28 actions filters to its own rows."""
+    """T-13: every one of the 29 actions filters to its own rows."""
     view = FakeAuditView()
     presenter = AuditPresenter(view, _AuditSource(_rows_for_every_action()), roster=_roster())
 

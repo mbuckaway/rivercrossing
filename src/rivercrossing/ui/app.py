@@ -2297,8 +2297,8 @@ def _write_export(  # noqa: PLR0913, PLR0917
     ``type`` column. W8: *team_logos* (the :func:`_team_logo_srcs`
     map) reaches the HTML renderer only -- the PDF report keeps no
     team logos (W8 scope note). E6.4.3: *self_test_unverified* reaches
-    the HTML page and the PDF report (the two surfaces that render the
-    note); the poster and the standings CSV carry no note.
+    every published surface that renders the note -- the HTML page, the
+    PDF report and both posters; the standings CSV carries no note.
 
     R-52: the HTML page lands atomically like the PDF and CSV ones --
     staged in a same-directory temp sibling and swapped over *path* --
@@ -2331,12 +2331,24 @@ def _write_export(  # noqa: PLR0913, PLR0917
             self_test_unverified=self_test_unverified,
         )
     elif target == "export_poster":
-        pdfexport.podium_poster(config, placed, path, logo_path=config.logo_path)
+        pdfexport.podium_poster(
+            config,
+            placed,
+            path,
+            logo_path=config.logo_path,
+            self_test_unverified=self_test_unverified,
+        )
     elif target == "export_poster_html":
         # The poster page is the PDF poster's HTML sibling: the same
         # one-page podium content, rendered through the shared model's
         # own environment and written by the same R-52 atomic swap.
-        html = htmlexport.render_poster(config, placed, opts, logo_path=config.logo_path)
+        html = htmlexport.render_poster(
+            config,
+            placed,
+            opts,
+            logo_path=config.logo_path,
+            self_test_unverified=self_test_unverified,
+        )
         pdfexport._atomic_write_bytes(  # noqa: SLF001 -- pdfexport's own R-52 atomic writer
             path, html.encode("utf-8")
         )
@@ -4359,9 +4371,11 @@ def _run_launch_self_test(context: _RouteContext) -> None:
     reuses that one run rather than calling ``self_test()`` again
     separately: a green report never shows the dialog at all -- the
     launch hook stays silent -- and only a red one pops the modal a
-    scorer must dismiss before continuing. The BLOCKING half of R-44
-    ("failure blocks finishing a ride") is EPIC 6's; this only makes
-    the hook itself exist and run (E2.4.1's own scope note).
+    scorer must dismiss before continuing. R-44's blocking half has
+    since landed with EPIC 6 (E6.4.3): a ride finished over a failed
+    check publishes the self-test note, and a blocking check failure
+    offers the recorded "Finish anyway". This hook only runs the
+    launch self-test itself (E2.4.1's own scope note).
     """
     # deferred, see module docstring
     from rivercrossing.ui.views._support import (  # noqa: PLC0415

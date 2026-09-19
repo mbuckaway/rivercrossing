@@ -132,8 +132,9 @@ DEFAULT_TIEBREAK_ORDER: tuple[TieBreak, ...] = (
 
 # The live board's order (Phase 3): while a ride is not FINISHED,
 # ``EngineDataSource.standings`` ranks by most laps, then shortest
-# total time -- the venue draw arbitrates the finished result only --
-# so a hand tie never leaves the live board as an unresolved draw.
+# total time. The draw is the finish's own step (``RideEngine.finish``,
+# R-14), so there is no card yet for the live board to read -- a hand
+# tie there never sits unresolved for want of one.
 LIVE_TIEBREAK_ORDER: tuple[TieBreak, ...] = (
     TieBreak.MOST_LAPS,
     TieBreak.TOTAL_TIME,

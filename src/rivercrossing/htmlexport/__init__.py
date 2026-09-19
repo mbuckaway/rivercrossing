@@ -975,6 +975,7 @@ def render_poster(  # noqa: PLR0913
     *,
     logo_path: Path | str | None = None,
     generated: str | None = None,
+    self_test_unverified: bool = False,
 ) -> str:
     """Render one ride's podium poster as a self-contained page.
 
@@ -986,6 +987,8 @@ def render_poster(  # noqa: PLR0913
     and the best-5 card chips. A team event stacks the top three teams
     over the top three solo riders; a solo-only field lists its top
     five, with no section heading to name a kind it does not have.
+    A row that drew a tie-break card (R-14) renders that card's badge
+    beside its hand prose, as the results page's own podium cards do.
 
     Args:
         ride: Ride-like object exposing ``name``/``event_date``/
@@ -998,6 +1001,8 @@ def render_poster(  # noqa: PLR0913
         logo_path: Raw PNG path, base64-embedded; None falls back to
             the transparent 1x1 URI (D8).
         generated: The pinned footer stamp; None stamps the local now.
+        self_test_unverified: Whether the ride was finished over a
+            failed evaluator self-test (E6.4.3).
 
     Returns:
         The full poster page as a string.
@@ -1005,13 +1010,16 @@ def render_poster(  # noqa: PLR0913
     Raises:
         ValueError: An entry's plate is not numeric.
     """
-    payload = build_payload(ride, placed, opts, generated)
+    payload = build_payload(
+        ride, placed, opts, generated, self_test_unverified=self_test_unverified
+    )
     context = {
         "event": payload.event,
         "options": payload.options,
         "poster_sections": _poster_sections(payload),
         "logo_src": _logo_data_uri(logo_path) if logo_path is not None else _TRANSPARENT_PNG,
         "logo_alt": payload.event.organizer,
+        "self_test_note": payload.self_test_note,
         "compiled_css": _asset_text("compiled_css"),
         "fonts_css": _asset_text("fonts_css"),
     }

@@ -9,9 +9,9 @@ style:
   every column pinned to its own width (G6 plus the R-14 Draw column);
 - :func:`format_draw` -- the Draw cell's card text;
 - :meth:`StandingsListModel.Compare` -- the native header sort's
-  per-column keys, its numeric Place/Laps and its non-negated
-  row-position tie-break -- driven against a shell that owns only
-  ``_rows``/``GetRow``;
+  per-column keys, its numeric Place/Laps, its rank-then-suit Draw key
+  and its non-negated row-position tie-break -- driven against a shell
+  that owns only ``_rows``/``GetRow``;
 - :meth:`ResultsWindow._build_columns`, for the Plate column the Team
   list drops under ``RIDER_POOLED`` (Part 2) and the Hand width each
   list's own column set pins (G6);
@@ -503,7 +503,10 @@ ORDER_CASES = (
     (COL_LAPS, _row(laps=1), _row(laps=2)),
     (COL_BEST5, _row(best5=("2C",)), _row(best5=("AC",))),
     (COL_HAND, _row(hand="High Card — Ace"), _row(hand="Pair of twos")),
-    (COL_DRAW, _row(tiebreak_card="2C"), _row(tiebreak_card="AC")),
+    # The Draw key is rank-then-suit (``cards.draw_key``), never the
+    # stored code's text: "10D" reads before "2C" lexicographically but
+    # the ten outranks the two.
+    (COL_DRAW, _row(tiebreak_card="2C"), _row(tiebreak_card="10D")),
 )
 ORDER_CASE_IDS = [COLUMN_LABELS[col].replace(" ", "_") for col, _low, _high in ORDER_CASES]
 
@@ -573,6 +576,50 @@ def test_standings_compare_given_the_place_column_orders_numerically_not_as_text
     result = StandingsListModel.Compare(shell, 0, 1, COL_PLACE, True)  # noqa: FBT003
 
     assert result == 1
+
+
+# The Draw column's own key: ``cards.draw_key``'s rank-major,
+# suit-minor order (clubs < diamonds < hearts < spades), parsed out of
+# the stored code -- never the code's text. The pairs are
+# test_standings.py's own vectors, so the column and the ranking cannot
+# order the same two cards differently.
+DRAW_ORDER_CASES = (
+    ("2C", "3C"),
+    ("2C", "2D"),
+    ("2D", "2H"),
+    ("2H", "2S"),
+    ("2C", "AS"),
+    ("9S", "10D"),
+)
+
+
+@pytest.mark.parametrize(("low_card", "high_card"), DRAW_ORDER_CASES)
+def test_standings_compare_given_the_draw_column_orders_by_rank_then_suit(
+    low_card: str, high_card: str
+) -> None:
+    """Rank-then-suit: the higher drawn card orders after the lower."""
+    lower = _row(tiebreak_card=low_card)
+    higher = _row(tiebreak_card=high_card)
+    shell = _CompareShell([lower, higher])
+
+    # wx's positional bool
+    result = StandingsListModel.Compare(shell, 0, 1, COL_DRAW, True)  # noqa: FBT003
+
+    assert result == -1
+
+
+@pytest.mark.parametrize(("ascending", "expected"), ASCENDING_CASES, ids=ASCENDING_IDS)
+def test_standings_compare_given_a_blank_draw_cell_orders_it_below_every_card(
+    *, ascending: bool, expected: int
+) -> None:
+    """A blank Draw cell keys below every drawn card."""
+    blank = _row(tiebreak_card="")
+    drawn = _row(tiebreak_card="2C")
+    shell = _CompareShell([blank, drawn])
+
+    result = StandingsListModel.Compare(shell, 0, 1, COL_DRAW, ascending)
+
+    assert result == expected
 
 
 # ------------------------------------------------- show_standings
