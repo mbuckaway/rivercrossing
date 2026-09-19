@@ -6,6 +6,8 @@ All notable changes to RiverCrossing are recorded here. The format follows
 
 ## [Unreleased]
 
+## [1.0.22] - 2026-09-19
+
 ### Added
 
 - **High-card draw resolves ties** — a finished ride's identical best hands are now broken by a real
