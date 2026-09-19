@@ -675,7 +675,7 @@ def test_draw_marker_given_a_zero_card_row_that_drew_is_the_draw_alone() -> None
         draw=("JK", "j"),
     )
 
-    assert pdfexport._draw_marker(row) == "DRAW ★"
+    assert pdfexport._draw_marker(row) == "DRAW ★ JOKER"
 
 
 def test_render_given_an_unverified_ride_renders_the_self_test_note(tmp_path: Path) -> None:
@@ -1298,11 +1298,11 @@ def test_poster_subtitle_preserves_the_solo_name_laps_and_sex(
         (Card(Rank.TEN, Suit.CLUBS), "10♣"),
         (Card(Rank.ACE, Suit.HEARTS), "A♥"),
         (Card(Rank.QUEEN, Suit.DIAMONDS), "Q♦"),
-        (Card(rank=None, suit=None, joker=True), "★JOKER"),
+        (Card(rank=None, suit=None, joker=True), "★ JOKER"),
     ],
 )
 def test_poster_card_text_renders_rank_suit_and_joker(card: Card, expected: str) -> None:
-    """A large card face reads rank+suit, and "★JOKER" for the joker."""
+    """A large card face reads rank+suit, and "★ JOKER" for a joker."""
     assert pdfexport._poster_card_text(card) == expected
 
 
@@ -1338,17 +1338,18 @@ def test_poster_card_text_embeds_rank_letter_and_suit_glyph(rank: Rank, suit: Su
         (Card(Rank.TEN, Suit.CLUBS), "10♣"),
         (Card(Rank.ACE, Suit.HEARTS), "A♥"),
         (Card(Rank.QUEEN, Suit.DIAMONDS), "Q♦"),
-        (Card(rank=None, suit=None, joker=True), "★"),
+        (Card(rank=None, suit=None, joker=True), "★ JOKER"),
     ],
 )
 def test_card_text_renders_rank_suit_and_joker(card: Card, expected: str) -> None:
-    """One card renders as rank letter + suit glyph, joker as ★."""
+    """One card renders as rank letter + suit glyph, or ★ JOKER."""
     assert pdfexport._card_text(card) == expected
 
 
 def test_pair_text_given_the_ten_pair_renders_the_10_rank_glyph() -> None:
     """The payload pair route spells the ten "10", matching "10d"."""
     assert pdfexport._pair_text(("10", "d")) == "10♦"
+    assert pdfexport._pair_text(("JK", "j")) == "★ JOKER"
 
 
 def test_rank_letter_given_the_ten_is_the_10_spelling() -> None:

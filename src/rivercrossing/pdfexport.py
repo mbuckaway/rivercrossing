@@ -96,6 +96,11 @@ _FIRST_PLACE = 1
 
 _ROW_HEIGHT = 0.24
 
+# The Best-5 card column's width, in inches: wide enough for a "★
+# JOKER" joker face alongside the hand name without clipping. The
+# team field's hand column then takes the remaining content width.
+_CARDS_COL = 1.60
+
 # A team row's inline logo (R-61's base64 card bitmap) at the HTML's
 # compact inline size.
 _INLINE_LOGO = 0.14
@@ -146,7 +151,7 @@ _SUIT_GLYPH: dict[Suit, str] = {
     Suit.DIAMONDS: "♦",
     Suit.CLUBS: "♣",
 }
-_JOKER_GLYPH = "★"
+_JOKER_TEXT = "★ JOKER"
 
 # The payload's own suit letters (``CardPair``'s second element) to the
 # glyphs above -- derived, never a second glyph table.
@@ -165,10 +170,10 @@ def _format_km(lap_km: float) -> str:
 
 
 def _pair_text(pair: CardPair) -> str:
-    """Return one pair's text: rank letter + suit glyph, or ★."""
+    """Return one pair's text: rank letter + suit glyph, or ★ JOKER."""
     rank, suit = pair
     if rank == "JK":
-        return _JOKER_GLYPH
+        return _JOKER_TEXT
     return f"{rank}{_SUIT_GLYPH_BY_LETTER[suit]}"
 
 
@@ -195,9 +200,9 @@ def _decode_logo(logo: str) -> io.BytesIO:
 
 
 def _card_text(card: Card) -> str:
-    """Return one card's text: rank letter + suit glyph, or ★."""
+    """Return one card's text: rank letter + suit glyph, or ★ JOKER."""
     if card.joker:
-        return _JOKER_GLYPH
+        return _JOKER_TEXT
     rank = cast("Rank", card.rank)
     suit = cast("Suit", card.suit)
     return f"{_RANK_LETTER[rank.value]}{_SUIT_GLYPH[suit]}"
@@ -209,14 +214,14 @@ def _is_steel_card(card: Card) -> bool:
 
 
 def _poster_card_text(card: Card) -> str:
-    """Return one large poster face: rank+suit, or ★JOKER for a joker.
+    """Return one large poster face: rank+suit, or ★ JOKER for a joker.
 
     Natural cards reuse :func:`_card_text`'s "9♠" spelling; the joker
-    spells its face out at poster size (the [5d] mock's own "★JOKER")
-    rather than the report's bare "★".
+    spells its face out (the [5d] mock's own "★JOKER", matching the
+    report's "★ JOKER" chip).
     """
     if card.joker:
-        return "★JOKER"
+        return _JOKER_TEXT
     return _card_text(card)
 
 
@@ -249,10 +254,11 @@ def _draw_marker(row: ResultRow) -> str:
     R-14's draw rides after the hand prose in the same cell --
     "THREE OF A KIND — NINES · DRAW A♥" -- so no layout width moves.
     The separator is dropped when there is no hand prose to lead with,
-    so a no-show entry's cell reads "DRAW ★" rather than starting with
-    one. The caller draws the marker as its own run, in the DejaVu face,
-    because Barlow carries no suit glyph (measured: fpdf2 drops ♥ and ★
-    from it); the two runs share the one column's width.
+    so a no-show entry's cell reads "DRAW ★ JOKER" rather than
+    starting with one. The caller draws the marker as its own run, in
+    the DejaVu face, because Barlow carries no suit glyph (measured:
+    fpdf2 drops ♥ and ★ from it); the two runs share the one column's
+    width.
     """
     if row.draw is None:
         return ""
@@ -314,7 +320,7 @@ def _top_ten_widths(*, show_times: bool, content: float) -> list[float]:
     widths = [0.40, 0.62, 1.50, 0.45]
     if show_times:
         widths.append(0.90)
-    widths += [1.20, content - sum(widths) - 1.20]
+    widths += [_CARDS_COL, content - sum(widths) - _CARDS_COL]
     return widths
 
 
@@ -328,7 +334,7 @@ def _team_top_widths(*, show_times: bool, content: float) -> list[float]:
     widths = [0.40, 1.80, 0.45]
     if show_times:
         widths.append(0.90)
-    widths += [1.20, content - sum(widths) - 1.20]
+    widths += [_CARDS_COL, content - sum(widths) - _CARDS_COL]
     return widths
 
 
@@ -355,7 +361,7 @@ def _team_field_widths(*, show_times: bool, content: float) -> list[float]:
     widths = [0.35, 1.40, 0.40]
     if show_times:
         widths += [0.85, 0.80]
-    widths += [1.30, content - sum(widths) - 1.30]
+    widths += [_CARDS_COL, content - sum(widths) - _CARDS_COL]
     return widths
 
 
@@ -428,10 +434,10 @@ def _marker_style(hand_style: _TextStyle) -> _TextStyle:
     """Return the drawn-card marker style for a hand run's own size.
 
     R-14's marker is drawn in DejaVu -- the face that carries the suit
-    glyphs and the joker star Barlow lacks (measured: fpdf2 drops ♥ and
-    ★ from it) -- at the hand prose's size, so the two runs read as one
-    line whatever cell they ride in. Never bold: DejaVu is registered
-    for the regular style only.
+    glyphs and the joker's "★ JOKER" text Barlow lacks (measured: fpdf2
+    drops ♥ and ★ from it) -- at the hand prose's size, so the two runs
+    read as one line whatever cell they ride in. Never bold: DejaVu is
+    registered for the regular style only.
     """
     return _TextStyle(_FONT_GLYPH, hand_style.size, _STEEL)
 
