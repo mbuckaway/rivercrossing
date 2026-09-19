@@ -6,6 +6,18 @@ All notable changes to RiverCrossing are recorded here. The format follows
 
 ## [Unreleased]
 
+## [1.0.23] - 2026-09-19
+
+### Changed
+
+- **Five of a kind is wild-only** — five identical physical cards with no joker now score as four of a
+  kind; five of a kind needs a joker. The user guide and the design spec now state this rule.
+
+### Fixed
+
+- **PDF joker card** — the results report and podium poster render a joker as `★ JOKER` (was a bare
+  `★`), matching the HTML export, and the Best-5 card columns are widened so the label never clips.
+
 ## [1.0.22] - 2026-09-19
 
 ### Added
