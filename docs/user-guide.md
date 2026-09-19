@@ -145,7 +145,7 @@ The console is keyboard-first. The operator types a plate and presses <kbd>Enter
 - **Start** — press the Start button (or **Ride ▸ Start Ride**). A ride with no riders, or a setup missing a required field, cannot start; the app says what is missing. A stopped ride resumes with the same button and keeps all data.
 - **Stop** — press the Stop button (or **Ride ▸ Stop Ride…**) and confirm. Stopping locks the entry field and freezes the clock display at the stop instant. The ride clock keeps counting on wall time underneath, so nothing is lost. Start resumes whenever you are ready.
 - **Set Start Time…** (**Ride ▸ Set Start Time…**) back-dates the start and recomputes lap-1 times when you missed the gun.
-- **Undo** — <kbd>Ctrl+Z</kbd> (or the Undo button) removes the last crossing and returns its card.
+- **Undo** — <kbd><span class="mod">Ctrl</span>+Z</kbd> (or the Undo button) removes the last crossing and returns its card.
 
 **Short laps and duplicates:**
 
@@ -347,18 +347,18 @@ A red check at launch opens the window so you can read it before carrying on. A 
 
 ## Appendix A — Keyboard shortcuts {: #appendix-a-shortcuts }
 
-The same shortcuts appear in **Help ▸ Keyboard Shortcuts**, generated from the accelerator table so they never drift. On macOS, <kbd>Ctrl</kbd> reads as <kbd>⌘</kbd>.
+The same shortcuts appear in **Help ▸ Keyboard Shortcuts**, generated from the accelerator table so they never drift. This page writes the modifier key for the platform you are reading on: <kbd>⌘</kbd> on macOS, <kbd>Ctrl</kbd> on Windows.
 
 | Key | Action |
 |---|---|
 | <kbd>Enter</kbd> | Record crossing for typed plate |
-| <kbd>Ctrl+Z</kbd> | Undo last crossing |
+| <kbd><span class="mod">Ctrl</span>+Z</kbd> | Undo last crossing |
 | <kbd>F5</kbd> | Standings window |
 | <kbd>F1</kbd> | User guide (this page) |
 | <kbd>F2</kbd> | Edit crossing (open detail) |
 | <kbd>Delete</kbd> | Delete selected crossing |
-| <kbd>Ctrl+D</kbd> | Delete selected crossing |
-| <kbd>Ctrl+E</kbd> | Edit crossing plate |
+| <kbd><span class="mod">Ctrl</span>+D</kbd> | Delete selected crossing |
+| <kbd><span class="mod">Ctrl</span>+E</kbd> | Edit crossing plate |
 
 ## Appendix B — CSV reference {: #appendix-b-csv-reference }
 

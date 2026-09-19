@@ -35,6 +35,16 @@ DEFAULT_LANG = "en"
 
 _BODY_EXTENSIONS = ("meta", "attr_list", "tables", "fenced_code")
 
+# The guide's shortcut table writes its modifier as
+# ``<span class="mod">Ctrl</span>``: correct for Windows, wrong for the
+# Macs and iOS devices the app also ships to. The markdown cannot know
+# the reader's platform, so the shell carries a tiny inline script that
+# rewrites every ``span.mod`` to ⌘ when the page opens on an Apple
+# platform and leaves the markdown's ``Ctrl`` alone otherwise. Inline
+# and dependency-free, because the page must open offline; defensive,
+# because a guide that throws is worse than a small wrong modifier.
+# Every literal brace in that script is doubled: ``_SHELL`` goes
+# through ``str.format``, so a single ``{`` would raise at render time.
 _SHELL = """<!DOCTYPE html>
 <html lang="{lang}">
 <head>
@@ -49,6 +59,18 @@ _SHELL = """<!DOCTYPE html>
 <main>
 {body}
 </main>
+<script>
+try {{
+  var data = navigator.userAgentData;
+  var platform = (data && data.platform) || navigator.platform || navigator.userAgent || "";
+  if (/Mac|iPhone|iPad|iPod|iOS/i.test(platform)) {{
+    var mods = document.querySelectorAll("span.mod");
+    for (var i = 0; i < mods.length; i++) {{ mods[i].textContent = "⌘"; }}
+  }}
+}} catch (error) {{
+  /* Unknown platform: the markdown's Ctrl stays the reader's default. */
+}}
+</script>
 </body>
 </html>
 """

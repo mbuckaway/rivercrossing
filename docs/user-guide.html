@@ -160,7 +160,7 @@ h2, h3 { scroll-margin-top: 1rem; }
 <li><strong>Start</strong> — press the Start button (or <strong>Ride ▸ Start Ride</strong>). A ride with no riders, or a setup missing a required field, cannot start; the app says what is missing. A stopped ride resumes with the same button and keeps all data.</li>
 <li><strong>Stop</strong> — press the Stop button (or <strong>Ride ▸ Stop Ride…</strong>) and confirm. Stopping locks the entry field and freezes the clock display at the stop instant. The ride clock keeps counting on wall time underneath, so nothing is lost. Start resumes whenever you are ready.</li>
 <li><strong>Set Start Time…</strong> (<strong>Ride ▸ Set Start Time…</strong>) back-dates the start and recomputes lap-1 times when you missed the gun.</li>
-<li><strong>Undo</strong> — <kbd>Ctrl+Z</kbd> (or the Undo button) removes the last crossing and returns its card.</li>
+<li><strong>Undo</strong> — <kbd><span class="mod">Ctrl</span>+Z</kbd> (or the Undo button) removes the last crossing and returns its card.</li>
 </ul>
 <p><strong>Short laps and duplicates:</strong></p>
 <ul>
@@ -316,7 +316,7 @@ h2, h3 { scroll-margin-top: 1rem; }
 <li><strong>Theme change on Windows</strong> — a dark or light switch applies at the next launch. The status bar says so.</li>
 </ul>
 <h2 id="appendix-a-shortcuts">Appendix A — Keyboard shortcuts</h2>
-<p>The same shortcuts appear in <strong>Help ▸ Keyboard Shortcuts</strong>, generated from the accelerator table so they never drift. On macOS, <kbd>Ctrl</kbd> reads as <kbd>⌘</kbd>.</p>
+<p>The same shortcuts appear in <strong>Help ▸ Keyboard Shortcuts</strong>, generated from the accelerator table so they never drift. This page writes the modifier key for the platform you are reading on: <kbd>⌘</kbd> on macOS, <kbd>Ctrl</kbd> on Windows.</p>
 <table>
 <thead>
 <tr>
@@ -330,7 +330,7 @@ h2, h3 { scroll-margin-top: 1rem; }
 <td>Record crossing for typed plate</td>
 </tr>
 <tr>
-<td><kbd>Ctrl+Z</kbd></td>
+<td><kbd><span class="mod">Ctrl</span>+Z</kbd></td>
 <td>Undo last crossing</td>
 </tr>
 <tr>
@@ -350,11 +350,11 @@ h2, h3 { scroll-margin-top: 1rem; }
 <td>Delete selected crossing</td>
 </tr>
 <tr>
-<td><kbd>Ctrl+D</kbd></td>
+<td><kbd><span class="mod">Ctrl</span>+D</kbd></td>
 <td>Delete selected crossing</td>
 </tr>
 <tr>
-<td><kbd>Ctrl+E</kbd></td>
+<td><kbd><span class="mod">Ctrl</span>+E</kbd></td>
 <td>Edit crossing plate</td>
 </tr>
 </tbody>
@@ -443,5 +443,17 @@ Sam,Ellis,solo,,,
 </ul>
 <p>A finished-ride export adds four columns after the roster columns: <code>laps</code>, <code>cards</code>, <code>best_hand</code>, and <code>total_time</code>.</p>
 </main>
+<script>
+try {
+  var data = navigator.userAgentData;
+  var platform = (data && data.platform) || navigator.platform || navigator.userAgent || "";
+  if (/Mac|iPhone|iPad|iPod|iOS/i.test(platform)) {
+    var mods = document.querySelectorAll("span.mod");
+    for (var i = 0; i < mods.length; i++) { mods[i].textContent = "⌘"; }
+  }
+} catch (error) {
+  /* Unknown platform: the markdown's Ctrl stays the reader's default. */
+}
+</script>
 </body>
 </html>

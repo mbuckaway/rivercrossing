@@ -24,6 +24,8 @@ from pathlib import Path
 from types import ModuleType  # noqa: TC003 -- used at runtime as a return type here
 
 import pytest
+from hypothesis import given
+from hypothesis import strategies as st
 
 from rivercrossing.hands import HandClass
 from rivercrossing.ui import help as help_module
@@ -55,6 +57,22 @@ GUIDE_MARKDOWN = (
 
 GUIDE_CSS = "body { color: #1d1f20; }"
 
+# A sample carrying the shortcut table's modifier marker, exactly as
+# docs/user-guide.md's Appendix A and its undo bullet do: the markdown
+# spells the Windows modifier ``Ctrl`` and the shell's inline script
+# rewrites it to ⌘ for readers on macOS or iOS.
+MODIFIER_MARKDOWN = (
+    "---\n"
+    "title: Shortcuts\n"
+    "---\n"
+    "\n"
+    '- **Undo** — <kbd><span class="mod">Ctrl</span>+Z</kbd> removes the last crossing.\n'
+    "\n"
+    "| Key | Action |\n"
+    "|---|---|\n"
+    '| <kbd><span class="mod">Ctrl</span>+Z</kbd> | Undo last crossing |\n'
+)
+
 # The markdown-rendered body GUIDE_MARKDOWN must produce:
 # python-markdown passes the raw block HTML through verbatim and
 # gives the explicit heading anchor its id.
@@ -72,6 +90,10 @@ _EXPECTED_BODY = (
 
 # The frozen shell, copied into this test on purpose: it is the contract
 # the generator must satisfy, not a restatement of its own template.
+# The shortcut script's braces are doubled exactly as they are in the
+# template, because both sides go through ``str.format``; a single brace
+# that is not ``{lang}``/``{title}``/``{css}``/``{body}`` would raise at
+# render time, so the copy is the brace-escape contract too.
 _EXPECTED_SHELL = """<!DOCTYPE html>
 <html lang="{lang}">
 <head>
@@ -86,6 +108,18 @@ _EXPECTED_SHELL = """<!DOCTYPE html>
 <main>
 {body}
 </main>
+<script>
+try {{
+  var data = navigator.userAgentData;
+  var platform = (data && data.platform) || navigator.platform || navigator.userAgent || "";
+  if (/Mac|iPhone|iPad|iPod|iOS/i.test(platform)) {{
+    var mods = document.querySelectorAll("span.mod");
+    for (var i = 0; i < mods.length; i++) {{ mods[i].textContent = "⌘"; }}
+  }}
+}} catch (error) {{
+  /* Unknown platform: the markdown's Ctrl stays the reader's default. */
+}}
+</script>
 </body>
 </html>
 """
@@ -197,6 +231,85 @@ def test_render_css_text_is_inlined_verbatim_inside_the_style_element(css: str) 
     html = gen_userguide.render("# Guide\n", css)
 
     assert f"<style>\n{css}\n</style>" in html
+
+
+# --------------------------------------------- shortcut modifier script
+# docs/user-guide.md writes the shortcut modifier as
+# ``<span class="mod">Ctrl</span>``: right for Windows, wrong for the
+# Macs and iOS devices the app also ships to. The markdown cannot know
+# the reader's platform, so the shell carries a tiny inline script that
+# rewrites every ``span.mod`` to ⌘ on an Apple platform and leaves
+# ``Ctrl`` alone everywhere else. These tests pin that contract.
+
+
+def test_render_modifier_span_markup_survives_the_markdown_pipeline() -> None:
+    """The ``span.mod`` marker survives the markdown pipeline."""
+    html = gen_userguide.render(MODIFIER_MARKDOWN, GUIDE_CSS)
+
+    assert '<kbd><span class="mod">Ctrl</span>+Z</kbd>' in html
+
+
+def test_render_platform_script_rewrites_every_modifier_span_to_the_command_glyph() -> None:
+    """The script selects ``span.mod`` and puts ⌘ in its text."""
+    html = gen_userguide.render(MODIFIER_MARKDOWN, GUIDE_CSS)
+
+    assert 'document.querySelectorAll("span.mod")' in html
+    assert 'mods[i].textContent = "⌘"' in html
+
+
+def test_render_platform_script_sits_after_the_body_text_and_before_the_close() -> None:
+    """The script lands at the end of the body, after ``</main>``."""
+    html = gen_userguide.render(MODIFIER_MARKDOWN, GUIDE_CSS)
+
+    assert html.index("</main>") < html.index("<script>")
+    assert html.index("<script>") < html.index("</body>")
+
+
+def test_render_platform_script_reads_the_platform_sources_in_fallback_order() -> None:
+    """Query the modern source first, then the two legacy ones."""
+    html = gen_userguide.render(MODIFIER_MARKDOWN, GUIDE_CSS)
+
+    assert '(data && data.platform) || navigator.platform || navigator.userAgent || ""' in html
+
+
+def test_render_platform_script_matches_macos_and_ios_platform_names() -> None:
+    """``userAgentData`` reports ``macOS``/``iOS`` on Apple."""
+    html = gen_userguide.render(MODIFIER_MARKDOWN, GUIDE_CSS)
+
+    assert "/Mac|iPhone|iPad|iPod|iOS/i.test(platform)" in html
+
+
+@pytest.mark.parametrize(
+    "script_line",
+    [
+        "<script>",
+        "try {",
+        "if (/Mac|iPhone|iPad|iPod|iOS/i.test(platform)) {",
+        "} catch (error) {",
+        "</script>",
+    ],
+)
+def test_render_platform_script_lines_reach_the_page_with_single_braces(script_line: str) -> None:
+    """``_SHELL`` is a ``str.format`` template: braces come once."""
+    html = gen_userguide.render(MODIFIER_MARKDOWN, GUIDE_CSS)
+
+    assert script_line in html
+
+
+@given(css_text=st.text(max_size=200))
+def test_render_arbitrary_css_text_is_inlined_verbatim(css_text: str) -> None:
+    """Arbitrary CSS, braces included, is inlined verbatim."""
+    html = gen_userguide.render("# Guide\n", css_text)
+
+    assert f"<style>\n{css_text}\n</style>" in html
+
+
+@given(markdown_text=st.text(max_size=200))
+def test_render_platform_script_is_present_for_any_markdown_body(markdown_text: str) -> None:
+    """The script ships on every page, whatever the guide's prose is."""
+    html = gen_userguide.render(markdown_text, GUIDE_CSS)
+
+    assert 'document.querySelectorAll("span.mod")' in html
 
 
 # -------------------------------------------------------- extract_meta
