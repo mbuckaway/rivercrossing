@@ -23,7 +23,7 @@ import pytest
 from hypothesis import given
 from hypothesis import strategies as st
 
-from conftest import _pooled_team_roster, gorba_config
+from conftest import _pooled_team_roster, _roster_with_entries, gorba_config
 from rivercrossing.cards import Card, Shoe
 from rivercrossing.ride import Crossing, Event, RideEngine
 from rivercrossing.roster import Entry, EntryMode, EntryType, PlateModel, Rider, Roster
@@ -1174,12 +1174,36 @@ def test_audit_rows_given_a_dnf_row_without_a_display_falls_back() -> None:
 
 # The keys the Entry cell actually reads, so the property below reaches
 # the branches it guards instead of generating keys nothing looks at.
-_AUDIT_ENTRY_KEYS = st.sampled_from(["entry_id", "plate", "display", "reason"])
+_AUDIT_ENTRY_KEYS = st.sampled_from(["entry_id", "plate", "display", "summary", "reason"])
 _AUDIT_ENTRY_VALUES = st.one_of(st.none(), st.text(max_size=12), st.integers())
 
 
+def test_audit_rows_given_a_tiebreak_draw_row_renders_the_payload_summary() -> None:
+    """R-14: the live trail names the drawn cards, never a blank one."""
+    roster = _roster_with_entries("12", "34")
+    engine = _running_engine(roster)
+    engine.finish()
+    source = EngineDataSource(engine, roster)
+
+    rows = source.audit_rows()
+
+    assert (rows[0].action, rows[0].entry) == ("tiebreak_draw", "12 · 5H, 34 · AH")
+
+
+def test_audit_rows_given_a_tiebreak_draw_without_a_summary_stays_blank() -> None:
+    """T-4 nullable: a hand-written row with no summary reads blank."""
+    roster = _roster_with_entries("12", "34")
+    engine = _running_engine(roster)
+    engine._events.append(Event(action="tiebreak_draw", payload={"draws": []}))
+    source = EngineDataSource(engine, roster)
+
+    rows = source.audit_rows()
+
+    assert rows[0].entry == ""
+
+
 @given(
-    action=st.sampled_from(["dnf", "record_crossing", ""]),
+    action=st.sampled_from(["dnf", "tiebreak_draw", "record_crossing", ""]),
     payload=st.dictionaries(_AUDIT_ENTRY_KEYS, _AUDIT_ENTRY_VALUES, max_size=4),
 )
 def test_audit_entry_given_any_payload_renders_a_string(

@@ -3148,6 +3148,63 @@ def test_store_audit_rows_given_a_dnf_row_without_a_display_falls_back(
     assert rows[0].entry == "9"
 
 
+def test_store_audit_rows_given_a_tiebreak_draw_row_renders_the_payload_summary(
+    tmp_path: Path,
+) -> None:
+    """R-14: a tiebreak_draw row reads its own summary, never blank.
+
+    The draw's payload carries one row per entry plus the human
+    ``summary`` naming them ("12 · 5H, 34 · AH"); the row list is not a
+    single entry id, so the Entry cell reads the summary the engine
+    wrote for exactly this projection.
+    """
+    db_path = tmp_path / "rides.db"
+    store = Store.open(db_path)
+    try:
+        ride_id = store.create_ride(_config(min_lap_s=1))
+        store.append(
+            ride_id,
+            Event(
+                action="tiebreak_draw",
+                payload={
+                    "draws": [
+                        {"entry_id": "12", "card": "5H"},
+                        {"entry_id": "34", "card": "AH"},
+                    ],
+                    "summary": "12 · 5H, 34 · AH",
+                },
+            ),
+        )
+
+        rows = store.audit_rows(ride_id)
+    finally:
+        store.close()
+
+    assert rows[0].entry == "12 · 5H, 34 · AH"
+
+
+def test_store_audit_rows_given_a_tiebreak_draw_without_a_summary_stays_blank(
+    tmp_path: Path,
+) -> None:
+    """T-4 nullable: a row with no summary keeps the empty-cell default.
+
+    A hand-written or half-written draw row carries neither an entry id
+    nor a summary, so the existing ``entry_id``/``plate`` chain still
+    answers -- the summary is read *when present*, never assumed.
+    """
+    db_path = tmp_path / "rides.db"
+    store = Store.open(db_path)
+    try:
+        ride_id = store.create_ride(_config(min_lap_s=1))
+        store.append(ride_id, Event(action="tiebreak_draw", payload={"draws": []}))
+
+        rows = store.audit_rows(ride_id)
+    finally:
+        store.close()
+
+    assert rows[0].entry == ""
+
+
 def test_store_load_engine_ignores_a_roster_plate_change_row(tmp_path: Path) -> None:
     """Replay skips a plate-change row: ``apply`` never sees it."""
     db_path = tmp_path / "rides.db"
@@ -3185,7 +3242,31 @@ def test_default_db_path_returns_rides_db_under_the_user_data_dir() -> None:
     path = store_module.default_db_path()
 
     assert path.name == "rides.db"
-    assert path.parent == Path(user_data_dir("RiverCrossing"))
+    assert path.parent == Path(user_data_dir("RiverCrossing", appauthor=False))
+
+
+def test_default_db_path_calls_user_data_dir_with_appauthor_false(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    r"""The default db asks for ONE RiverCrossing folder, never two.
+
+    platformdirs defaults ``appauthor`` to ``appname``, so the bare
+    call lands in ``%LOCALAPPDATA%\RiverCrossing\RiverCrossing`` on
+    Windows. ``appauthor=False`` asks for the single folder; macOS
+    ignores ``appauthor`` entirely, so its path is unchanged.
+    """
+    calls: list[tuple[str, dict[str, object]]] = []
+
+    def _record(appname: str, **kwargs: object) -> str:
+        calls.append((appname, kwargs))
+        return str(tmp_path)
+
+    monkeypatch.setattr(store_module, "user_data_dir", _record)
+
+    path = store_module.default_db_path()
+
+    assert calls == [("RiverCrossing", {"appauthor": False})]
+    assert path == tmp_path / "rides.db"
 
 
 def test_default_db_path_given_an_override_returns_it_verbatim() -> None:

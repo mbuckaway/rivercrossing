@@ -64,9 +64,9 @@ if TYPE_CHECKING:
     from rivercrossing.hands import EvaluatedHand
     from rivercrossing.htmlexport import (
         CardPair,
-        EventInfo,
         ExportOptions,
         LapsBoardRow,
+        RacePayload,
         ResultRow,
         Sections,
         TimeBoardRow,
@@ -243,6 +243,23 @@ def _hand_label(hand: str) -> str:
     return hand.upper()
 
 
+def _draw_marker(row: ResultRow) -> str:
+    """Return a row's drawn tie-break card marker, "" when it drew none.
+
+    R-14's draw rides after the hand prose in the same cell --
+    "THREE OF A KIND — NINES · DRAW A♥" -- so no layout width moves.
+    The separator is dropped when there is no hand prose to lead with,
+    so a no-show entry's cell reads "DRAW ★" rather than starting with
+    one. The caller draws the marker as its own run, in the DejaVu face,
+    because Barlow carries no suit glyph (measured: fpdf2 drops ♥ and ★
+    from it); the two runs share the one column's width.
+    """
+    if row.draw is None:
+        return ""
+    card = _pair_text(row.draw)
+    return f" · DRAW {card}" if row.hand else f"DRAW {card}"
+
+
 def _poster_subtitle(result: EntryResult) -> str:
     """Compose the poster's team/solo line from one result.
 
@@ -401,7 +418,59 @@ _ROW_RIGHT = _TextStyle(_FONT_BODY, 7.5, _INK, align="R")
 _FIELD_STYLE = _TextStyle(_FONT_BODY, 7.0, _INK)
 _FIELD_BOLD = _TextStyle(_FONT_BODY, 7.0, _INK, bold=True)
 _HAND_STYLE = _TextStyle(_FONT_HEADING, 6.5, _STEEL, bold=True)
+# The report's podium card hand line -- the [5a] card's larger cell.
+# The poster card sizes its own, scaled to the card it sits in.
+_PODIUM_HAND_STYLE = _TextStyle(_FONT_HEADING, 9.5, _STEEL, bold=True)
 _BOARD_TOTAL = _TextStyle(_FONT_BODY, 7.5, _INK, bold=True)
+
+
+def _marker_style(hand_style: _TextStyle) -> _TextStyle:
+    """Return the drawn-card marker style for a hand run's own size.
+
+    R-14's marker is drawn in DejaVu -- the face that carries the suit
+    glyphs and the joker star Barlow lacks (measured: fpdf2 drops ♥ and
+    ★ from it) -- at the hand prose's size, so the two runs read as one
+    line whatever cell they ride in. Never bold: DejaVu is registered
+    for the regular style only.
+    """
+    return _TextStyle(_FONT_GLYPH, hand_style.size, _STEEL)
+
+
+def _set_font(pdf: FPDF, style: _TextStyle) -> None:
+    """Select one text style's font face, weight and size."""
+    pdf.set_font(style.font, "B" if style.bold else "", style.size)
+
+
+def _cell_text(pdf: FPDF, cell: _Cell) -> None:
+    """Draw one styled text cell at the current x."""
+    _set_font(pdf, cell.style)
+    pdf.set_text_color(*cell.style.color)
+    pdf.cell(cell.width, cell.height, text=cell.text, align=cell.style.align)
+
+
+def _hand_runs(pdf: FPDF, cell: _Cell, marker: str) -> None:
+    """Draw a hand prose cell and, after it, its drawn-card marker run.
+
+    *cell* carries the hand prose with its style, width and height;
+    *marker* is R-14's drawn-card run, drawn in DejaVu at the prose's
+    own size so the two fonts share one column and no table geometry
+    moves. The prose is measured too -- the marker sits where the prose
+    ends, not at the column's right edge -- and is bounded by the cell
+    so a long hand and a drawn card cannot push each other off the
+    margin. An empty marker draws the single cell exactly as before,
+    which is every undrawn row.
+    """
+    style = cell.style
+    if not marker:
+        _cell_text(pdf, cell)
+        return
+    marker_style = _marker_style(style)
+    _set_font(pdf, marker_style)
+    marker_width = pdf.get_string_width(marker)
+    _set_font(pdf, style)
+    hand_width = min(pdf.get_string_width(cell.text), max(cell.width - marker_width, 0.0))
+    _cell_text(pdf, _Cell(hand_width, cell.text, style, height=cell.height))
+    _cell_text(pdf, _Cell(marker_width, marker, marker_style, height=cell.height))
 
 
 # ------------------------------------------------------------ document
@@ -698,9 +767,16 @@ class _PosterPDF(FPDF):
     -- no "Page n of N", there is only one page.
     """
 
-    # (ride, letter, created_at, logo_path): the poster's state inputs
+    # (ride, letter, created_at, logo_path, self_test_unverified): the
+    # poster's state inputs
     def __init__(  # noqa: PLR0913
-        self, ride: _RideLike, *, letter: bool, created_at: datetime, logo_path: Path | str | None
+        self,
+        ride: _RideLike,
+        *,
+        letter: bool,
+        created_at: datetime,
+        logo_path: Path | str | None,
+        self_test_unverified: bool = False,
     ) -> None:
         """Open one poster: geometry, fonts, metadata, footer stamp.
 
@@ -713,6 +789,7 @@ class _PosterPDF(FPDF):
         self._ride = ride
         self._generated = htmlexport.format_generated(created_at)
         self._logo_path = logo_path
+        self._self_test_unverified = self_test_unverified
 
     def file_id(self) -> None:
         """Suppress the trailer /ID (R-62 determinism).
@@ -746,17 +823,25 @@ class _PosterPDF(FPDF):
     def build(self, placed: Sequence[Placed]) -> None:
         """Draw the header block and the poster's cards.
 
-        The shared model supplies the cover meta (``EventInfo.meta``);
+        The shared model supplies the cover meta (``EventInfo.meta``)
+        and the R-14 drawn cards (each payload row's own ``draw``);
         the partition by ``EntryResult.kind`` picks the layout (any
-        team entry is a team event, the exporters' own rule).
+        team entry is a team event, the exporters' own rule). The
+        payload maps *placed* position for position, so the pair the
+        cards draw from is a plain zip of the two.
         """
         payload = htmlexport.build_payload(
-            self._ride, placed, htmlexport.ExportOptions(), self._generated
+            self._ride,
+            placed,
+            htmlexport.ExportOptions(),
+            self._generated,
+            self_test_unverified=self._self_test_unverified,
         )
         self.add_page()
-        self._header_block(payload.event.meta)
-        teams = [entry for entry in placed if entry.result.kind == "team"]
-        solo = [entry for entry in placed if entry.result.kind != "team"]
+        self._header_block(payload.event.meta, payload.self_test_note)
+        cards = list(zip(placed, payload.results, strict=True))
+        teams = [card for card in cards if card[0].result.kind == "team"]
+        solo = [card for card in cards if card[0].result.kind != "team"]
         if not teams:
             self._cards(solo[: _FIRST_PLACE + 4], geom=_CARD_FULL)
             return
@@ -766,8 +851,13 @@ class _PosterPDF(FPDF):
             self._section_head("Solo riders")
             self._cards(solo[: _FIRST_PLACE + 2], geom=_CARD_COMPACT)
 
-    def _header_block(self, meta: str) -> None:
-        """Draw the event meta, "Best poker hands" heading and title."""
+    def _header_block(self, meta: str, note: str | None) -> None:
+        """Draw the event meta, "Best poker hands" heading and title.
+
+        E6.4.3: *note* is the self-test caption, drawn under the rule
+        where the poster's own text block ends -- the report cover's
+        note seam, on the poster's one page.
+        """
         _draw_logo(self, self._logo_path)
         if self._logo_path is not None:
             self.ln(0.42)
@@ -785,6 +875,11 @@ class _PosterPDF(FPDF):
         self.ln(0.26)
         _draw_rule(self)
         self.ln(0.12)
+        if note is not None:
+            self.set_font(_FONT_BODY, "", 8.5)
+            self.set_text_color(*_STEEL)
+            self.multi_cell(0, 0.14, text=note, new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+            self.ln(0.06)
 
     def _section_head(self, text: str) -> None:
         """Draw a poster section head ("Teams"/"Solo riders")."""
@@ -795,14 +890,25 @@ class _PosterPDF(FPDF):
         self.cell(0, 0.22, text=text)
         self.ln(0.26)
 
-    def _cards(self, entries: Sequence[Placed], *, geom: _CardGeom) -> None:
-        """Draw a section's cards with places enumerated from 1."""
-        for index, entry in enumerate(entries):
-            self._podium_card(entry, place=index + _FIRST_PLACE, geom=geom)
+    def _cards(self, cards: Sequence[tuple[Placed, ResultRow]], *, geom: _CardGeom) -> None:
+        """Draw a section's cards with places enumerated from 1.
 
-    def _podium_card(self, entry: Placed, place: int, geom: _CardGeom) -> None:
-        """Draw one podium card: place, name, run, hand, card faces."""
+        Each element pairs the placement (for its Card objects and run
+        fields) with the shared payload row for the same entry -- the
+        row that carries R-14's drawn card.
+        """
+        for index, card in enumerate(cards):
+            self._podium_card(card, place=index + _FIRST_PLACE, geom=geom)
+
+    def _podium_card(self, card: tuple[Placed, ResultRow], *, place: int, geom: _CardGeom) -> None:
+        """Draw one podium card: place, name, run, hand, card faces.
+
+        *card* is the placement and its shared payload row; the entry
+        supplies the Card objects the large faces need and the row
+        R-14's drawn marker (the one the report's own card draws).
+        """
         _maybe_page_break(self, geom.guard)
+        entry, row = card
         result = entry.result
         scale = geom.scale
         self.set_font(_FONT_HEADING, "B", 34 * scale)
@@ -821,9 +927,16 @@ class _PosterPDF(FPDF):
         self.cell(0, 0.14 * scale, text=_poster_subtitle(result))
         self.ln(0.18 * scale)
         self.set_x(self.l_margin + indent)
-        self.set_font(_FONT_HEADING, "B", 10 * scale)
-        self.set_text_color(*_STEEL)
-        self.cell(0, 0.16 * scale, text=_hand_prose(result.hand))
+        _hand_runs(
+            self,
+            _Cell(
+                self.epw - indent,
+                _hand_prose(result.hand),
+                _TextStyle(_FONT_HEADING, 10 * scale, _STEEL, bold=True),
+                height=0.16 * scale,
+            ),
+            _draw_marker(row),
+        )
         self.ln(0.20 * scale)
         self.set_x(self.l_margin + indent)
         self._large_cards(result.hand.best5, size=18 * scale, height=0.30 * scale)
@@ -848,8 +961,8 @@ class _ReportPDF(FPDF):
     export's order, one drawer per planned section.
     """
 
-    # (ride, opts, letter, created_at, logo_path): the report's state
-    # inputs
+    # (ride, opts, letter, created_at, logo_path, self_test_unverified):
+    # the report's state inputs
     def __init__(  # noqa: PLR0913
         self,
         ride: _RideLike,
@@ -858,6 +971,7 @@ class _ReportPDF(FPDF):
         letter: bool,
         created_at: datetime,
         logo_path: Path | str | None = None,
+        self_test_unverified: bool = False,
     ) -> None:
         """Open one report: geometry, fonts, metadata, footer stamp.
 
@@ -872,6 +986,7 @@ class _ReportPDF(FPDF):
         self._opts = opts
         self._generated = htmlexport.format_generated(created_at)
         self._logo_path = logo_path
+        self._self_test_unverified = self_test_unverified
         self.alias_nb_pages("{nb}")
 
     def file_id(self) -> None:
@@ -963,9 +1078,7 @@ class _ReportPDF(FPDF):
 
     def _scalar(self, cell: _Cell) -> None:
         """Draw one styled text cell at the current x."""
-        self.set_font(cell.style.font, "B" if cell.style.bold else "", cell.style.size)
-        self.set_text_color(*cell.style.color)
-        self.cell(cell.width, cell.height, text=cell.text, align=cell.style.align)
+        _cell_text(self, cell)
 
     def _cards_cell(self, cards: Sequence[CardPair], width: float) -> None:
         """Draw an inline card run at the current x, clipped to *width*.
@@ -997,6 +1110,17 @@ class _ReportPDF(FPDF):
         self.line(self.l_margin, y, self.w - self.r_margin, y)
         self.ln(0.05)
 
+    def _hand_cell(self, row: ResultRow, width: float) -> None:
+        """Draw one row's hand cell at the current x, draw marker in.
+
+        The prose renders in the frozen hand style; a row that drew a
+        tie-break card (R-14) renders :func:`_draw_marker` immediately
+        after it, as a measured second run in DejaVu, so the two fonts
+        share one column and no table geometry moves. A row that drew
+        nothing draws the single prose cell exactly as before.
+        """
+        _hand_runs(self, _Cell(width, _hand_label(row.hand), _HAND_STYLE), _draw_marker(row))
+
     # -------------------------------------------------------- sections
 
     def build(self, placed: Sequence[Placed]) -> None:
@@ -1006,10 +1130,16 @@ class _ReportPDF(FPDF):
         rows and the plan carries the per-kind sections, so this
         document's drawers only lay them out.
         """
-        payload = htmlexport.build_payload(self._ride, placed, self._opts, self._generated)
+        payload = htmlexport.build_payload(
+            self._ride,
+            placed,
+            self._opts,
+            self._generated,
+            self_test_unverified=self._self_test_unverified,
+        )
         plan = htmlexport.sections(payload, placed)
         self.add_page()
-        self._cover(payload.event)
+        self._cover(payload)
         self._podiums(plan)
         self._top_lists(plan)
         self._laps_boards(plan)
@@ -1017,8 +1147,9 @@ class _ReportPDF(FPDF):
         if self._opts.full_field:
             self._full_field(plan)
 
-    def _cover(self, event: EventInfo) -> None:
-        """Draw the page-1 cover: kicker, title, counters, meta."""
+    def _cover(self, payload: RacePayload) -> None:
+        """Draw the page-1 cover: meta, counters and the two notes."""
+        event = payload.event
         _draw_logo(self, self._logo_path)
         if self._logo_path is not None:
             self.ln(0.42)
@@ -1052,6 +1183,19 @@ class _ReportPDF(FPDF):
             new_y=YPos.NEXT,
         )
         self.ln(0.04)
+        if payload.self_test_note is not None:
+            # E6.4.3: the cover's own note area says whether the ride
+            # was closed over a failed evaluator self-test.
+            self.set_font(_FONT_BODY, "", 8.5)
+            self.set_text_color(*_STEEL)
+            self.multi_cell(
+                0,
+                0.14,
+                text=payload.self_test_note,
+                new_x=XPos.LMARGIN,
+                new_y=YPos.NEXT,
+            )
+            self.ln(0.04)
 
     def _podiums(self, plan: Sections) -> None:
         """Draw the per-kind "Best hands" podium cards."""
@@ -1066,10 +1210,13 @@ class _ReportPDF(FPDF):
                 self._podium_card(row)
 
     def _podium_card(self, row: ResultRow) -> None:
-        """Draw one podium card: place, name, run, hand.
+        """Draw one podium card: place, name, run, hand, drawn card.
 
         A team card shows no plate -- its section's heading names the
-        kind, mirroring the HTML's ``podium_card`` call.
+        kind, mirroring the HTML's ``podium_card`` call. The hand line
+        carries R-14's drawn card, as the top-list and field rows do:
+        the draw is what decides 1st from 2nd, so it belongs on the
+        most visible surface too.
         """
         self._maybe_page_break(1.1)
         indent = 0.70
@@ -1091,10 +1238,17 @@ class _ReportPDF(FPDF):
         self.set_x(self.l_margin + indent)
         self._cards_cell(row.cards, 2.0)
         self.ln(0.24)
-        self.set_font(_FONT_HEADING, "B", 9.5)
-        self.set_text_color(*_STEEL)
         self.set_x(self.l_margin + indent)
-        self.cell(0, 0.15, text=_hand_label(row.hand))
+        _hand_runs(
+            self,
+            _Cell(
+                self._content_width() - indent,
+                _hand_label(row.hand),
+                _PODIUM_HAND_STYLE,
+                height=0.15,
+            ),
+            _draw_marker(row),
+        )
         self.ln(0.32)
 
     def _top_lists(self, plan: Sections) -> None:
@@ -1154,7 +1308,7 @@ class _ReportPDF(FPDF):
         self._cards_cell(row.cards, widths[col])
         col += 1
         self._at_column(widths, col)
-        self._scalar(_Cell(widths[col], _hand_label(row.hand), _HAND_STYLE))
+        self._hand_cell(row, widths[col])
         self._row_rule()
 
     def _laps_boards(self, plan: Sections) -> None:
@@ -1322,7 +1476,8 @@ class _ReportPDF(FPDF):
 
         The row's small inline logo (the shared payload's own data URI)
         draws before the name when it carries one, mirroring the HTML's
-        ``team_field_row``; the DNF mark follows the name.
+        ``team_field_row``; the DNF mark follows the name and the last
+        column carries R-14's drawn card like the solo row's own.
         """
         name = f"{row.entry} DNF" if row.dnf else row.entry
         self._at_column(widths, 0)
@@ -1345,7 +1500,7 @@ class _ReportPDF(FPDF):
         self._cards_cell(row.cards, widths[col])
         col += 1
         self._at_column(widths, col)
-        self._scalar(_Cell(widths[col], _hand_label(row.hand), _HAND_STYLE))
+        self._hand_cell(row, widths[col])
         self._row_rule()
 
     def _inline_logo(self, logo: str | None) -> float:
@@ -1392,9 +1547,7 @@ class _ReportPDF(FPDF):
         self._at_column(widths, last)
         self._cards_cell(row.cards, widths[last])
         remaining = self.l_margin + sum(widths[:last]) + widths[last] - self.get_x()
-        self.set_font(_HAND_STYLE.font, "B" if _HAND_STYLE.bold else "", _HAND_STYLE.size)
-        self.set_text_color(*_HAND_STYLE.color)
-        self.cell(max(remaining, 0.0), _ROW_HEIGHT, text=_hand_label(row.hand))
+        self._hand_cell(row, max(remaining, 0.0))
         self._row_rule()
 
     def _drawn_row(self, cards: Sequence[CardPair]) -> None:
@@ -1430,7 +1583,7 @@ def _atomic_write_bytes(path: Path | str, data: bytes) -> None:
 
 
 # module-skeletons.md's frozen (ride, placed, opts, path) plus the
-# letter/created_at/logo seams
+# letter/created_at/logo/self-test seams
 def render(  # noqa: PLR0913, PLR0917
     ride: _RideLike,
     placed: Sequence[Placed],
@@ -1440,6 +1593,7 @@ def render(  # noqa: PLR0913, PLR0917
     letter: bool = True,
     created_at: datetime | None = None,
     logo_path: Path | str | None = None,
+    self_test_unverified: bool = False,
 ) -> None:
     """Write one finished ride's results report PDF to *path*.
 
@@ -1469,12 +1623,22 @@ def render(  # noqa: PLR0913, PLR0917
             now. Naive stamps are rejected (D14).
         logo_path: Optional organizer-logo PNG drawn at the top right
             of the cover (R-62/5c); None renders no logo.
+        self_test_unverified: E6.4.3: whether the ride was finished
+            over a failed evaluator self-test, which adds that note to
+            the cover.
 
     Raises:
         ValueError: *created_at* is not tz-aware.
     """
     stamp = created_at if created_at is not None else datetime.now(UTC)
-    report = _ReportPDF(ride, opts, letter=letter, created_at=stamp, logo_path=logo_path)
+    report = _ReportPDF(
+        ride,
+        opts,
+        letter=letter,
+        created_at=stamp,
+        logo_path=logo_path,
+        self_test_unverified=self_test_unverified,
+    )
     report.build(placed)
     data = _store_streams_raw(bytes(report.output()))
     _atomic_write_bytes(path, data)
@@ -1490,6 +1654,7 @@ def podium_poster(  # noqa: PLR0913
     letter: bool = True,
     created_at: datetime | None = None,
     logo_path: Path | str | None = None,
+    self_test_unverified: bool = False,
 ) -> None:
     """Write one finished ride's one-page podium poster PDF to *path*.
 
@@ -1499,10 +1664,12 @@ def podium_poster(  # noqa: PLR0913
     podium cards -- big place number, ``#plate Entry name``, the
     team/solo line, the hand's title-case prose name, and the best-5
     cards as large faces (steel accent for hearts/diamonds/jokers).
-    The footer is a credit line + generated stamp with no "Page n of
-    N" -- there is only one page. *path* is the caller-supplied full
-    file path; the ``{ride-slug}-podium.pdf`` naming is the menu
-    handler's job, never this module's (module-skeletons.md).
+    A placing that drew a tie-break card (R-14) renders that card
+    beside its hand prose, as the report's own podium card does. The
+    footer is a credit line + generated stamp with no "Page n of N" --
+    there is only one page. *path* is the caller-supplied full file
+    path; the ``{ride-slug}-podium.pdf`` naming is the menu handler's
+    job, never this module's (module-skeletons.md).
 
     Determinism (R-62, D14): *created_at* defaults to now (aware UTC)
     and is the document's only timestamp; identical inputs plus the
@@ -1519,12 +1686,21 @@ def podium_poster(  # noqa: PLR0913
             now. Naive stamps are rejected (D14).
         logo_path: Optional organizer-logo PNG drawn at the top right
             (R-62/5c); None renders no logo.
+        self_test_unverified: E6.4.3: whether the ride was finished
+            over a failed evaluator self-test, which adds that note to
+            the poster's header block.
 
     Raises:
         ValueError: *created_at* is not tz-aware.
     """
     stamp = created_at if created_at is not None else datetime.now(UTC)
-    poster = _PosterPDF(ride, letter=letter, created_at=stamp, logo_path=logo_path)
+    poster = _PosterPDF(
+        ride,
+        letter=letter,
+        created_at=stamp,
+        logo_path=logo_path,
+        self_test_unverified=self_test_unverified,
+    )
     poster.build(placed)
     data = _store_streams_raw(bytes(poster.output()))
     _atomic_write_bytes(path, data)

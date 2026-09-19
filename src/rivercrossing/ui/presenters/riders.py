@@ -70,6 +70,7 @@ from rivercrossing.roster import (
     TeamSizeError,
     can_delete_entry,
     can_edit_structure,
+    canonical_person_name,
 )
 from rivercrossing.ui.presenters.data_source import RiderRow
 from rivercrossing.ui.rider_columns import SOLO_TEAM_TEXT
@@ -320,11 +321,15 @@ def _rename_rider(  # noqa: PLR0913 -- (roster, entry, rider) + both name halves
 
     The rider's own fields are the two name halves and ``sex`` -- the
     three things the Add/Edit dialog edits that belong to the rider
-    rather than to the entry. A team keeps its own display name, so
-    only a SOLO entry's display name follows its rider's.
+    rather than to the entry. Both halves land in their canonical case
+    (:func:`~rivercrossing.roster.canonical_person_name`), the same
+    one the CSV import stores: a name typed in one uniform case is
+    re-cased, a mixed-case spelling is kept as typed. A team keeps its
+    own display name, so only a SOLO entry's display name follows its
+    rider's.
     """
-    rider.first_name = first_name
-    rider.last_name = last_name
+    rider.first_name = canonical_person_name(first_name)
+    rider.last_name = canonical_person_name(last_name)
     rider.sex = sex
     if entry.type is EntryType.SOLO:
         roster.update_entry(entry, display_name=rider.full_name)
@@ -499,11 +504,17 @@ class AddRiderPresenter:
         return True
 
     def _create_entry(self, form: RiderFormValues) -> None:
-        """Create *form*'s entry: solo, or folded onto a team."""
+        """Create *form*'s entry: solo, or folded onto a team.
+
+        Both paths store the rider's names in their canonical case
+        (:func:`~rivercrossing.roster.canonical_person_name`), so a
+        lower- or upper-case field typed into the dialog reads back
+        capitalized while a mixed-case surname is left alone.
+        """
         if form.team == SOLO_TEAM_CHOICE:
             self.roster.create_solo_entry(
-                first_name=form.first_name,
-                last_name=form.last_name,
+                first_name=canonical_person_name(form.first_name),
+                last_name=canonical_person_name(form.last_name),
                 plate=form.plate,
                 sex=form.sex,
             )
@@ -522,8 +533,8 @@ class AddRiderPresenter:
         """
         target = _find_team_entry(self.roster, form.team)
         rider = Rider(
-            first_name=form.first_name,
-            last_name=form.last_name,
+            first_name=canonical_person_name(form.first_name),
+            last_name=canonical_person_name(form.last_name),
             plate=form.plate,
             sex=form.sex,
         )

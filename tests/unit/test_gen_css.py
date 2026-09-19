@@ -113,6 +113,26 @@ def _fake_npm_on_path(monkeypatch: pytest.MonkeyPatch) -> str:
     return npm_path
 
 
+def _compiled_rule_declarations(selector: str) -> dict[str, str]:
+    """Return one rule's declarations from the committed compiled CSS.
+
+    The artifact is minified, so rules are matched textually: the
+    selector must be followed directly by ``{``, which keeps ``.chip``
+    from matching ``.chip.r`` or ``.chip.j``. A selector the artifact
+    no longer carries yields ``{}`` -- the caller's assertion decides
+    whether that is a failure.
+    """
+    content = _COMMITTED_COMPILED_CSS.read_text(encoding="utf-8")
+    match = re.search(re.escape(selector) + r"\{([^{}]*)\}", content)
+    if match is None:
+        return {}
+    return dict(
+        declaration.split(":", 1)
+        for declaration in match.group(1).split(";")
+        if ":" in declaration
+    )
+
+
 # ------------------------------------------- the honest regeneration
 
 
@@ -668,6 +688,32 @@ def test_compiled_css_contains_custom_rules_and_theme_utilities() -> None:
     assert ".chip" in content
     assert "bg-paper" in content
     assert "text-ink" in content
+
+
+@pytest.mark.parametrize(
+    # theme.css tokens: #1d1f20 = --color-ink, #e9e9ea = --color-panel.
+    ("selector", "declaration", "expected"),
+    [(".chip", "color", "#1d1f20"), (".chip.j", "background", "#e9e9ea")],
+)
+def test_compiled_css_chip_declares_ink_color_and_joker_chip_own_background(
+    selector: str, declaration: str, expected: str
+) -> None:
+    """A chip that inherits its colour disappears on the dark card.
+
+    Every results card is a ``<span class="chip">``. ``.chip`` fills a
+    near-white pill (#e9e9ea), so on the dark 1st-place card
+    (``bg-steel-800 text-paper``) a chip without its own ``color``
+    inherits near-white text onto that pill and the spade/club cards
+    vanish; ``.chip.j`` used to declare ``background: transparent``,
+    re-exposing the same vanish for the joker. The minifier rewrites
+    ``transparent`` to ``0 0``, so a mere presence check would not have
+    caught that bug; both values are therefore pinned to theme.css's
+    ink and panel tokens, so dropping or re-widening either declaration
+    fails here -- the artifact is frozen, not the bug.
+    """
+    declarations = _compiled_rule_declarations(selector)
+
+    assert declarations.get(declaration) == expected
 
 
 def test_fonts_css_contains_both_families_and_all_five_weights() -> None:

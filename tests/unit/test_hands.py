@@ -895,6 +895,149 @@ def test_self_test_report_passed_false_when_any_check_failed() -> None:
     assert report.passed is False
 
 
+def test_self_test_check_defaults_to_blocking() -> None:
+    """A check blocks unless it declares itself advisory (E6.4.3)."""
+    check = SelfTestCheck(name="x", passed=True, duration_seconds=0.0, detail="")
+
+    assert check.blocking is True
+
+
+def test_self_test_report_given_no_checks_has_no_blocking_failure() -> None:
+    """T-4 boundary: an empty report names nothing failed."""
+    report = SelfTestReport(checks=())
+
+    assert (report.passed, report.has_blocking_failure, report.failed_blocking_checks) == (
+        True,
+        False,
+        (),
+    )
+
+
+def test_self_test_report_has_blocking_failure_true_when_a_blocking_check_failed() -> None:
+    """E6.4.3: a failed blocking check is a blocking failure."""
+    failing = SelfTestCheck(name="y", passed=False, duration_seconds=0.0, detail="")
+    report = SelfTestReport(checks=(failing,))
+
+    assert report.has_blocking_failure is True
+
+
+def test_self_test_report_has_blocking_failure_false_when_every_check_passed() -> None:
+    """A green report blocks nothing."""
+    passing = SelfTestCheck(name="x", passed=True, duration_seconds=0.0, detail="")
+    report = SelfTestReport(checks=(passing,))
+
+    assert report.has_blocking_failure is False
+
+
+def test_self_test_report_has_blocking_failure_false_when_only_the_advisory_check_failed() -> None:
+    """The advisory timing check failing is not a blocking failure.
+
+    The one check that measures the machine, not the evaluator, must
+    never strand a rider: a slow host leaves the finish gate open.
+    """
+    timing = SelfTestCheck(
+        name="Whole-field 180×12 timing",  # noqa: RUF001 -- the frozen canvas text
+        passed=False,
+        duration_seconds=0.0,
+        detail="9.99 s",
+        blocking=False,
+    )
+    report = SelfTestReport(checks=(timing,))
+
+    assert (report.passed, report.has_blocking_failure) == (False, False)
+
+
+def test_failed_blocking_checks_names_every_failed_blocking_check_in_order() -> None:
+    """The override names the failed blocking checks alone."""
+    checks = (
+        SelfTestCheck(name="first", passed=False, duration_seconds=0.0, detail=""),
+        SelfTestCheck(
+            name="advisory", passed=False, duration_seconds=0.0, detail="", blocking=False
+        ),
+        SelfTestCheck(name="second", passed=False, duration_seconds=0.0, detail=""),
+        SelfTestCheck(name="ok", passed=True, duration_seconds=0.0, detail=""),
+    )
+    report = SelfTestReport(checks=checks)
+
+    assert report.failed_blocking_checks == ("first", "second")
+
+
+_REPORT_STRATEGY = st.builds(
+    SelfTestReport,
+    checks=st.lists(
+        st.builds(
+            SelfTestCheck,
+            name=st.text(min_size=1, max_size=12),
+            passed=st.booleans(),
+            duration_seconds=st.just(0.0),
+            detail=st.just(""),
+            blocking=st.booleans(),
+        ),
+        max_size=6,
+    ).map(tuple),
+)
+
+
+@given(report=_REPORT_STRATEGY, name=st.text(min_size=1, max_size=12))
+def test_self_test_report_blocking_verdict_ignores_an_added_advisory_failure(
+    report: SelfTestReport, name: str
+) -> None:
+    """T-7 property: an advisory failure can never make the gate block.
+
+    Whatever the report already held -- green, advisory-red or
+    blocking-red -- appending one more FAILED advisory check leaves
+    ``has_blocking_failure`` exactly as it was. That is the whole point
+    of the timing check's exemption: the machine's speed can only ever
+    add a red line to the dialog, never refuse a finish.
+    """
+    advisory = SelfTestCheck(
+        name=name, passed=False, duration_seconds=0.0, detail="", blocking=False
+    )
+
+    extended = SelfTestReport(checks=(*report.checks, advisory))
+
+    assert extended.has_blocking_failure is report.has_blocking_failure
+
+
+def test_self_test_only_the_field_timing_check_is_advisory() -> None:
+    """E6.4.3: the timing check measures speed, so it never blocks.
+
+    The other five check the evaluator's own correctness and do block.
+    """
+    report = self_test()
+
+    assert {check.name: check.blocking for check in report.checks} == {
+        "7,462 distinct ranks": True,
+        "Joker vector table (28)": True,
+        "Five-of-a-kind ordering": True,
+        "Whole-field 180×12 timing": False,  # noqa: RUF001 -- the frozen canvas text
+        "compare() total order": True,
+        "best_hand() joker bound": True,
+    }
+
+
+def test_self_test_report_given_only_a_failing_timing_check_has_no_blocking_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A measured-slow 180x12 field leaves the finish gate open (R-44).
+
+    Shortens the check's own R-42 budget instead of waiting for a real
+    slow run (T-3: the ``elapsed < budget`` false arm), so the whole
+    suite is exercised with exactly one red -- advisory -- check.
+    """
+    # logic-coverage-exempt: T-10 -- hands' own budget constant is the
+    # SUT's threshold seam, patched to force the timing check's failure
+    # deterministically; no I/O boundary is involved.
+    monkeypatch.setattr(hands, "_FIELD_TIMING_BUDGET_SECONDS", 0.0)
+
+    report = self_test()
+
+    assert report.checks[3].passed is False
+    assert report.passed is False
+    assert report.has_blocking_failure is False
+    assert report.failed_blocking_checks == ()
+
+
 def test_self_test_corrupted_rank_sweep_short_table_fails_that_check(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

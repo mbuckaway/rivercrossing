@@ -50,18 +50,20 @@ class _StubConfig:
 class _StubEngine:
     """The engine surface the export handlers and menu state read."""
 
-    def __init__(
+    def __init__(  # noqa: PLR0913 -- a stub mirroring the engine's own inputs
         self,
         snapshot: tuple[EntryResult, ...],
         *,
         events: tuple = (),
         state: RideStatus = RideStatus.FINISHED,
+        self_test_unverified: bool = False,
     ) -> None:
         """Store *snapshot* under a stub config and fixed event log.
 
         *state* is the live ride state the export-completion menu
         refresh reads; a REOPENED engine stages the reopened-mid-export
-        case.
+        case. *self_test_unverified* is E6.4.3's flag, which the export
+        handler captures and hands to the writers.
         """
         self.config = _StubConfig()
         self._snapshot = snapshot
@@ -69,6 +71,7 @@ class _StubEngine:
         self.state = state
         self.stopped = False
         self.crossings: tuple = ()
+        self.self_test_unverified = self_test_unverified
 
     def snapshot(self) -> tuple[EntryResult, ...]:
         """Return the stored results."""
@@ -393,6 +396,69 @@ def test_write_export_poster_html_writes_the_podium_page(tmp_path: Path) -> None
     assert "Four of a Kind — Nines" in text
 
 
+def _pdf_text(path: Path) -> str:
+    """Extract a PDF's every-page text, joined with newlines."""
+    return "\n".join(page.extract_text() or "" for page in PdfReader(str(path)).pages)
+
+
+def test_write_export_poster_given_an_unverified_ride_writes_the_note(
+    tmp_path: Path,
+) -> None:
+    """E6.4.3: the handler's flag reaches the PDF poster's note seam."""
+    context = _context(engine=_StubEngine(_snapshot()))
+    out = tmp_path / "podium.pdf"
+
+    config, groups, opts = _export_inputs(context)
+    teams, solo = _unpack_groups(groups)
+    app_module._write_export(
+        config, teams, solo, opts, "export_poster", out, self_test_unverified=True
+    )
+
+    assert "Self-test unverified" in _pdf_text(out)
+
+
+def test_write_export_poster_given_a_verified_ride_writes_no_note(tmp_path: Path) -> None:
+    """T-3 negative: the default poster export carries no such note."""
+    context = _context(engine=_StubEngine(_snapshot()))
+    out = tmp_path / "podium.pdf"
+
+    config, groups, opts = _export_inputs(context)
+    teams, solo = _unpack_groups(groups)
+    app_module._write_export(config, teams, solo, opts, "export_poster", out)
+
+    assert "Self-test unverified" not in _pdf_text(out)
+
+
+def test_write_export_poster_html_given_an_unverified_ride_writes_the_note(
+    tmp_path: Path,
+) -> None:
+    """E6.4.3: the flag reaches the poster page's note seam."""
+    context = _context(engine=_StubEngine(_snapshot()))
+    out = tmp_path / "podium.html"
+
+    config, groups, opts = _export_inputs(context)
+    teams, solo = _unpack_groups(groups)
+    app_module._write_export(
+        config, teams, solo, opts, "export_poster_html", out, self_test_unverified=True
+    )
+
+    assert "Self-test unverified" in out.read_text(encoding="utf-8")
+
+
+def test_write_export_poster_html_given_a_verified_ride_writes_no_note(
+    tmp_path: Path,
+) -> None:
+    """T-3 negative: the default poster page carries no such note."""
+    context = _context(engine=_StubEngine(_snapshot()))
+    out = tmp_path / "podium.html"
+
+    config, groups, opts = _export_inputs(context)
+    teams, solo = _unpack_groups(groups)
+    app_module._write_export(config, teams, solo, opts, "export_poster_html", out)
+
+    assert "Self-test unverified" not in out.read_text(encoding="utf-8")
+
+
 def test_write_export_csv_writes_the_s15_header(tmp_path: Path) -> None:
     """The standings CSV carries the spec §15 header (type and sex)."""
     context = _context(engine=_StubEngine(_snapshot()))
@@ -403,8 +469,36 @@ def test_write_export_csv_writes_the_s15_header(tmp_path: Path) -> None:
     app_module._write_export(config, teams, solo, opts, "export_results_csv", out)
 
     lines = out.read_text(encoding="utf-8").splitlines()
-    assert lines[0] == "place,plate,entry,type,sex,laps,hand"
+    assert lines[0] == "place,plate,entry,type,sex,laps,hand,draw"
     assert len(lines) == 3  # header + two rows
+
+
+def test_write_export_html_given_an_unverified_ride_writes_the_note(
+    tmp_path: Path,
+) -> None:
+    """E6.4.3: the handler's flag reaches the rendered page."""
+    context = _context(engine=_StubEngine(_snapshot()))
+    out = tmp_path / "results.html"
+
+    config, groups, opts = _export_inputs(context)
+    teams, solo = _unpack_groups(groups)
+    app_module._write_export(
+        config, teams, solo, opts, "export_html", out, self_test_unverified=True
+    )
+
+    assert "Self-test unverified" in out.read_text(encoding="utf-8")
+
+
+def test_write_export_html_given_a_verified_ride_writes_no_note(tmp_path: Path) -> None:
+    """T-3 negative: the default export carries no such note."""
+    context = _context(engine=_StubEngine(_snapshot()))
+    out = tmp_path / "results.html"
+
+    config, groups, opts = _export_inputs(context)
+    teams, solo = _unpack_groups(groups)
+    app_module._write_export(config, teams, solo, opts, "export_html", out)
+
+    assert "Self-test unverified" not in out.read_text(encoding="utf-8")
 
 
 def test_write_export_html_writes_an_empty_field_page(tmp_path: Path) -> None:
@@ -438,9 +532,17 @@ def test_handle_export_command_picks_writes_and_records(
         opts: object,
         watermark: int,
         team_logos: object = None,
+        self_test_unverified: bool = False,
     ) -> None:
         app_module._write_export(  # type: ignore[arg-type]
-            config, teams, solo, opts, target, path, team_logos=team_logos
+            config,
+            teams,
+            solo,
+            opts,
+            target,
+            path,
+            team_logos=team_logos,
+            self_test_unverified=self_test_unverified,
         )
         app_module._record_export_completion(ctx, target, path, watermark)
 
@@ -453,6 +555,42 @@ def test_handle_export_command_picks_writes_and_records(
     assert context.export_watermark == 0
     # The off-loop notice is async; the sync seam posts nothing
     assert context.frame.notices == []
+
+
+def test_handle_export_command_captures_the_self_test_flag(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """E6.4.3: the handler reads the engine's flag on the main thread.
+
+    The off-loop writer never touches the live context (R-02), so the
+    unverified flag is captured here alongside the config, groups and
+    options, exactly like one of them.
+    """
+    context = _context(engine=_StubEngine(_snapshot(), self_test_unverified=True))
+    out = tmp_path / "results.html"
+    monkeypatch.setattr(app_module, "_pick_export_path", lambda _name: out)
+    captured: list[bool] = []
+
+    def sync_offloop(  # noqa: PLR0913 -- mirrors _run_export_offloop's inputs
+        _ctx: app_module._RouteContext,
+        _target: str,
+        _path: Path,
+        *,
+        config: object,  # noqa: ARG001 -- mirrors the frozen signature
+        teams: object,  # noqa: ARG001 -- mirrors the frozen signature
+        solo: object,  # noqa: ARG001 -- mirrors the frozen signature
+        opts: object,  # noqa: ARG001 -- mirrors the frozen signature
+        watermark: int,  # noqa: ARG001 -- mirrors the frozen signature
+        team_logos: object = None,  # noqa: ARG001 -- mirrors the frozen signature
+        self_test_unverified: bool = False,
+    ) -> None:
+        captured.append(self_test_unverified)
+
+    monkeypatch.setattr(app_module, "_run_export_offloop", sync_offloop)
+
+    app_module._handle_export_command(context, "export_html")
+
+    assert captured == [True]
 
 
 def test_handle_export_command_advances_the_export_watermark_to_the_event_count(
@@ -482,9 +620,17 @@ def test_handle_export_command_advances_the_export_watermark_to_the_event_count(
         opts: object,
         watermark: int,
         team_logos: object = None,
+        self_test_unverified: bool = False,
     ) -> None:
         app_module._write_export(  # type: ignore[arg-type]
-            config, teams, solo, opts, target, path, team_logos=team_logos
+            config,
+            teams,
+            solo,
+            opts,
+            target,
+            path,
+            team_logos=team_logos,
+            self_test_unverified=self_test_unverified,
         )
         app_module._record_export_completion(ctx, target, path, watermark)
         captured.append(watermark)
@@ -742,7 +888,7 @@ class _FinishPresenter:
         self.engine = engine
         self.finish_calls = 0
 
-    def on_finish(self) -> None:
+    def on_finish(self, _report: object = None) -> None:
         """Record the finish request; the test stages the state."""
         self.finish_calls += 1
 

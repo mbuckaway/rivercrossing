@@ -15,14 +15,20 @@
                        fallback when the ride carries no logo, so the img
                        never holds an empty src (D8)
       logo_alt         organizer name for the logo
+      self_test_note   str or None; the E6.4.3 caption rendered under the
+                       header when the ride was finished over a failed
+                       evaluator self-test (the results page's own note seam)
       compiled_css / fonts_css  the vendored package assets, inlined — the
                        |safe values on the page, like the results page's
       Cards are ["rank", suit] pairs with suit "j" for a joker; the chips
       macro takes the steel accent for hearts/diamonds/jokers (no red).
+      `r.draw` (R-14) is the entry's drawn tie-break card, a pair or None:
+      a card that drew one renders the shared `draw_badge` (the results
+      page's own, `on_card` tone) beside its hand prose.
       Regenerate the goldens deliberately only (Spec §8 tests). -#}
 {% import "macros.html.j2" as m with context -%}
 {% macro poster_card(r, options) -%}
-<div class="bp p-5 {{ 'bg-steel-800 text-paper' if r.place == 1 else 'bg-transparent' }}"><i class="c tl"></i><i class="c tr"></i><i class="c bl"></i><i class="c br"></i><div class="flex items-baseline gap-3"><span class="font-head font-semibold text-5xl leading-none">{{ r.place }}</span><div class="min-w-0"><div class="font-head font-semibold text-xl leading-tight truncate">{% if r.type != 'TEAM' %}#{{ r.plate }} {% endif %}{{ r.entry }}</div><div class="text-xs {{ 'text-paper/70' if r.place == 1 else 'text-ink/55' }}">{{ 'Team' if r.type == 'TEAM' else 'Solo' }}{% if r.sex %} ({{ r.sex }}){% endif %} — {{ r.entry }} · {{ r.laps }} laps{% if options.show_times %} · {{ r.total }}{% endif %}</div></div></div><div class="mt-4">{{ m.chips(r.cards, big=true) }}</div><div class="mt-3 font-head font-semibold tracking-wide {{ 'text-steel-300' if r.place == 1 else 'text-steel-700' }}">{{ r.hand }}</div></div>
+<div class="bp p-5 {{ 'bg-steel-800 text-paper' if r.place == 1 else 'bg-transparent' }}"><i class="c tl"></i><i class="c tr"></i><i class="c bl"></i><i class="c br"></i><div class="flex items-baseline gap-3"><span class="font-head font-semibold text-5xl leading-none">{{ r.place }}</span><div class="min-w-0"><div class="font-head font-semibold text-xl leading-tight truncate">{% if r.type != 'TEAM' %}#{{ r.plate }} {% endif %}{{ r.entry }}</div><div class="text-xs {{ 'text-paper/70' if r.place == 1 else 'text-ink/55' }}">{{ 'Team' if r.type == 'TEAM' else 'Solo' }}{% if r.sex %} ({{ r.sex }}){% endif %} — {{ r.entry }} · {{ r.laps }} laps{% if options.show_times %} · {{ r.total }}{% endif %}</div></div></div><div class="mt-4">{{ m.chips(r.cards, big=true) }}</div><div class="mt-3 font-head font-semibold tracking-wide {{ 'text-steel-300' if r.place == 1 else 'text-steel-700' }}">{{ r.hand }}{% if r.draw %} {{ m.draw_badge(r, true) }}{% endif %}</div></div>
 {%- endmacro -%}
 <!DOCTYPE html>
 <html lang="en">
@@ -50,7 +56,8 @@
         <h2 class="mt-1 font-head font-semibold text-xl leading-tight">{{ event.title }}</h2>
       </div>
     </div>
-  </header>
+  </header>{% if self_test_note %}
+  <p class="mt-2 text-xs font-semibold text-steel-700">{{ self_test_note }}</p>{% endif %}
 
 {% for heading, rows in poster_sections %}{% if rows %}  <section class="mt-8">
 {% if heading %}    <h3 class="font-head font-semibold text-xl uppercase tracking-wide">{{ heading }}</h3>

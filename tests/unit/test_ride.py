@@ -28,7 +28,10 @@ unknown plate raises, DRAFT/FINISHED gate), and the shoe close on
 Finish with its reopen: ``finish()`` closes the shoe, ``reopen()``
 re-opens it so ``deal_manual``/``add_crossing_at`` deal new cards in
 REOPENED (spec §15), and undo in REOPENED returns the undone card to
-the shoe front for the next deal to reproduce.
+the shoe front for the next deal to reproduce. R-14's finishing
+high-card draw closes the file: ``finish()`` records one card per
+ACTIVE entry for every group of equal hands, audited as its own
+``tiebreak_draw`` event and reproducible from the stored seed.
 """
 
 import re
@@ -618,8 +621,13 @@ def test_start_sets_roster_status_to_running() -> None:
 
 
 def test_finish_from_running_transitions_to_finished() -> None:
-    """finish() moves RUNNING -> FINISHED (spec §3)."""
-    engine, _ = _make_engine()
+    """finish() moves RUNNING -> FINISHED (spec §3).
+
+    One entry on the roster: an untied field is the shape where no
+    high-card draw follows the finish (R-14's draw is a tie's own
+    event), so this pin stays about the transition alone.
+    """
+    engine, _ = _make_engine(roster=_roster_with_entries("12"))
     engine.start()
 
     engine.finish()
@@ -646,8 +654,12 @@ def test_reopen_from_finished_transitions_to_reopened() -> None:
 
 
 def test_finish_again_from_reopened_transitions_to_finished() -> None:
-    """finish() re-locks REOPENED -> FINISHED (spec §3)."""
-    engine, _ = _make_engine()
+    """finish() re-locks REOPENED -> FINISHED (spec §3).
+
+    One entry again: an untied field appends no high-card draw, so the
+    re-finish's own row stays the last event.
+    """
+    engine, _ = _make_engine(roster=_roster_with_entries("12"))
     engine.start()
     engine.finish()
     engine.reopen()
@@ -656,6 +668,40 @@ def test_finish_again_from_reopened_transitions_to_finished() -> None:
 
     assert engine.state is RideStatus.FINISHED
     assert engine.events[-1].action == "finish"
+
+
+def test_finish_given_a_clean_run_records_no_self_test_failed_checks() -> None:
+    """E6.4.3: a finish with no override names no failed checks.
+
+    The field is written only when it has something to say, so a clean
+    row -- and every finish row written before the field existed --
+    stays byte-identical through a replay.
+    """
+    engine, _ = _make_engine()
+    engine.start()
+
+    event = engine.finish()
+
+    assert "self_test_failed_checks" not in event.payload
+
+
+def test_finish_given_failed_self_test_checks_names_them_on_the_event() -> None:
+    """E6.4.3: an overridden finish records which checks were red.
+
+    A non-empty list is the mark the results display reads as
+    "self-test unverified".
+    """
+    engine, _ = _make_engine()
+    engine.start()
+
+    event = engine.finish(
+        self_test_failed_checks=("7,462 distinct ranks", "compare() total order")
+    )
+
+    assert event.payload["self_test_failed_checks"] == [
+        "7,462 distinct ranks",
+        "compare() total order",
+    ]
 
 
 # ---------------------------------------------- C2 REOPENED -> RUNNING
@@ -2989,6 +3035,84 @@ def test_apply_reopen_event_returns_finished_ride_to_reopened() -> None:
     assert engine._shoe.is_closed is False
 
 
+def test_apply_finish_event_replays_the_recorded_self_test_failed_checks() -> None:
+    """E6.4.3: a reloaded overridden finish stays self-test unverified.
+
+    The names come back off the persisted payload, so the results
+    display sees the same mark after a relaunch that it saw live.
+    """
+    engine, _ = _make_engine()
+    engine.start(at=_dt(10, 0))
+    event = Event(
+        action="finish",
+        payload={
+            "finished_at": "2026-09-20T12:00:00",
+            "reason": "2:00:00",
+            "self_test_failed_checks": ["7,462 distinct ranks"],
+        },
+    )
+
+    engine.apply(event)
+
+    assert engine.events[-1] == event
+
+
+def test_apply_finish_event_given_a_row_without_the_checks_key_replays_unchanged() -> None:
+    """A finish row written before E6.4.3 replays byte-equal."""
+    engine, _ = _make_engine()
+    engine.start(at=_dt(10, 0))
+    event = Event(
+        action="finish",
+        payload={"finished_at": "2026-09-20T12:00:00", "reason": "2:00:00"},
+    )
+
+    engine.apply(event)
+
+    assert engine.events[-1] == event
+
+
+def test_apply_finish_event_given_a_non_list_checks_value_replays_as_clean() -> None:
+    """T-3/T-4: a malformed (non-list) value reads as no override.
+
+    ``_payload_strings`` is the tolerant read for a hand-edited or
+    half-written audit row: anything but a list is treated as absent,
+    never raised, so one corrupt key cannot make a ride unloadable.
+    """
+    engine, _ = _make_engine()
+    engine.start(at=_dt(10, 0))
+    event = Event(
+        action="finish",
+        payload={
+            "finished_at": "2026-09-20T12:00:00",
+            "reason": "2:00:00",
+            "self_test_failed_checks": "7,462 distinct ranks",
+        },
+    )
+
+    engine.apply(event)
+
+    assert engine.state is RideStatus.FINISHED
+    assert "self_test_failed_checks" not in engine.events[-1].payload
+
+
+def test_apply_finish_event_given_numeric_checks_replays_them_as_strings() -> None:
+    """T-4: a numeric entry replays as the text the confirm showed."""
+    engine, _ = _make_engine()
+    engine.start(at=_dt(10, 0))
+    event = Event(
+        action="finish",
+        payload={
+            "finished_at": "2026-09-20T12:00:00",
+            "reason": "2:00:00",
+            "self_test_failed_checks": [7462],
+        },
+    )
+
+    engine.apply(event)
+
+    assert engine.events[-1].payload["self_test_failed_checks"] == ["7462"]
+
+
 def test_apply_finish_event_re_applies_the_recorded_finish_instant() -> None:
     """C3: replay reads the persisted finished_at, not replay time.
 
@@ -4598,3 +4722,427 @@ def test_audit_reason_given_a_reason_carrying_action_keeps_its_own_reason(
     _run_reason_carrying(engine, action)
 
     assert engine.events[-1].payload["reason"] == expected_reason
+
+
+# ============================================ R-14 high-card draw
+# The venue's finishing tie-break, recorded by ``finish()``: every
+# group of two or more ACTIVE entries holding exactly equal hands draws
+# one card each from one fresh deck (``cards.high_card_draw``), seeded
+# from the shoe's own stored seed salted by
+# ``ride._TIEBREAK_DRAW_SEED_XOR`` -- so the draw is reproducible from
+# the persisted ``rng_seed`` (R-40) and independent of where the shoe's
+# own shuffle had got to. The draw's own event (``"tiebreak_draw"``)
+# carries one row per drawn card plus a summary naming them; the
+# ``start()`` continue branch and ``reopen()`` both clear the draws, so
+# a corrected ride redraws at its next finish, and a replay restores
+# them from the recorded rows.
+
+# The default engine's shoe seed, salted by the draw's own constant,
+# gives this deck. The default roster has no crossings, so both empty
+# hands tie and the pair draws that deck's first two cards.
+_DEFAULT_DRAW: dict[str, Card] = {
+    "12": Card.parse("5H"),
+    "34": Card.parse("AH"),
+}
+
+# Two one-card hands of the same rank tie -- a lone card's tiebreak is
+# its rank alone -- which is how a pair holding *dealt* cards ties. On
+# a one-deck, joker-free shoe under this seed deal 1 is 7S and deal 2
+# is 7C, so entries 12 and 34 tie while the uncrossed 56 and 78 tie on
+# empty hands: two groups, drawing the same deck's first four cards in
+# that first-appearance order.
+_RANK_TIE_SEED = 20260004
+_RANK_TIE_DRAW: dict[str, Card] = {
+    "12": Card.parse("2H"),
+    "34": Card.parse("2C"),
+    "56": Card.parse("5H"),
+    "78": Card.parse("JS"),
+}
+
+
+def test_finish_given_two_equal_hands_draws_one_card_each() -> None:
+    """R-14: a tied pair draws one card each from one fresh deck."""
+    engine, _ = _make_engine()
+    engine.start()
+
+    engine.finish()
+
+    assert engine._tiebreak == _DEFAULT_DRAW
+
+
+def test_finish_given_two_equal_hands_appends_a_tiebreak_draw_event() -> None:
+    """R-14: the draw is audited after the finish, a row per entry."""
+    engine, _ = _make_engine()
+    engine.start()
+
+    engine.finish()
+
+    assert engine.events[-1] == Event(
+        action="tiebreak_draw",
+        payload={
+            "draws": [
+                {"entry_id": "12", "card": "5H"},
+                {"entry_id": "34", "card": "AH"},
+            ],
+            "summary": "12 · 5H, 34 · AH",
+        },
+    )
+    assert engine.events[-2].action == "finish"
+
+
+def test_finish_given_two_equal_hands_carries_the_cards_on_the_snapshot() -> None:
+    """R-14: snapshot() reads each entry's drawn card."""
+    engine, _ = _make_engine()
+    engine.start()
+    engine.finish()
+
+    assert {result.plate: result.tiebreak_card for result in engine.snapshot()} == _DEFAULT_DRAW
+
+
+def test_finish_given_distinct_hands_appends_no_tiebreak_draw() -> None:
+    """R-14: with no equal-hand pair there is nothing to draw."""
+    engine, _ = _make_engine(config=_config(min_lap_s=1))
+    engine.start()
+    engine.record_crossing("12", at=_dt(10, 0, 30))
+
+    engine.finish()
+
+    assert (engine._tiebreak, engine.events[-1].action) == ({}, "finish")
+
+
+def test_finish_given_one_tied_pair_and_one_odd_hand_draws_the_pair_only() -> None:
+    """R-14: the tie draws; a hand no other entry matches stays bare."""
+    engine, _ = _make_engine(
+        roster=_roster_with_entries("12", "34", "56"), config=_config(min_lap_s=1)
+    )
+    engine.start()
+    engine.record_crossing("56", at=_dt(10, 0, 30))
+
+    engine.finish()
+
+    assert {result.plate: result.tiebreak_card for result in engine.snapshot()} == {
+        **_DEFAULT_DRAW,
+        "56": None,
+    }
+
+
+def test_finish_given_a_dnf_entry_leaves_it_out_of_the_draw() -> None:
+    """R-14: DNF entries never place, so the draw never names one."""
+    engine, _ = _make_engine(
+        roster=_roster_with_entries("12", "34", "56"), config=_config(min_lap_s=1)
+    )
+    engine.start()
+    engine.mark_dnf("56", reason="withdrew")
+
+    engine.finish()
+
+    assert {result.plate: result.tiebreak_card for result in engine.snapshot()} == {
+        **_DEFAULT_DRAW,
+        "56": None,
+    }
+
+
+def test_finish_given_a_lone_entry_appends_no_tiebreak_draw() -> None:
+    """T-4 boundary: a group of one is no tie, so nothing draws."""
+    engine, _ = _make_engine(roster=_roster_with_entries("12"))
+    engine.start()
+
+    engine.finish()
+
+    assert (engine._tiebreak, engine.events[-1].action) == ({}, "finish")
+
+
+def _two_group_engine() -> RideEngine:
+    """Build a RUNNING one-deck engine whose field forms two ties.
+
+    Deals one and two are 7S and 7C under :data:`_RANK_TIE_SEED`, so
+    entries 12 and 34 -- one card each -- hold equal hands while the
+    uncrossed 56 and 78 hold equal empty ones: two groups, in that
+    first-appearance order.
+    """
+    config = _config(deck_count=1, jokers_per_deck=0, min_lap_s=1)
+    engine = RideEngine(
+        config=config,
+        shoe=Shoe(decks=1, jokers_per_deck=0, seed=_RANK_TIE_SEED),
+        clock=_FakeClock(config.planned_start),
+        roster=_roster_with_entries("12", "34", "56", "78"),
+    )
+    engine.start(at=_dt(10, 0))
+    engine.record_crossing("12", at=_dt(10, 0, 1))
+    engine.record_crossing("34", at=_dt(10, 0, 2))
+    return engine
+
+
+def test_finish_given_two_tie_groups_hands_out_one_deck_in_order() -> None:
+    """R-14: groups in first-appearance, entries in roster order."""
+    engine = _two_group_engine()
+
+    engine.finish()
+
+    assert engine._tiebreak == _RANK_TIE_DRAW
+
+
+def _tied_field(count: int) -> Roster:
+    """Build *count* solo entries whose empty hands all tie."""
+    return _roster_with_entries(*(str(number) for number in range(1, count + 1)))
+
+
+def test_finish_given_fifty_two_tied_entries_draws_the_whole_deck() -> None:
+    """T-4 boundary at one deck: all 52 tied entries draw a card."""
+    engine, _ = _make_engine(roster=_tied_field(52))
+    engine.start()
+
+    engine.finish()
+
+    assert len(engine._tiebreak) == 52
+
+
+def test_finish_given_fifty_three_tied_entries_leaves_the_extra_undrawn() -> None:
+    """T-4 past one deck: the 53rd tied entry stays undrawn."""
+    engine, _ = _make_engine(roster=_tied_field(53))
+    engine.start()
+
+    engine.finish()
+
+    assert (len(engine._tiebreak), engine._tiebreak.get("53")) == (52, None)
+
+
+def test_finish_given_the_same_stored_seed_draws_the_same_cards() -> None:
+    """R-40: the draw replays from the ride's stored rng_seed."""
+    first, _ = _make_engine()
+    first.start()
+    first.finish()
+    second, _ = _make_engine()
+    second.start()
+
+    second.finish()
+
+    assert second._tiebreak == first._tiebreak
+
+
+def test_finish_given_a_tie_draws_without_dealing_from_the_shoe() -> None:
+    """R-14: the draw's own deck never moves the shoe's deal order."""
+    engine, _ = _make_engine()
+    engine.start()
+    dealt_before = engine._shoe.dealt
+
+    engine.finish()
+
+    assert engine._shoe.dealt == dealt_before
+
+
+def test_reopen_given_drawn_cards_clears_the_tiebreak() -> None:
+    """R-14: a reopened ride carries no stale draw onward."""
+    engine, _ = _make_engine()
+    engine.start()
+    engine.finish()
+
+    engine.reopen()
+
+    assert engine._tiebreak == {}
+    assert {result.plate: result.tiebreak_card for result in engine.snapshot()} == {
+        "12": None,
+        "34": None,
+    }
+
+
+def test_start_given_a_reopened_ride_clears_the_recorded_draws() -> None:
+    """R-14: continuing a reopened ride clears its recorded draws."""
+    engine, _ = _make_engine()
+    engine.start()
+    engine.finish()
+    engine.reopen()
+    engine.apply(
+        Event(
+            action="tiebreak_draw",
+            payload={"draws": [{"entry_id": "12", "card": "AS"}], "summary": "12 · AS"},
+        )
+    )
+
+    engine.start()
+
+    assert engine._tiebreak == {}
+
+
+def test_apply_tiebreak_draw_event_restores_the_draws_from_its_payload() -> None:
+    """R-14 replay: the recorded rows rebuild the drawn cards."""
+    engine, _ = _make_engine()
+    event = Event(
+        action="tiebreak_draw",
+        payload={
+            "draws": [
+                {"entry_id": "12", "card": "AS"},
+                {"entry_id": "34", "card": "7C"},
+            ],
+            "summary": "12 · AS, 34 · 7C",
+        },
+    )
+
+    engine.apply(event)
+
+    assert (engine._tiebreak, engine.events[-1]) == (
+        {"12": Card.parse("AS"), "34": Card.parse("7C")},
+        event,
+    )
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"summary": ""},
+        {"draws": None},
+        {"draws": "AS"},
+        {"draws": 7},
+        {"draws": []},
+    ],
+    ids=["absent", "none", "string", "number", "empty"],
+)
+def test_apply_tiebreak_draw_given_a_non_row_list_reads_no_draws(
+    payload: dict[str, object],
+) -> None:
+    """T-3/T-4: a foreign stored draws value reads as no draws."""
+    engine, _ = _make_engine()
+
+    engine.apply(Event(action="tiebreak_draw", payload=payload))
+
+    assert engine._tiebreak == {}
+
+
+def _replay(events: tuple[Event, ...]) -> RideEngine:
+    """Rebuild an engine by applying *events* in order (E5.1.2)."""
+    engine, _ = _make_engine()
+    for event in events:
+        engine.apply(event)
+    return engine
+
+
+def test_apply_replay_of_a_finished_ride_reproduces_the_draw() -> None:
+    """E5.1.2/R-14: the stored events reproduce the draw's cards."""
+    live, _ = _make_engine()
+    live.start(at=_dt(10, 0))
+    live.finish()
+
+    replayed = _replay(live.events)
+
+    assert (replayed._tiebreak, replayed.snapshot()) == (live._tiebreak, live.snapshot())
+    assert replayed.events == live.events
+
+
+def test_tiebreak_draw_is_a_replayable_action() -> None:
+    """Store.load_engine must replay the draw, never skip its row."""
+    assert "tiebreak_draw" in ride_module.REPLAY_ACTIONS
+
+
+# ====================================== E6.4.3 self-test override state
+# ``finish(self_test_failed_checks=...)`` records the operator's choice
+# to close a ride despite a red evaluator self-test in the finish
+# event's own payload (E6.4.3). ``RideEngine.self_test_unverified``
+# reads that back: the results window and every export render the note
+# from it, so a published result says whether it was verified.
+
+_SELF_TEST_FAILURES = ("7,462 distinct ranks", "compare() total order")
+
+
+def test_self_test_unverified_given_no_finish_yet_is_false() -> None:
+    """A DRAFT ride has no finish event, so nothing is unverified."""
+    engine, _ = _make_engine()
+
+    assert engine.self_test_unverified is False
+
+
+def test_self_test_unverified_given_a_clean_finish_is_false() -> None:
+    """A clean finish records no failed checks, so the results stand."""
+    engine, _ = _make_engine()
+    engine.start()
+
+    engine.finish()
+
+    assert engine.self_test_unverified is False
+
+
+def test_self_test_unverified_given_a_finish_over_a_failed_check_is_true() -> None:
+    """E6.4.3: a non-empty failed-checks payload marks the results."""
+    engine, _ = _make_engine()
+    engine.start()
+
+    engine.finish(self_test_failed_checks=_SELF_TEST_FAILURES)
+
+    assert engine.self_test_unverified is True
+
+
+def test_self_test_unverified_given_a_reopened_ride_is_false() -> None:
+    """Reopening drops the mark: no published result to qualify."""
+    engine, _ = _make_engine()
+    engine.start()
+    engine.finish(self_test_failed_checks=_SELF_TEST_FAILURES)
+
+    engine.reopen()
+
+    assert engine.self_test_unverified is False
+
+
+def test_self_test_unverified_given_a_continued_ride_is_false() -> None:
+    """Continuing after a reopen is a live ride again, not a result."""
+    engine, _ = _make_engine()
+    engine.start()
+    engine.finish(self_test_failed_checks=_SELF_TEST_FAILURES)
+    engine.reopen()
+
+    engine.start()
+
+    assert engine.self_test_unverified is False
+
+
+def test_self_test_unverified_given_a_later_clean_finish_is_false() -> None:
+    """The LAST finish decides: a clean re-finish is verified again."""
+    engine, _ = _make_engine()
+    engine.start()
+    engine.finish(self_test_failed_checks=_SELF_TEST_FAILURES)
+    engine.reopen()
+
+    engine.finish()
+
+    assert engine.self_test_unverified is False
+
+
+def test_self_test_unverified_given_a_replayed_overridden_finish_is_true() -> None:
+    """E5.1.2 replay: the persisted override survives a reload."""
+    live, _ = _make_engine()
+    live.start(at=_dt(10, 0))
+    live.finish(self_test_failed_checks=_SELF_TEST_FAILURES)
+
+    replayed = _replay(live.events)
+
+    assert replayed.self_test_unverified is True
+
+
+def test_self_test_unverified_given_a_replayed_clean_finish_is_false() -> None:
+    """E5.1.2 replay: a finish row without the key stays verified."""
+    engine, _ = _make_engine()
+    engine.start(at=_dt(10, 0))
+    engine.apply(
+        Event(
+            action="finish",
+            payload={"finished_at": "2026-09-20T12:00:00", "reason": "2:00:00"},
+        )
+    )
+
+    assert engine.self_test_unverified is False
+
+
+def test_self_test_unverified_given_a_non_list_checks_value_is_false() -> None:
+    """T-3/T-4: a malformed stored value reads as no override."""
+    engine, _ = _make_engine()
+    engine.start(at=_dt(10, 0))
+    engine.apply(
+        Event(
+            action="finish",
+            payload={
+                "finished_at": "2026-09-20T12:00:00",
+                "reason": "2:00:00",
+                "self_test_failed_checks": "7,462 distinct ranks",
+            },
+        )
+    )
+
+    assert engine.self_test_unverified is False

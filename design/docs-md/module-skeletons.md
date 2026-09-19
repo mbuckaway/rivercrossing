@@ -146,16 +146,22 @@ compare(a: EvaluatedHand, b: EvaluatedHand) -> int
 self_test() -> SelfTestReport   # six checks: 7,462 distinct-rank sweep + joker vectors +
                                 # five-of-a-kind ordering + field timing, then compare()'s
                                 # total order and best_hand()'s joker bound;
-                                # wired to launch + Help menu; failure blocks Finish (R-44)
+                                # wired to launch + Help menu; the timing check is ADVISORY
+                                # (SelfTestCheck.blocking=False, it times the host), the rest
+                                # are blocking and gate Finish unless overridden (R-44)
 ```
 
 rivercrossing.standings — ordering & tie-breaks (§5 · R-43/60)
 
 ```
 class TieBreak(Enum): MOST_LAPS TOTAL_TIME HIGH_CARD_DRAW
+    # HIGH_CARD_DRAW both orders a fully drawn group by cards.draw_key
+    # (rank major, suit minor, spades highest) and stamps the barrier:
+    # an undrawn group stops there (R-14 / R-43)
 @dataclass EntryResult(entry_id, plate, name, kind, laps, total_time,
                        best_lap, cards, hand: EvaluatedHand, dnf: bool,
-                       sex: str | None = None)
+                       sex: str | None = None,
+                       tiebreak_card: Card | None = None)  # R-14's drawn card
 @dataclass Placed(place: int, result: EntryResult, tie_note: str | None,
                   draw_required: bool)                 # never silently ordered
 rank(results, order: tuple[TieBreak, ...]) -> list[Placed]
@@ -163,6 +169,9 @@ laps_leaderboard(results, top: int = 10) -> list[Placed]
 time_leaderboard(results, top: int = 10) -> list[Placed]   # most laps, then time
 hand_name(hand: EvaluatedHand) -> str   # title-case em-dash prose (E6.1.1, D1); raises on an empty hand
 tiebreak_order_from_spellings(spellings) -> tuple[TieBreak, ...]   # ride spellings ⇄ members (E6.1.1)
+# the venue's draw itself lives in cards: high_card_draw(seed, count) deals from
+# one fresh, jokerless 52-card deck and draw_key(card) orders it; RideEngine.finish()
+# performs and records it, and a replayed tiebreak_draw restores it verbatim
 ```
 
 rivercrossing.ride — state machine & timing (§3/§6 · R-30…36)
@@ -188,9 +197,14 @@ class RideEngine:             # pure; wall-clock injected for tests
     void_crossing(entry_id, seq, reason) · reassign_crossing(seq, new_plate, reason)
     deal_manual(plate, reason) · void_card(entry_id, card, reason) · mark_dnf(plate, reason)
     # rider moves are not the engine's: Roster.move_rider(rider, *, to_entry); pooled only (R-17)
-    stop() -> Event · finish() -> Event · reopen() -> Event       # REOPENED = corrections only
+    stop() -> Event · finish(*, self_test_failed_checks=()) -> Event · reopen() -> Event
+        # REOPENED = corrections only; finish() also performs and records R-14's
+        # high-card draw (one tiebreak_draw event) and writes any overridden
+        # self-test check names onto the finish event (E6.4.3)
     state: RideStatus · elapsed() · remaining() · on_course: int
-    snapshot() -> list[EntryResult]                     # feeds standings live
+    self_test_unverified: bool   # the last finish overrode a red self-test (E6.4.3)
+    snapshot() -> list[EntryResult]                     # feeds standings live;
+        # each result carries its own R-14 tiebreak_card
 # every mutation returns an Event the store persists; engine rebuilds via replay(events)
 # E4 amendments (2026-08-28): __init__ takes `roster` in addition (duck-typed,
 #   annotated under TYPE_CHECKING only — roster.py imports RideStatus from this

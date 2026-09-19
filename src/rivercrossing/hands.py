@@ -1005,12 +1005,21 @@ class SelfTestCheck:
     ``detail`` carries the canvas's own extra column -- only the
     whole-field timing check fills it, with its own measured duration
     ("0.31 s"); every other check's detail is empty.
+
+    ``blocking`` is E6.4.3's severity: a failing blocking check refuses
+    a finish unless the operator overrides it, while a failing advisory
+    check only reports red. The whole-field timing check is the lone
+    advisory one -- it measures the machine's speed, not the
+    evaluator's correctness, and a slow host must never strand a
+    multi-hour ride. Everything else measures correctness and blocks;
+    a check is blocking unless it declares itself advisory.
     """
 
     name: str
     passed: bool
     duration_seconds: float
     detail: str
+    blocking: bool = True
 
 
 @dataclass(frozen=True)
@@ -1025,8 +1034,33 @@ class SelfTestReport:
 
     @property
     def passed(self) -> bool:
-        """Return whether every check in this report passed."""
+        """Return whether every check in this report passed.
+
+        The selftest_dlg canvas's own verdict (``passed``): it shows
+        every red check as FAIL, advisory ones included, so the
+        dialog never hides a red line.
+        """
         return all(check.passed for check in self.checks)
+
+    @property
+    def failed_blocking_checks(self) -> tuple[str, ...]:
+        """Name every failed blocking check, in the report's own order.
+
+        E6.4.3's override copy and the finish event both carry exactly
+        these names, so what the confirm showed and what the audit
+        recorded can never disagree.
+        """
+        return tuple(check.name for check in self.checks if check.blocking and not check.passed)
+
+    @property
+    def has_blocking_failure(self) -> bool:
+        """Return whether any blocking check failed (E6.4.3).
+
+        The finish gate's own verdict: a report whose only failures are
+        advisory leaves this False, so the timing check can never block
+        a finish on its own.
+        """
+        return bool(self.failed_blocking_checks)
 
 
 def _load_rank_sweep_vectors() -> tuple[tuple[str, int], ...]:
@@ -1133,7 +1167,12 @@ def _seeded_field() -> list[list[Card]]:
 
 
 def _check_field_timing() -> tuple[bool, str]:
-    """Check (d): the 180x12 field scores within its R-42 budget."""
+    """Check (d): the 180x12 field scores within its R-42 budget.
+
+    The suite's one advisory check (``SelfTestCheck.blocking``): a red
+    result here means this host is slow, not that the evaluator is
+    wrong, so it is reported and never blocks a finish.
+    """
     field = _seeded_field()
     start = time.perf_counter()
     for entry in field:
@@ -1255,12 +1294,16 @@ def _check_joker_count_bound() -> tuple[bool, str]:
     return widest <= NATURAL_HAND_SIZE, ""
 
 
-def _run_check(name: str, check: Callable[[], tuple[bool, str]]) -> SelfTestCheck:
+def _run_check(
+    name: str, check: Callable[[], tuple[bool, str]], *, blocking: bool = True
+) -> SelfTestCheck:
     """Run *check*, timed, and wrap the result in a SelfTestCheck."""
     start = time.perf_counter()
     passed, detail = check()
     duration = time.perf_counter() - start
-    return SelfTestCheck(name=name, passed=passed, duration_seconds=duration, detail=detail)
+    return SelfTestCheck(
+        name=name, passed=passed, duration_seconds=duration, detail=detail, blocking=blocking
+    )
 
 
 def self_test() -> SelfTestReport:
@@ -1278,8 +1321,13 @@ def self_test() -> SelfTestReport:
     :func:`_load_joker_vectors`, so a corrupted table genuinely turns
     that check red rather than being trusted unread.
 
-    Wired to both app launch and Help ▸ Run Evaluator Self-test;
-    a failing report blocks Finish (E6.4.3, module-skeletons.md S4).
+    Wired to both app launch and Help ▸ Run Evaluator Self-test. A
+    failing BLOCKING check refuses a finish outright until the operator
+    overrides it (E6.4.3, module-skeletons.md S4); the whole-field
+    timing check is the one exception -- it is advisory, because it
+    measures the host's speed rather than the evaluator's correctness
+    (``SelfTestCheck.blocking``), so a slow machine can never strand a
+    multi-hour ride.
 
     Returns:
         The full :class:`SelfTestReport`, one check per selftest_dlg
@@ -1289,7 +1337,7 @@ def self_test() -> SelfTestReport:
         _run_check(_RANK_SWEEP_CHECK_NAME, _check_rank_sweep),
         _run_check(_JOKER_VECTOR_CHECK_NAME, _check_joker_vectors),
         _run_check(_FIVE_OF_A_KIND_CHECK_NAME, _check_five_of_a_kind_ordering),
-        _run_check(_FIELD_TIMING_CHECK_NAME, _check_field_timing),
+        _run_check(_FIELD_TIMING_CHECK_NAME, _check_field_timing, blocking=False),
         _run_check(_COMPARE_TOTAL_ORDER_CHECK_NAME, _check_compare_total_order),
         _run_check(_JOKER_COUNT_BOUND_CHECK_NAME, _check_joker_count_bound),
     )

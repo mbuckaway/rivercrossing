@@ -24,13 +24,14 @@ regression in the evaluator itself.
 import itertools
 import re
 from dataclasses import replace
+from typing import cast
 
 import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
 from rivercrossing import hands
-from rivercrossing.cards import Card
+from rivercrossing.cards import Card, draw_key
 from rivercrossing.hands import EvaluatedHand, HandClass, best_hand
 from rivercrossing.standings import (
     DEFAULT_TIEBREAK_ORDER,
@@ -51,7 +52,7 @@ def _cards(codes: str) -> tuple[Card, ...]:
     return tuple(Card.parse(code) for code in codes.split())
 
 
-def _result(  # noqa: PLR0913 -- a fixture builder mirroring S4 EntryResult's 11 fields
+def _result(  # noqa: PLR0913 -- a fixture builder mirroring S4 EntryResult's 12 fields
     entry_id: str,
     codes: str,
     *,
@@ -59,6 +60,7 @@ def _result(  # noqa: PLR0913 -- a fixture builder mirroring S4 EntryResult's 11
     laps: int = 0,
     total_time: float = 0.0,
     dnf: bool = False,
+    tiebreak_card: Card | None = None,
 ) -> EntryResult:
     """Build one EntryResult whose hand is best_hand of *codes*."""
     cards = _cards(codes)
@@ -73,6 +75,7 @@ def _result(  # noqa: PLR0913 -- a fixture builder mirroring S4 EntryResult's 11
         cards=cards,
         hand=best_hand(cards),
         dnf=dnf,
+        tiebreak_card=tiebreak_card,
     )
 
 
@@ -94,6 +97,25 @@ def test_entry_result_sex_survives_ranking_for_both_spellings(sex: str) -> None:
     placed = rank(results)
 
     assert placed[0].result.sex == sex
+
+
+# ------------------------------------------- EntryResult's drawn card
+
+
+def test_entry_result_tiebreak_card_defaults_to_none() -> None:
+    """A snapshot built without a seat at the draw carries None."""
+    result = _result("1", "AS QD 9H 5C 3S")
+
+    assert result.tiebreak_card is None
+
+
+def test_entry_result_tiebreak_card_survives_ranking() -> None:
+    """A drawn card reaches the placed rows intact."""
+    results = [replace(_result("1", "AS QD 9H 5C 3S"), tiebreak_card=Card.parse("AS"))]
+
+    placed = rank(results)
+
+    assert placed[0].result.tiebreak_card == Card.parse("AS")
 
 
 # ------------------------------------------------------ basic ordering
@@ -355,6 +377,165 @@ def test_rank_omitted_order_uses_default_constant() -> None:
     ]
 
     assert rank(results) == rank(results, DEFAULT_TIEBREAK_ORDER)
+
+
+# --------------------------- the venue draw as a real resolver (R-14)
+#
+# When every entry in a hand-tie group has been to the draw, the group
+# is ORDERED by the drawn cards: cards.draw_key ranks them, spades
+# highest, and the first run takes place 1 -- so the highest card sorts
+# first. One undrawn entry in the group keeps Phase 3's barrier, where
+# HIGH_CARD_DRAW resolves nothing and the residual tie stays flagged
+# (R-43) rather than being silently ordered.
+#
+# The two guards on that path -- the criterion being HIGH_CARD_DRAW and
+# every entry in the group holding a drawn card -- are each exercised
+# True and False, so all four combinations are covered (T-13).
+
+
+def test_rank_default_order_with_drawn_cards_places_the_higher_card_first() -> None:
+    """A fully drawn tie pair is ordered by the draw, not flagged."""
+    lower = _result(
+        "1", "AS KS QS JS 10S", laps=5, total_time=100.0, tiebreak_card=Card.parse("2C")
+    )
+    higher = _result(
+        "2", "AH KH QH JH 10H", laps=5, total_time=100.0, tiebreak_card=Card.parse("AS")
+    )
+
+    placed = rank([lower, higher])
+
+    assert [(p.place, p.result.entry_id, p.draw_required) for p in placed] == [
+        (1, "2", False),
+        (2, "1", False),
+    ]
+
+
+@pytest.mark.parametrize(
+    ("low_card", "high_card"),
+    [
+        ("2C", "3C"),
+        ("2C", "2D"),
+        ("2C", "AS"),
+        ("KH", "AS"),
+        ("9S", "10D"),
+    ],
+)
+def test_rank_default_order_with_drawn_cards_ranks_them_by_draw_key(
+    low_card: str, high_card: str
+) -> None:
+    """Rank is major, suit minor: the higher card key places first."""
+    lower = _result("1", "AS KS QS JS 10S", tiebreak_card=Card.parse(low_card))
+    higher = _result("2", "AH KH QH JH 10H", tiebreak_card=Card.parse(high_card))
+
+    placed = rank([lower, higher])
+
+    assert [p.result.entry_id for p in placed] == ["2", "1"]
+    assert all(p.draw_required is False and p.tie_note is None for p in placed)
+
+
+def test_rank_default_order_with_drawn_cards_never_consults_a_later_criterion() -> None:
+    """The draw decides alone: a laps lead after it does not win."""
+    card_winner = _result(
+        "1", "AS KS QS JS 10S", laps=1, total_time=200.0, tiebreak_card=Card.parse("AS")
+    )
+    laps_leader = _result(
+        "2", "AH KH QH JH 10H", laps=9, total_time=100.0, tiebreak_card=Card.parse("2C")
+    )
+
+    placed = rank([laps_leader, card_winner])
+
+    assert [p.result.entry_id for p in placed] == ["1", "2"]
+
+
+def test_rank_default_order_with_the_same_drawn_card_stays_a_draw() -> None:
+    """Two entries given one drawn card are equal at the draw (R-43)."""
+    first = _result(
+        "1", "AS KS QS JS 10S", laps=5, total_time=100.0, tiebreak_card=Card.parse("AS")
+    )
+    second = _result(
+        "2", "AH KH QH JH 10H", laps=4, total_time=50.0, tiebreak_card=Card.parse("AS")
+    )
+
+    placed = rank([first, second])
+
+    assert [(p.place, p.draw_required, p.tie_note) for p in placed] == [
+        (1, True, "draw required"),
+        (1, True, "draw required"),
+    ]
+
+
+def test_rank_default_order_with_one_undrawn_entry_in_the_pair_still_flags_draw() -> None:
+    """A single undrawn entry keeps the venue barrier exactly (R-43)."""
+    drawn = _result("1", "AS KS QS JS 10S", laps=1, tiebreak_card=Card.parse("AS"))
+    undrawn = _result("2", "AH KH QH JH 10H", laps=9)
+
+    placed = rank([drawn, undrawn])
+
+    assert [(p.place, p.draw_required, p.tie_note) for p in placed] == [
+        (1, True, "draw required"),
+        (1, True, "draw required"),
+    ]
+
+
+def test_rank_default_order_with_one_undrawn_entry_in_a_three_way_tie_flags_all() -> None:
+    """An undrawn member blocks the draw for the whole group (R-43)."""
+    first = _result("1", "AS KS QS JS 10S", laps=1, tiebreak_card=Card.parse("AS"))
+    second = _result("2", "AH KH QH JH 10H", laps=2, tiebreak_card=Card.parse("2C"))
+    third = _result("3", "AD KD QD JD 10D", laps=3)
+
+    placed = rank([first, second, third])
+
+    assert [(p.place, p.draw_required) for p in placed] == [(1, True), (1, True), (1, True)]
+
+
+def test_rank_default_order_with_three_drawn_entries_numbers_them_one_to_three() -> None:
+    """A fully drawn three-way tie takes three consecutive places."""
+    lowest = _result("1", "AS KS QS JS 10S", tiebreak_card=Card.parse("2C"))
+    highest = _result("2", "AH KH QH JH 10H", tiebreak_card=Card.parse("AS"))
+    middle = _result("3", "AD KD QD JD 10D", tiebreak_card=Card.parse("10D"))
+
+    placed = rank([lowest, highest, middle])
+
+    assert [(p.place, p.result.entry_id, p.draw_required) for p in placed] == [
+        (1, "2", False),
+        (2, "3", False),
+        (3, "1", False),
+    ]
+
+
+def test_rank_default_order_with_a_drawn_pair_places_the_next_entry_third() -> None:
+    """A resolved pair takes 1 and 2; the field continues from 3."""
+    higher = _result("1", "AS KS QS JS 10S", tiebreak_card=Card.parse("AS"))
+    lower = _result("2", "AH KH QH JH 10H", tiebreak_card=Card.parse("2C"))
+    weaker = _result("3", "9H 8C 7D 6S 5H")
+
+    placed = rank([weaker, lower, higher])
+
+    assert [(p.place, p.result.entry_id) for p in placed] == [(1, "1"), (2, "2"), (3, "3")]
+
+
+def test_rank_live_order_with_drawn_cards_ignores_the_drawn_cards() -> None:
+    """An order that omits HIGH_CARD_DRAW never reads a drawn card."""
+    card_winner = _result(
+        "1", "AS KS QS JS 10S", laps=4, total_time=100.0, tiebreak_card=Card.parse("AS")
+    )
+    laps_leader = _result(
+        "2", "AH KH QH JH 10H", laps=5, total_time=100.0, tiebreak_card=Card.parse("2C")
+    )
+
+    placed = rank([card_winner, laps_leader], LIVE_TIEBREAK_ORDER)
+
+    assert [p.result.entry_id for p in placed] == ["2", "1"]
+    assert all(p.draw_required is False and p.tie_note is None for p in placed)
+
+
+def test_rank_group_with_a_joker_drawn_card_raises_value_error() -> None:
+    """The draw deck is naturals only: a joker seat fails loudly."""
+    joker_drawn = _result("1", "AS KS QS JS 10S", tiebreak_card=Card.parse("JK"))
+    natural_drawn = _result("2", "AH KH QH JH 10H", tiebreak_card=Card.parse("AS"))
+
+    with pytest.raises(ValueError, match=re.escape("a joker has no draw key")):
+        rank([joker_drawn, natural_drawn])
 
 
 # -------------------------------------------------------------- DNF
@@ -758,6 +939,40 @@ def test_rank_by_kind_partitions_every_active_result_into_its_kind_and_numbers_f
     assert [p.place for p in solo] == sorted(p.place for p in solo)
     assert not teams or teams[0].place == 1
     assert not solo or solo[0].place == 1
+
+
+# The drawn-card property: every result has been to the draw, so each
+# hand-tie group is ordered by its cards rather than left flagged.
+
+_DRAW_POOL: tuple[Card, ...] = tuple(
+    Card.parse(code) for code in ("2C", "2D", "9H", "10S", "KH", "AS")
+)
+
+
+@st.composite
+def _drawn_entry_result(draw: st.DrawFn) -> EntryResult:
+    """Draw an EntryResult that already holds its drawn card."""
+    return replace(draw(_entry_result()), tiebreak_card=draw(st.sampled_from(_DRAW_POOL)))
+
+
+def _drawn_card_key(result: EntryResult) -> int:
+    """Return *result*'s drawn-card key, which the strategy deals."""
+    return draw_key(cast("Card", result.tiebreak_card))
+
+
+@given(results=st.lists(_drawn_entry_result(), min_size=2, max_size=6))
+@settings(max_examples=50, deadline=None)
+def test_rank_drawn_field_orders_each_hand_tie_by_descending_draw_key(
+    results: list[EntryResult],
+) -> None:
+    """Invariant: in a hand tie the higher card never places last."""
+    placed = rank(results)
+
+    assert all(
+        hands.compare(earlier.result.hand, later.result.hand) > 0
+        or _drawn_card_key(earlier.result) >= _drawn_card_key(later.result)
+        for earlier, later in itertools.pairwise(placed)
+    )
 
 
 # -------------------------------------------------- hand names (E6.1.1)

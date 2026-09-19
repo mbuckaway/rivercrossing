@@ -1,9 +1,11 @@
 # SPDX-License-Identifier: GPL-3.0-only
-"""Card model and seeded shoe: suits, ranks, jokers, and Shoe (§4).
+"""Card model, seeded shoe and the venue's high-card draw (§4, §5).
 
 module-skeletons.md S4 places the multi-deck shoe (``Shoe``) in this
 same module, alongside the immutable card vocabulary the hand
-evaluator (``rivercrossing.hands``) also builds on.
+evaluator (``rivercrossing.hands``) also builds on. The tie-break
+rule ① high-card draw's own deck -- :func:`high_card_draw` and the
+:func:`draw_key` that orders it -- lives here too.
 """
 
 import random
@@ -19,6 +21,8 @@ __all__ = [
     "ShoeClosedError",
     "ShoeEmpty",
     "Suit",
+    "draw_key",
+    "high_card_draw",
     "seeded_card_codes",
 ]
 
@@ -67,6 +71,14 @@ _LETTER_BY_RANK: dict[Rank, str] = {
 }
 _RANK_BY_LETTER: dict[str, Rank] = {letter: rank for rank, letter in _LETTER_BY_RANK.items()}
 _SUIT_BY_LETTER: dict[str, Suit] = {suit.value: suit for suit in Suit}
+# The suit half of draw_key()'s key (spec §5 rule ①): spades highest,
+# so one deck draw already separates two cards of the same rank.
+_TIEBREAK_SUIT_ORDER: dict[Suit, int] = {
+    Suit.CLUBS: 0,
+    Suit.DIAMONDS: 1,
+    Suit.HEARTS: 2,
+    Suit.SPADES: 3,
+}
 
 _JOKER_CODE = "JK"
 
@@ -234,6 +246,50 @@ def seeded_card_codes(seed: int, decks: int = 1) -> tuple[str, ...]:
     return tuple(codes)
 
 
+def draw_key(card: Card) -> int:
+    """Return *card*'s integer key for the tie-break high-card draw.
+
+    Rank is major and suit minor -- four suit slots per rank, clubs
+    lowest through spades highest -- so all 52 naturals map to a
+    distinct key: the drawn ace of spades (59) tops the deck, and
+    kings of two suits still separate (spec §5 rule ①, R-14).
+
+    The two ``cast`` calls document, for mypy, the natural-card
+    contract of the guard clause, exactly as :meth:`Card.code` does.
+
+    Raises:
+        ValueError: *card* is a joker.
+    """
+    if card.joker:
+        msg = "a joker has no draw key"
+        raise ValueError(msg)
+    rank = cast("Rank", card.rank)
+    suit = cast("Suit", card.suit)
+    return rank.value * 4 + _TIEBREAK_SUIT_ORDER[suit]
+
+
+def high_card_draw(seed: int, count: int) -> tuple[Card, ...]:
+    """Draw up to *count* naturals for the high-card tie-break draw.
+
+    One fresh 52-card deck -- no jokers -- is shuffled under *seed*
+    by the same Fisher-Yates :func:`_shuffled_sequence` the shoe
+    rides, so the same seed reproduces the same draw (R-40) and the
+    cards come back ready for :func:`draw_key`.
+
+    Args:
+        seed: The draw's shuffle seed.
+        count: How many cards to draw; a non-positive *count* draws
+            nothing, and anything past the 52 naturals draws the
+            whole deck.
+
+    Returns:
+        The drawn naturals, in shuffle order.
+    """
+    if count <= 0:
+        return ()
+    return tuple(_shuffled_sequence(decks=1, jokers_per_deck=0, seed=seed)[:count])
+
+
 class Shoe:
     """A seeded, auditable multi-deck shoe (spec section 4).
 
@@ -285,6 +341,16 @@ class Shoe:
     def cycle(self) -> int:
         """The current 1-based shuffle cycle ("Shoe cycle N")."""
         return self._cycle
+
+    @property
+    def seed(self) -> int:
+        """The stored shuffle seed the shoe is auditable from.
+
+        Read-only: cycle n is shuffled under ``seed + (cycle - 1)``,
+        so this is the one number a replay stores (R-40);
+        :meth:`reshuffle` and :meth:`reconfigure` never change it.
+        """
+        return self._seed
 
     @property
     def jokers_in_cycle(self) -> int:

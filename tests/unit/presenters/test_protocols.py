@@ -383,6 +383,11 @@ class FakeDataSource:
         """Return False: the fake publishes nothing that goes stale."""
         return False
 
+    # DataSource's signature; the fake's results are always verified
+    def results_self_test_unverified(self) -> bool:
+        """Return False: the fake publishes a verified field."""
+        return False
+
     def ride_status(self) -> RideStatus:
         """Return one fixed ride status."""
         return RideStatus.RUNNING

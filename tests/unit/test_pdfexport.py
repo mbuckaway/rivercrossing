@@ -36,6 +36,7 @@ import io
 import os
 import re
 import zlib
+from dataclasses import replace
 from datetime import datetime, timedelta
 from typing import TYPE_CHECKING
 
@@ -55,7 +56,7 @@ from pypdf import PdfReader
 from rivercrossing import pdfexport
 from rivercrossing.cards import Card, Rank, Suit
 from rivercrossing.hands import best_hand
-from rivercrossing.htmlexport import ExportOptions, build_payload
+from rivercrossing.htmlexport import SELF_TEST_NOTE, ExportOptions, ResultRow, build_payload
 from rivercrossing.standings import EntryResult, Placed
 
 if TYPE_CHECKING:
@@ -553,6 +554,152 @@ def test_render_zero_card_entry_renders_with_blank_hand(tmp_path: Path) -> None:
     assert "No Show" in text
 
 
+# ------------------------------------- R-14 drawn card / E6.4.3 note
+
+
+def test_render_shows_the_drawn_tiebreak_card_beside_the_hand(tmp_path: Path) -> None:
+    """R-14: a row that drew a tie-break card renders that card.
+
+    Every hand-bearing drawer re-renders it -- the podium card, the top
+    list's standings row and the full field's solo row -- so the drawn
+    card reads three times on this one-entry page (and the marker's own
+    separator is pinned by the ``_draw_marker`` tests above).
+    """
+    opts = ExportOptions(full_field=True, laps_board=False, time_board=False)
+    placed = (
+        Placed(
+            place=1,
+            result=replace(_entry("88", "Moss Ridge Riders", 11), tiebreak_card=Card.parse("AH")),
+            tie_note=None,
+            draw_required=False,
+        ),
+    )
+
+    text = _text(_render(tmp_path, placed, opts))
+
+    assert text.count("DRAW A♥") == 3
+
+
+def test_render_shows_the_drawn_card_on_the_podium_card(tmp_path: Path) -> None:
+    """R-14: the podium card renders the drawn card beside its hand.
+
+    The podium slice runs to the top list's own heading, so the count
+    pins the podium drawer and not the standings row below it.
+    """
+    opts = ExportOptions(full_field=False, laps_board=False, time_board=False)
+    placed = (
+        Placed(
+            place=1,
+            result=replace(_entry("88", "Moss Ridge Riders", 11), tiebreak_card=Card.parse("AH")),
+            tie_note=None,
+            draw_required=False,
+        ),
+    )
+
+    text = _section(_text(_render(tmp_path, placed, opts)), "Best hands — top 3", "Top ten")
+
+    assert text.count("DRAW A♥") == 1
+
+
+def test_render_team_field_row_shows_the_drawn_card_beside_the_hand() -> None:
+    """R-14: the Teams full-field row renders it, like the solo."""
+    row = build_payload(
+        build_ride(),
+        (
+            Placed(
+                place=1,
+                result=replace(
+                    _entry("600", "Team 1", 30, kind="team"), tiebreak_card=Card.parse("AH")
+                ),
+                tie_note=None,
+                draw_required=False,
+            ),
+        ),
+        golden_opts(),
+        "Generated 20:07, Sept 20 2026",
+    ).results[0]
+    report = pdfexport._ReportPDF(
+        build_ride(), golden_opts(), letter=True, created_at=FIXED_CREATED
+    )
+    report.add_page()
+    widths = pdfexport._team_field_widths(show_times=True, content=report._content_width())
+
+    report._team_field_row(widths, row)
+
+    page = PdfReader(io.BytesIO(bytes(report.output()))).pages[0]
+    assert "DRAW A♥" in (page.extract_text() or "")
+
+
+def test_render_given_no_drawn_card_renders_no_draw_marker(tmp_path: Path) -> None:
+    """T-3 negative: an undrawn row's hand cell carries no marker."""
+    opts = ExportOptions(full_field=True, laps_board=False, time_board=False)
+
+    text = _text(_render(tmp_path, (_placed_three()[0],), opts))
+
+    assert "DRAW" not in text
+
+
+def test_draw_marker_given_a_row_without_a_draw_is_empty() -> None:
+    """A row that drew nothing renders its hand alone."""
+    row = build_payload(
+        build_ride(), (_placed_three()[0],), ExportOptions(), "Generated 12:00, June 6 2026"
+    ).results[0]
+
+    assert pdfexport._draw_marker(row) == ""
+
+
+def test_draw_marker_given_a_row_that_drew_appends_its_card() -> None:
+    """A drawn row's marker names the card it drew."""
+    row = ResultRow(
+        place=1,
+        plate=88,
+        entry="X",
+        entry_type="SOLO",
+        laps=11,
+        hand="Three of a Kind — Nines",
+        draw=("A", "h"),
+    )
+
+    assert pdfexport._draw_marker(row) == " · DRAW A♥"
+
+
+def test_draw_marker_given_a_zero_card_row_that_drew_is_the_draw_alone() -> None:
+    """T-4 boundary: no hand to lead with, so no leading separator."""
+    row = ResultRow(
+        place=1,
+        plate=1,
+        entry="No Show",
+        entry_type="SOLO",
+        laps=0,
+        hand="",
+        draw=("JK", "j"),
+    )
+
+    assert pdfexport._draw_marker(row) == "DRAW ★"
+
+
+def test_render_given_an_unverified_ride_renders_the_self_test_note(tmp_path: Path) -> None:
+    """E6.4.3: the cover note the export already renders carries it."""
+    out = tmp_path / "results.pdf"
+    pdfexport.render(
+        build_ride(),
+        _placed_three(),
+        ExportOptions(full_field=True),
+        out,
+        created_at=FIXED_CREATED,
+        self_test_unverified=True,
+    )
+
+    assert SELF_TEST_NOTE in _text(out)
+
+
+def test_render_given_a_verified_ride_renders_no_self_test_note(tmp_path: Path) -> None:
+    """T-3 negative: a verified ride's report carries no such note."""
+    out = _render(tmp_path, _placed_three(), ExportOptions(full_field=True))
+
+    assert "Self-test unverified" not in _text(out)
+
+
 def test_render_empty_field_renders(tmp_path: Path) -> None:
     """A zero-entry field still renders (empty boards and tables)."""
     out = _render(tmp_path, (), ExportOptions(full_field=True, laps_board=True, time_board=True))
@@ -817,6 +964,27 @@ def test_podium_poster_team_event_content_fits_one_letter_page() -> None:
     assert poster.get_y() <= poster.h - pdfexport._FOOTER_GAP_IN
 
 
+def test_podium_poster_given_the_note_the_full_field_still_fits_one_page() -> None:
+    """E6.4.3: the caption never pushes the golden field onto page 2.
+
+    The same measured fit with the note seam on: the 50-entry
+    dataset's six compact cards plus the self-test caption still end
+    above the footer gap, one page.
+    """
+    poster = pdfexport._PosterPDF(
+        build_ride(),
+        letter=True,
+        created_at=FIXED_CREATED,
+        logo_path=None,
+        self_test_unverified=True,
+    )
+
+    poster.build(build_placed())
+
+    assert poster.page_no() == 1
+    assert poster.get_y() <= poster.h - pdfexport._FOOTER_GAP_IN
+
+
 def test_podium_poster_solo_event_shows_the_top_five_solos(tmp_path: Path) -> None:
     """A solo poster lists five solos, one page."""
     out = _poster(tmp_path, _ranked_solo(7))
@@ -899,6 +1067,55 @@ def test_podium_poster_identical_inputs_produce_identical_bytes(tmp_path: Path) 
     second = _poster(tmp_path, build_placed())
 
     assert first.read_bytes() == second.read_bytes()
+
+
+def test_podium_poster_shows_the_drawn_card_on_a_card(tmp_path: Path) -> None:
+    """R-14: a poster card that drew shows the card it drew."""
+    placed = (
+        Placed(
+            place=1,
+            result=replace(_entry("88", "Moss Ridge Riders", 11), tiebreak_card=Card.parse("AH")),
+            tie_note=None,
+            draw_required=False,
+        ),
+    )
+
+    text = _text(_poster(tmp_path, placed))
+
+    assert "DRAW A♥" in text
+
+
+def test_podium_poster_given_no_draw_renders_no_draw_marker(tmp_path: Path) -> None:
+    """T-3 negative: an undrawn field's poster carries no marker."""
+    text = _text(_poster(tmp_path, _placed_three()))
+
+    assert "DRAW" not in text
+
+
+def test_podium_poster_given_an_unverified_ride_renders_the_self_test_note(
+    tmp_path: Path,
+) -> None:
+    """E6.4.3: the poster's note carries the caption, one page."""
+    out = tmp_path / "poster.pdf"
+    pdfexport.podium_poster(
+        build_ride(),
+        _placed_three(),
+        out,
+        created_at=FIXED_CREATED,
+        self_test_unverified=True,
+    )
+
+    assert SELF_TEST_NOTE in _text(out)
+    assert len(PdfReader(str(out)).pages) == 1
+
+
+def test_podium_poster_given_a_verified_ride_renders_no_self_test_note(
+    tmp_path: Path,
+) -> None:
+    """T-3 negative: a verified ride's poster carries no such note."""
+    text = _text(_poster(tmp_path, _placed_three()))
+
+    assert "Self-test unverified" not in text
 
 
 def test_podium_poster_naive_created_at_raises_value_error(tmp_path: Path) -> None:

@@ -10,7 +10,7 @@ plate, with the entry's own plate derived -- the rider's own plate
 for a solo entry, the lowest-numbered rider's plate for a team.
 Every entry's and pooled rider's plate shares one namespace per
 ride (R-20), and every plate -- ``rider_pooled`` or ``team_relay`` --
-is a whole-number string: the CSV NUMBER column's domain, and what
+is a whole-number string: the CSV PLATE column's domain, and what
 "lowest-numbered" needs to compare. W7 refuses blank plates
 everywhere and every plate entry point refuses non-numeric ones;
 ``next_free_plate`` still ignores a non-numeric plate, which only
@@ -98,6 +98,7 @@ __all__ = [
     "can_edit_structure",
     "can_fix_name",
     "can_move_rider",
+    "canonical_person_name",
     "rider_name_key",
     "team_name_key",
 ]
@@ -311,7 +312,7 @@ def _require_max_team_size(max_team_size: int) -> None:
 def _require_whole_plate(plate: str) -> None:
     """Raise PlateShapeError unless *plate* is a whole-number string.
 
-    Every plate this module accepts is the NUMBER column's domain
+    Every plate this module accepts is the PLATE column's domain
     (spec S7), relay plates included: they feed the same per-ride
     namespace and the same CSV round trip. Pooled plates additionally
     feed ``_lowest_plate``'s "lowest-numbered" derivation, which needs
@@ -404,6 +405,29 @@ def rider_name_key(first_name: str, last_name: str = "") -> str:
     share the key "mary anne knibbe".
     """
     return " ".join(f"{first_name} {last_name}".casefold().split())
+
+
+def canonical_person_name(raw: str) -> str:
+    """Return *raw*'s canonical display case (CSV import, rider editor).
+
+    Trim, then capitalize a field written in ONE uniform case --
+    "john" and "JOHN" both become "John", because a registration
+    form's own casing is a formatting artifact -- while a field with
+    any case mixture is returned exactly as typed, so a surname the
+    operator spelled deliberately survives: "McDonald", "O'Brien"
+    and "van der Berg" all come back unchanged (" van der berg ",
+    all lower-case, becomes "Van der berg").
+
+    Args:
+        raw: The name field as the operator or the CSV file wrote it.
+
+    Returns:
+        The name in its canonical display case.
+    """
+    trimmed = raw.strip()
+    if trimmed.upper() == trimmed or trimmed.lower() == trimmed:
+        return trimmed.capitalize()
+    return trimmed
 
 
 _FUZZY_QUOTE_TRANSLATION = str.maketrans("", "", "'\"\u2018\u2019\u201c\u201d")

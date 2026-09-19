@@ -704,6 +704,30 @@ def test_default_path_ends_with_settings_json() -> None:
     assert str(default_path()).endswith("settings.json")
 
 
+def test_default_path_calls_user_config_dir_with_appauthor_false(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    r"""The settings path asks for ONE RiverCrossing folder, never two.
+
+    platformdirs defaults ``appauthor`` to ``appname``, so the bare
+    call lands in ``%LOCALAPPDATA%\RiverCrossing\RiverCrossing`` on
+    Windows. ``appauthor=False`` asks for the single folder; macOS
+    ignores ``appauthor`` entirely, so its path is unchanged.
+    """
+    calls: list[tuple[str, dict[str, object]]] = []
+
+    def _record(appname: str, **kwargs: object) -> str:
+        calls.append((appname, kwargs))
+        return str(tmp_path / "RiverCrossing")
+
+    monkeypatch.setattr(settings_module, "user_config_dir", _record)
+
+    path = settings_module.default_path()
+
+    assert calls == [("RiverCrossing", {"appauthor": False})]
+    assert path == tmp_path / "RiverCrossing" / "settings.json"
+
+
 # --- appearance_for_radio: the dialog's radio -> appearance map -----
 # (E8.1.2: the wx-free half of SettingsDialog.collect_settings.)
 

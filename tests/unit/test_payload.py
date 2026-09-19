@@ -10,7 +10,7 @@ pages rather than hard-coded, so drift in the samples fails here too.
 """
 
 import re
-from dataclasses import FrozenInstanceError
+from dataclasses import FrozenInstanceError, replace
 
 import pytest
 from htmlexport_fixtures import (
@@ -25,12 +25,14 @@ from hypothesis import given
 from hypothesis import strategies as st
 
 from rivercrossing.htmlexport import (
+    SELF_TEST_NOTE,
     EventInfo,
     ExportOptions,
     LapsBoardRow,
     RacePayload,
     ResultRow,
     TimeBoardRow,
+    _payload_from_record,
     _snake_to_camel,
 )
 
@@ -336,6 +338,69 @@ def test_race_payload_to_record_includes_dnf_key_when_row_dnf() -> None:
     record = _times_shown_payload().to_record()
 
     assert record["results"][2]["dnf"] is True
+
+
+# --- sparse draw / selfTestNote (R-14, E6.4.3) ---
+
+
+def test_result_row_to_record_omits_draw_key_when_nothing_was_drawn() -> None:
+    """A row that drew no tie-break card carries no ``draw`` key."""
+    row = ResultRow(place=1, plate=1, entry="X", entry_type="SOLO", laps=1, hand="Pair")
+
+    record = row.to_record(show_times=False)
+
+    assert "draw" not in record
+
+
+def test_result_row_to_record_includes_draw_key_when_the_row_drew() -> None:
+    """A drawn row carries its card as a two-element list."""
+    row = ResultRow(
+        place=1,
+        plate=1,
+        entry="X",
+        entry_type="SOLO",
+        laps=1,
+        hand="Pair",
+        draw=("A", "h"),
+    )
+
+    record = row.to_record(show_times=False)
+
+    assert record["draw"] == ["A", "h"]
+
+
+def test_race_payload_to_record_omits_self_test_note_key_when_verified() -> None:
+    """A verified ride's record carries no ``selfTestNote`` key."""
+    record = _times_shown_payload().to_record()
+
+    assert "selfTestNote" not in record
+
+
+def test_race_payload_to_record_includes_self_test_note_key_when_unverified() -> None:
+    """An unverified ride's record carries the caption, not a flag."""
+    payload = replace(_times_shown_payload(), self_test_note=SELF_TEST_NOTE)
+
+    record = payload.to_record()
+
+    assert record["selfTestNote"] == SELF_TEST_NOTE
+
+
+def test_payload_from_record_round_trips_the_draw_and_the_self_test_note() -> None:
+    """The golden generator's parity check survives both new keys.
+
+    ``record -> RacePayload -> record`` must be identity for the frozen
+    samples (``tools/gen_htmlexport_goldens.py``), so the two new sparse
+    keys have to survive the round trip as well.
+    """
+    sample = _sample_results()
+    payload = replace(
+        _times_shown_payload(),
+        self_test_note=SELF_TEST_NOTE,
+        results=(replace(sample[0], draw=("A", "h")), *sample[1:]),
+    )
+    record = payload.to_record()
+
+    assert _payload_from_record(record).to_record() == record
 
 
 # --- camelCase mapping ---

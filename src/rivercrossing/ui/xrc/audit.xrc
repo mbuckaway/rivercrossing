@@ -36,7 +36,7 @@
   by a screen reader. The labels are unnamed: they are chrome, not
   data, and nothing needs to find them.
 
-  action_choice's 29 entries are the flat filter set: "All actions"
+  action_choice's 30 entries are the flat filter set: "All actions"
   plus one item per audited action, in the order
   presenters/audit.py's ACTION_CHOICES declares them (test_audit.py
   pins the two together). No <selection> is declared - the presenter
@@ -112,6 +112,7 @@
                 <item>Remove Rider</item>
                 <item>Mark DNF</item>
                 <item>Shoe Reshuffle</item>
+                <item>High-card Draw</item>
                 <item>Start Ride</item>
                 <item>Continue Ride</item>
                 <item>Set Start Time</item>

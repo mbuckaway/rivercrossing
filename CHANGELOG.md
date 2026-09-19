@@ -6,6 +6,36 @@ All notable changes to RiverCrossing are recorded here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- **High-card draw resolves ties** — a finished ride's identical best hands are now broken by a real
+  card draw: the app draws one card per tied entry from a fresh deck, the highest card wins (rank,
+  then suit), and the drawn card is shown in the Standings window, the HTML and PDF results, the
+  podium and the standings CSV. Only a tie the draw cannot separate is flagged "draw required".
+- **User guide** — the guide is written in Markdown (`docs/user-guide.md`) and the shipped HTML is
+  generated from it. The scoring chapter is expanded, every menu item, dialog and console panel is
+  documented, and the shortcut modifier follows the reader's platform (⌘ on macOS, Ctrl on Windows).
+
+### Changed
+
+- **Roster CSV plate column** — the canonical header is now `PLATE` (was `NUMBER`), so an export
+  writes `FIRSTNAME,LASTNAME,TYPE,TEAMNAME,PLATE,NOTES,SEX`. The import keeps its whole-header match
+  and also accepts `plate number`, alongside the legacy `number` and `bib`, so older files still
+  import.
+- **CSV name casing** — an imported team name keeps the file's own spelling, and matching ignores
+  case, so differently-spelled rows still form one team. A rider's first or last name written all in
+  lowercase or all in uppercase is tidied to first-letter capital plus lowercase; a mixed-case name
+  is kept as written.
+- **Windows data folder** — the per-user folder is now a single `%LOCALAPPDATA%\RiverCrossing`.
+
+### Fixed
+
+- **Finish gate** — an evaluator self-test failure can no longer strand a multi-hour ride. The
+  whole-field 180×12 timing check is advisory; a blocking failure names the failed checks and offers a
+  recorded **Finish anyway**, which marks the results self-test unverified.
+- **Winner-card cards** — spade and club cards, and the joker, are legible on the dark first-place
+  results card.
+
 ## [1.0.21] - 2026-09-17
 
 ### Changed
@@ -46,7 +76,7 @@ All notable changes to RiverCrossing are recorded here. The format follows
 - **Team-overlap review issue** — a team's lap under the ride's minimum lap time now reads
   "Team overlap" on the Needs Review tab, distinct from a solo rider's short lap.
 - **Numeric-only plates** — every plate is a whole number for both plate models (relay included).
-  A non-digit CSV `NUMBER` cell is a conflict to fix, and the console plate box silently ignores
+  A non-digit CSV `PLATE` cell is a conflict to fix, and the console plate box silently ignores
   any character other than a digit or a miss symbol (`= / + - .`).
 
 ### Changed
@@ -421,7 +451,7 @@ All notable changes to RiverCrossing are recorded here. The format follows
 ### Changed
 
 - **Rider names are first/last** — a rider now has separate first and last names; the Rider Editor collects them in two fields and every roster surface uses the joined name.
-- **Unified header-mapped roster CSV** — import and export use one format for every ride (`FIRSTNAME,LASTNAME,TYPE,TEAMNAME,NUMBER[,NOTES]`): import resolves columns by header, ignores unsupported columns and non-data rows, auto-assigns race plates when blank, and groups teams by name.
+- **Unified header-mapped roster CSV** — import and export use one format for every ride (`FIRSTNAME,LASTNAME,TYPE,TEAMNAME,PLATE[,NOTES]`): import resolves columns by header, ignores unsupported columns and non-data rows, auto-assigns race plates when blank, and groups teams by name.
 - **Cards credit the team, not the rider** — a team rider's lap deals into the team's hand; a relay team keeps one rider on course at a time.
 - **A fresh launch starts DRAFT** — no ride is auto-started, so File ▸ Quit shows the plain confirm rather than "stop the running ride".
 - **Resume loads the ride's roster** — continuing a ride installs its entries on the shared context, so the Rider/Teams editors and CSV import act on the real ride.

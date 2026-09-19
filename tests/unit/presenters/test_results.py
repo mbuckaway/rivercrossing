@@ -399,3 +399,31 @@ def test_empty_data_source_results_stale_is_never_stale() -> None:
 
     assert source.results_stale(None) is False
     assert source.results_stale(5) is False
+
+
+# --------------------- E6.4.3 self-test-unverified flag delegation
+
+
+def test_engine_data_source_results_self_test_unverified_given_a_clean_finish_is_false() -> None:
+    """A cleanly finished ride's results are verified."""
+    engine, _ = _engine_source_with_correction()
+    engine.finish()
+    source = EngineDataSource(engine, engine._roster)
+
+    assert source.results_self_test_unverified() is False
+
+
+def test_engine_data_source_results_self_test_unverified_given_an_override_is_true() -> None:
+    """E6.4.3: the live source surfaces the engine's override flag."""
+    engine, _ = _engine_source_with_correction()
+    engine.finish(self_test_failed_checks=("7,462 distinct ranks",))
+    source = EngineDataSource(engine, engine._roster)
+
+    assert source.results_self_test_unverified() is True
+
+
+def test_empty_data_source_results_self_test_unverified_is_false() -> None:
+    """The empty state (no ride) has no results to qualify."""
+    source = EmptyDataSource()
+
+    assert source.results_self_test_unverified() is False

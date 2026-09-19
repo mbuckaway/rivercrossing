@@ -19,3 +19,12 @@ tests/unit/fixtures/htmlexport/*.html text eol=lf
 tests/unit/fixtures/htmlexport/*.json text eol=lf
 design/exports/*.html text eol=lf
 tests/unit/fixtures/csv/*.csv text eol=lf
+
+# The user guide is the same contract: docs/user-guide.html is compared
+# byte-for-byte against tools/gen_userguide.py's LF output, and the
+# Markdown and CSS it is rendered from are read as text. Without these,
+# Windows autocrlf rewrites the committed page to CRLF on checkout and
+# the userguide_drift check fails on windows-latest.
+docs/user-guide.html text eol=lf
+docs/user-guide.md text eol=lf
+docs/user-guide.css text eol=lf

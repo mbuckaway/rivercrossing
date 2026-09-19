@@ -24,7 +24,7 @@
 .bp > i.c::after { top: 5px; left: 0; width: 100%; height: 1px; }
 .bp > i.tl { top: -6px; left: -6px; } .bp > i.tr { top: -6px; right: -6px; }
 .bp > i.bl { bottom: -6px; left: -6px; } .bp > i.br { bottom: -6px; right: -6px; }
-.chip { display: inline-flex; align-items: center; gap: 2px; border: 1px solid rgba(29,31,32,.16); background: #e9e9ea; padding: 0 6px; font-family: var(--font-head); font-weight: 600; font-size: 13px; line-height: 20px; }
+.chip { display: inline-flex; align-items: center; gap: 2px; border: 1px solid rgba(29,31,32,.16); background: #e9e9ea; color: #1d1f20; padding: 0 6px; font-family: var(--font-head); font-weight: 600; font-size: 13px; line-height: 20px; }
 .chip.r { color: #416180; } /* hearts & diamonds take the steel accent — mono palette, no red */
-.chip.j { background: transparent; border-color: #597ea3; color: #416180; }
+.chip.j { background: #e9e9ea; border-color: #597ea3; color: #416180; }
 @media print { .no-print { display: none !important; } body { background: #fff !important; } }

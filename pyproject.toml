@@ -51,6 +51,7 @@ dev = [
     "pytest-rerunfailures",  # project-plan §4's auto-retry flake control (2, PR #8's CI)
     "hypothesis",
     "defusedxml",       # safe XML parsing for tools/gen_ids.py and the .xrc unit tests
+    "markdown",         # renders docs/user-guide.md for tools/gen_userguide.py
     "coverage[toml]",
     "nox",              # the task runner; identical invocation on macOS and Windows
     "ruff>=0.15",       # floor for target-version = "py314" and PEP 758 handling

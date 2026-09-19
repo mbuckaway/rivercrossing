@@ -87,6 +87,8 @@ jobs:
         run: npm ci
       - name: css artifacts drift vs templates (E6.2.1)
         run: python tools/gen_css.py --check
+      - name: user guide drift vs markdown
+        run: python tools/gen_userguide.py --check
 
   # ---------------------------------------------------------------- stage 2
   unit:

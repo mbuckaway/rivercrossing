@@ -193,13 +193,18 @@ def default_settings() -> AppSettings:
 
 
 def default_path() -> Path:
-    """Return the per-user settings file path (platformdirs, E8.1.1).
+    r"""Return the per-user settings file path (platformdirs, E8.1.1).
 
-    ``platformdirs.user_config_dir("RiverCrossing")`` is the per-user
-    config directory on every platform (``~/Library/Application
-    Support`` on macOS, ``%LOCALAPPDATA%`` on Windows).
+    ``platformdirs.user_config_dir("RiverCrossing", appauthor=False)``
+    is the per-user config directory on every platform
+    (``~/Library/Application Support`` on macOS,
+    ``%LOCALAPPDATA%\RiverCrossing`` on Windows). ``appauthor=False``
+    keeps Windows to that single folder: platformdirs' default doubles
+    ``appname`` into ``appauthor``, resolving
+    ``%LOCALAPPDATA%\RiverCrossing\RiverCrossing``. macOS ignores
+    ``appauthor``.
     """
-    return Path(user_config_dir("RiverCrossing")) / "settings.json"
+    return Path(user_config_dir("RiverCrossing", appauthor=False)) / "settings.json"
 
 
 def load_settings(path: Path | None = None) -> AppSettings:

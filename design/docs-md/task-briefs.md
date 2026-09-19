@@ -28,7 +28,7 @@ E9 last (needs all; 9.1.3 additionally needs org credentials)
 | ids.py generator + name registry test | E1.2.1 | every UI task thereafter |
 | DataSource protocol; DemoDataSource wiring line | E1.2.4 | real sources E4/E5; wiring removed E5.4.2 |
 | Payload dataclasses (ExportOptions, records) | E1.2.2 | E6.2 renderers (fields frozen from E1) |
-| Evaluator finish-gate hook (self-test green?) | E2.4.1 | E6.4.3 finish flow |
+| Evaluator finish-gate hook (self-test green?) — since E6.4.3, blocking checks only | E2.4.1 | E6.4.3 finish flow |
 | Held-card release + manual-deal engine path | E4.3.2 (stub) | E7.2.1 wires dialogs to it |
 | stale_infobar in results_dlg | E6.4.1 (hidden) | E7.3.2 triggers on corrections |
 | Accelerator table (single source) | E1.4.1 | E8.2.1 shortcuts_dlg rows |
@@ -152,7 +152,7 @@ E9 last (needs all; 9.1.3 additionally needs org credentials)
 
 ### E6 · Results & publishing — entry gate: E2 + E5 exits (6.2.1 may start after E1)
 
-- **E6.1.1 Standings + tie-breaks** · Goal: ordering with rules ①②③ reorderable, instant re-rank, changeable after finish (R-14); DNF riders are excluded from the ranking outright (per-rider DNF, so there is no DNF block). Tests first: `tests/unit/test_standings.py` — crafted identical-hand ties resolved per order; reorder re-runs; high-card-draw records the draw; DNF keeps laps/cards (R-33 path). Done when: fixtures green.
+- **E6.1.1 Standings + tie-breaks** · Goal: ordering with rules ①②③ reorderable, instant re-rank, changeable after finish (R-14); DNF riders are excluded from the ranking outright (per-rider DNF, so there is no DNF block). Tests first: `tests/unit/test_standings.py` — crafted identical-hand ties resolved per order; reorder re-runs; a fully drawn tie group ordered by `cards.draw_key` (highest card, spades highest) while a partly drawn one keeps the barrier; DNF keeps laps/cards (R-33 path). Done when: fixtures green. *(Later, R-14: the draw itself is the engine's — `RideEngine.finish()` deals one card per tied entry from one fresh 52-card deck seeded from the ride's stored seed, records the audited `tiebreak_draw` event, and `snapshot()` carries each entry's `tiebreak_card`; `reopen()`/continue discard the draws.)*
 
 - **E6.1.2 Leaderboards** · Goal: most-laps and fastest (most laps, then shortest elapsed to last crossing). Tests first: fixture where pure-time order differs from laps-then-time (negative guard against sorting by time alone). Done when: green.
 
@@ -168,7 +168,7 @@ E9 last (needs all; 9.1.3 additionally needs org credentials)
 
 - **E6.4.2 Results menu** · Goal: §15 Results rows live (Standings F5, Export HTML, Export PDF, Poster, Standings CSV, Preview HTML in Browser / Preview PDF in Browser, Tie-break Order *(later retired — the tie-break order now comes only from Ride Setup's `tiebreak_list`; G6 added the checkable Publish Options rows)*) with FINISHED gating. Tests first: extend menu-coverage walk with the real actions writing tmp files. Done when: walk green.
 
-- **E6.4.3 Finish gate** · Goal: finish requires evaluator self-test green (Spec §2, E2.4.1 hook). Tests first: hook red → finish confirm blocked with message; hook green → proceeds. Done when: both branches green.
+- **E6.4.3 Finish gate** · Goal: the finish consults the evaluator self-test (Spec §2, E2.4.1 hook) and no red evaluator silently strands a ride (R-44). *(Revised: the gate returns the whole `SelfTestReport`; only `has_blocking_failure` gates a finish — the whole-field 180×12 timing check is advisory — and a blocking failure raises one more danger confirm naming every failed check, whose "Finish anyway" records those names on the finish event and marks the results self-test unverified; Cancel leaves the ride unfinished and finishable.)* Tests first: hook blocking-red → override confirm shown, Cancel aborts and OK records the checks; advisory-only red → no confirm, finish proceeds; hook green → proceeds. Done when: all branches green.
 
 ### E7 · Corrections & audit — entry gate: E5 exit (stale-flag needs E6.4.1)
 

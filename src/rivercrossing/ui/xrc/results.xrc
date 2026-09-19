@@ -34,10 +34,10 @@
   standings_list (the view decides per entry_mode).
 
   Code-side per the canvas footnote: the round-robin standings rows
-  (six columns, each pinned to its own width - G6 dropped the Total and
-  Best lap columns), with "draw required" tie rows carrying a warning
-  badge in the Place cell, and the stale-export banner after reopened
-  corrections.
+  (seven columns, each pinned to its own width - G6 dropped the Total
+  and Best lap columns, and R-14 appended the tie-break Draw column),
+  with "draw required" tie rows carrying a warning badge in the Place
+  cell, and the stale-export banner after reopened corrections.
 
   G6 moved the publish options out of this dialog: the five checkboxes
   and their <checked> defaults are now checkable Results menu items

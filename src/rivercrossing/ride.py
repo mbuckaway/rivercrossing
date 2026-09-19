@@ -42,12 +42,18 @@ from enum import StrEnum
 from itertools import combinations
 from typing import TYPE_CHECKING
 
-from rivercrossing.cards import Card, RestitutionError, ShoeClosedError, ShoeEmpty
-from rivercrossing.hands import best_hand
+from rivercrossing.cards import (
+    Card,
+    RestitutionError,
+    ShoeClosedError,
+    ShoeEmpty,
+    high_card_draw,
+)
+from rivercrossing.hands import best_hand, compare
 from rivercrossing.standings import EntryResult
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Mapping
+    from collections.abc import Callable, Mapping, Sequence
     from datetime import date
     from pathlib import Path
 
@@ -133,17 +139,31 @@ TIEBREAK_LAPS = "laps"
 TIEBREAK_TOTAL_TIME = "total_time"
 TIEBREAK_HIGH_CARD = "high_card"
 
-# Phase 3's stored default leads with the venue's high-card draw: a
-# finished ride's hand tie is flagged "draw required" (R-43) rather
-# than silently ordered by laps/time, and any criterion after the draw
-# is unreachable. The operator drags tiebreak_list to reorder it
-# (R-14); a live (unfinished) board auto-ranks by laps/time instead
+# Phase 3's stored default leads with the venue's high-card draw: the
+# finish itself draws one card per tied entry from a fresh deck (R-14,
+# ``_record_tiebreak_draws``), so standings orders a fully drawn tie
+# group by ``cards.draw_key`` and only a group the draw still cannot
+# separate -- no card held, or more tied entries than the 52-card deck
+# holds -- is flagged "draw required" (R-43). Any criterion after the
+# draw is unreachable either way. The order is set (and reordered with
+# tiebreak_list's own Up/Down buttons) in ride_setup_dlg, R-14; a live
+# (unfinished) board auto-ranks by laps/time instead
 # (standings.LIVE_TIEBREAK_ORDER).
 DEFAULT_TIEBREAK_ORDER: tuple[str, str, str] = (
     TIEBREAK_HIGH_CARD,
     TIEBREAK_LAPS,
     TIEBREAK_TOTAL_TIME,
 )
+
+# The tie-break draw's own seed salt (R-14, R-40). The venue's draw
+# runs on a *fresh* deck (``cards.high_card_draw``), so its seed is
+# derived by XORing this constant onto the shoe's stored seed rather
+# than reusing it: the draw replays from the one number a ride stores,
+# yet no draw order can ever coincide with the shoe's own Fisher-Yates
+# sequence and the shoe's deals are untouched by the draw. The value
+# stays well inside the 63-bit range the store draws seeds from
+# (``secrets.randbits(63)``, spec §4).
+_TIEBREAK_DRAW_SEED_XOR = 0x5F3A_6D1C_9E2B_0478
 
 # R-12's own 2..10 bound (also roster.py's MIN_TEAM_SIZE/
 # MAX_TEAM_SIZE_LIMIT) -- duplicated as plain literals rather than
@@ -532,6 +552,7 @@ REPLAY_ACTIONS: frozenset[str] = frozenset(
         "stop",
         "finish",
         "reopen",
+        "tiebreak_draw",
         "shoe_reshuffle",
     }
 )
@@ -574,6 +595,50 @@ def _payload_int(event: Event, key: str) -> int:
         The parsed integer.
     """
     return int(str(event.payload[key]))
+
+
+def _payload_strings(event: Event, key: str) -> tuple[str, ...]:
+    """Read one optional string-list payload value back into a tuple.
+
+    E6.4.3's ``self_test_failed_checks`` is written only for a finish
+    that overrode a red self-test, so a missing key is the ordinary
+    clean-finish case -- every row persisted before the field existed
+    replays through here. Anything but a list reads as absent.
+
+    Args:
+        event: The event being replayed.
+        key: The payload key holding the list of strings.
+
+    Returns:
+        Every entry of the list, as a string; empty when the key is
+        absent or does not hold a list.
+    """
+    value = event.payload.get(key, ())
+    if not isinstance(value, (list, tuple)):
+        return ()
+    return tuple(str(part) for part in value)
+
+
+def _payload_draws(event: Event) -> dict[str, Card]:
+    """Read a ``tiebreak_draw`` payload's entry/card rows.
+
+    The payload is JSON-ready, so each row's card code parses back
+    through :meth:`Card.parse` and the ride's drawn cards rebuild
+    exactly as the live draw made them. Anything but a list of rows
+    reads as no draws at all, mirroring :func:`_payload_strings`'s
+    tolerance of a stored value of the wrong shape.
+
+    Args:
+        event: The event being replayed.
+
+    Returns:
+        The payload's draws, keyed by entry id; empty when the payload
+        holds no row list.
+    """
+    rows = event.payload.get("draws", ())
+    if not isinstance(rows, (list, tuple)):
+        return {}
+    return {str(row["entry_id"]): Card.parse(str(row["card"])) for row in rows}
 
 
 def _format_elapsed(seconds: float) -> str:
@@ -909,6 +974,21 @@ class RideEngine:
       legal in REOPENED (E4.2 pin): with the shoe re-opened its
       restitution returns the undone card to the front, so the next
       correction deal reproduces it.
+    - **High-card draw at the finish (R-14).** ``finish()`` records the
+      venue's tie-break draw once the finish instant is in: every group
+      of two or more ACTIVE entries holding exactly equal hands
+      (``hands.compare``) draws one card per entry from *one* fresh deck
+      -- ``cards.high_card_draw`` under the shoe's stored seed salted
+      with :data:`_TIEBREAK_DRAW_SEED_XOR`, so the draw replays from the
+      stored ``rng_seed`` (R-40) without dealing from, or otherwise
+      disturbing, the shoe. The cards are handed out in group
+      first-appearance and then roster order, ``snapshot()`` carries
+      each entry's card as ``tiebreak_card``, and a ``tiebreak_draw``
+      event records the rows plus a summary naming them.
+      ``reopen()`` and ``start()``'s continue branch clear the draws, so
+      a corrected ride redraws at its next finish rather than carrying a
+      stale card forward; a replayed ``tiebreak_draw`` restores them
+      from its payload.
 
     E5.1.2's own resolutions (event replay, task-briefs E5.1.2):
 
@@ -1090,6 +1170,13 @@ class RideEngine:
         # (the persisted rider table has no dnf column): a pooled team
         # is out of the results when every one of its riders is here.
         self._dnf_riders: set[str] = set()
+        # R-14's high-card draws: entry id -> the card that entry
+        # drew for the venue's tie-break. Written by finish() (and a
+        # replayed ``tiebreak_draw``), read by snapshot()'s
+        # ``tiebreak_card``, and cleared by reopen()/continue -- a
+        # corrected ride redraws at its next finish rather than
+        # carrying a stale card forward.
+        self._tiebreak: dict[str, Card] = {}
         self._events: list[Event] = []
         # E9.1.3: the persistence sink. The app attaches
         # Store.append(ride_id, event) here AFTER load_engine's replay,
@@ -1143,6 +1230,31 @@ class RideEngine:
         RUNNING" clause) from the live engine.
         """
         return self._stopped
+
+    @property
+    def self_test_unverified(self) -> bool:
+        """Return whether the closed ride's results are unverified.
+
+        E6.4.3: ``finish(self_test_failed_checks=...)`` writes the
+        failed BLOCKING self-test checks into the finish event's own
+        payload, so a ride the operator chose to close over a red
+        evaluator self-test says so for as long as that finish stands.
+        The LAST finish event decides: a ride that has re-finished
+        cleanly after a reopen is verified again. The read is gated on
+        FINISHED -- a reopened or continued ride has no published
+        result to qualify, so both read ``False``.
+
+        Read-only and non-raising: a ride that never finished, a
+        pre-E6.4.3 finish row without the key, and a malformed stored
+        value (:func:`_payload_strings`'s tolerance) all read
+        ``False``.
+        """
+        if self._state is not RideStatus.FINISHED:
+            return False
+        for event in reversed(self._events):
+            if event.action == "finish":
+                return bool(_payload_strings(event, "self_test_failed_checks"))
+        return False
 
     @property
     def events(self) -> tuple[Event, ...]:
@@ -1345,6 +1457,10 @@ class RideEngine:
             self._roster.status = RideStatus.RUNNING
             self._stopped = False
             self._finished_at = None
+            # R-14: the draws belong to the finish that is being ridden
+            # away from, so continuing discards them -- the next finish
+            # draws afresh.
+            self._tiebreak.clear()
             return self._append(
                 Event(
                     action="continue",
@@ -2351,7 +2467,7 @@ class RideEngine:
             )
         )
 
-    def finish(self) -> Event:
+    def finish(self, *, self_test_failed_checks: Sequence[str] = ()) -> Event:
         """Finish the ride: RUNNING or REOPENED to FINISHED (spec §3).
 
         Closing the shoe here (spec §4, task-briefs E2.2.1)
@@ -2366,38 +2482,61 @@ class RideEngine:
         a closed ride's final elapsed (:meth:`closed_elapsed`) never
         drifts with the live clock.
 
+        The venue's high-card draw is recorded here too, once the finish
+        instant is in (:meth:`_record_tiebreak_draws`, R-14): the
+        returned event is still the finish's own, and the draw's event
+        follows it. :meth:`apply` re-applies a persisted finish through
+        :meth:`_finish_at` alone -- never through this method -- so a
+        replay restores the draws from the ``tiebreak_draw`` event
+        instead of drawing them twice.
+
+        Args:
+            self_test_failed_checks: The E6.4.3 override -- the names
+                of the evaluator self-test's failed BLOCKING checks,
+                when the operator chose to finish anyway. Empty for a
+                clean finish, which is the only case with no override
+                to record.
+
         Raises:
             IllegalStateError: the ride is DRAFT or already FINISHED.
         """
         if self._state not in (RideStatus.RUNNING, RideStatus.REOPENED):
             raise IllegalStateError(f"cannot finish from {self._state}")
-        return self._finish_at(self._clock())
+        event = self._finish_at(self._clock(), self_test_failed_checks=self_test_failed_checks)
+        self._record_tiebreak_draws()
+        return event
 
-    def _finish_at(self, finished_at: datetime) -> Event:
+    def _finish_at(
+        self, finished_at: datetime, *, self_test_failed_checks: Sequence[str] = ()
+    ) -> Event:
         """Move to FINISHED, recording *finished_at*.
 
         Shared by :meth:`finish` (stamping the current clock) and the
         replay seam (:meth:`apply`), which re-applies the persisted
         instant so a replayed old ride keeps its own finish time.
+
+        *self_test_failed_checks* is written to the payload only when
+        it names something: a clean finish's row, and every finish row
+        persisted before E6.4.3, then replays byte-identically, while a
+        non-empty list is what marks the finished ride's results
+        self-test unverified.
         """
         self._state = RideStatus.FINISHED
         self._roster.status = RideStatus.FINISHED
         self._stopped = False
         self._finished_at = finished_at
         self._shoe.close()
-        return self._append(
-            Event(
-                action="finish",
-                payload={
-                    "finished_at": finished_at.isoformat(),
-                    # The recorded final elapsed (C3's own instant, not
-                    # the replay clock) -- scope 6d.
-                    "reason": _format_elapsed(
-                        (finished_at - self._require_actual_start()).total_seconds()
-                    ),
-                },
-            )
-        )
+        payload: dict[str, object] = {
+            "finished_at": finished_at.isoformat(),
+            # The recorded final elapsed (C3's own instant, not
+            # the replay clock) -- scope 6d.
+            "reason": _format_elapsed(
+                (finished_at - self._require_actual_start()).total_seconds()
+            ),
+        }
+        if self_test_failed_checks:
+            payload["self_test_failed_checks"] = list(self_test_failed_checks)
+        return self._append(Event(action="finish", payload=payload))
 
     def reopen(self) -> Event:
         """Reopen a finished ride for corrections (spec §3, R-64).
@@ -2423,10 +2562,16 @@ class RideEngine:
         Shared by :meth:`reopen` (stamping the current clock) and the
         replay seam (:meth:`apply`), which re-applies the persisted
         instant. The finish instant is untouched.
+
+        R-14's recorded draws are cleared: corrections are about to
+        change the field's hands, so the next finish draws afresh rather
+        than carrying a card the corrected ride may no longer be tied
+        for.
         """
         self._state = RideStatus.REOPENED
         self._roster.status = RideStatus.REOPENED
         self._stopped = False
+        self._tiebreak.clear()
         self._shoe.reopen()
         return self._append(
             Event(
@@ -2517,6 +2662,10 @@ class RideEngine:
         leaderboards already excluded them. ``sex`` (E7) is a solo
         entry's lone rider's ``"M"``/``"F"`` and None for a team: a
         team has no single sex, so the exports render it blank there.
+        ``tiebreak_card`` is the entry's recorded high-card draw (R-14),
+        ``None`` until a finish has drawn one (or a replayed
+        ``tiebreak_draw`` has restored it), which is exactly the
+        undrawn reading ``standings`` flags "draw required".
         """
         results: list[EntryResult] = []
         for entry in self._roster.entries:
@@ -2542,9 +2691,81 @@ class RideEngine:
                     # Solo carries its lone rider's sex; a team has none
                     # (module docstring records the roster non-import).
                     sex=entry.riders[0].sex if kind == "solo" else None,
+                    # R-14: this entry's own recorded draw card, or None
+                    # while the draw has not happened (yet).
+                    tiebreak_card=self._tiebreak.get(entry.plate),
                 )
             )
         return results
+
+    def _equal_hand_groups(self) -> list[list[EntryResult]]:
+        """Group the ACTIVE snapshot entries by exactly equal hand.
+
+        One group per set of two or more ACTIVE entries whose hands
+        compare equal (:func:`rivercrossing.hands.compare`), in the
+        first-appearance order of the group's earliest entry and in the
+        snapshot's own roster order within a group -- the order
+        :meth:`_record_tiebreak_draws` hands the drawn cards out in. A
+        DNF entry is excluded outright: ``standings`` drops it from the
+        results, so it can never be part of a tie that needs breaking,
+        and an entry whose hand ties no other is dropped here too (no
+        draw can break a group of one).
+        """
+        groups: list[list[EntryResult]] = []
+        for result in self.snapshot():
+            if result.dnf:
+                continue
+            for group in groups:
+                if compare(group[0].hand, result.hand) == 0:
+                    group.append(result)
+                    break
+            else:
+                groups.append([result])
+        return [group for group in groups if len(group) > 1]
+
+    def _record_tiebreak_draws(self) -> None:
+        """Draw and record the venue's high-card tie-break (R-14).
+
+        Called by :meth:`finish` once the finish instant is recorded:
+        every group of equal hands (:meth:`_equal_hand_groups`) draws
+        one card per entry from *one* fresh deck --
+        :func:`rivercrossing.cards.high_card_draw` under the shoe's
+        stored seed salted with :data:`_TIEBREAK_DRAW_SEED_XOR`, so the
+        draw replays from the persisted ``rng_seed`` (R-40) and never
+        deals from the shoe itself. Groups come out in first-appearance
+        order and entries in roster order, so the cards go out in that
+        order and the whole draw is reproducible.
+
+        The stored cards land in :attr:`_tiebreak` (read by
+        :meth:`snapshot`) and in a ``tiebreak_draw`` event whose
+        ``draws`` rows are JSON-ready card codes; ``summary`` names each
+        entry's card, because the audit viewer's Entry cell reads a
+        single ``entry_id``/``plate`` and cannot project a row list. A
+        ride with no equal-hand group appends nothing. One fresh deck
+        holds 52 naturals, so a field with more tied entries than that
+        takes the cards the deck holds and the rest stay undrawn --
+        which ``standings`` reads as "draw required", never as a silent
+        order.
+        """
+        groups = self._equal_hand_groups()
+        if not groups:
+            return
+        seed = self._shoe.seed ^ _TIEBREAK_DRAW_SEED_XOR
+        cards = high_card_draw(seed, sum(map(len, groups)))
+        tied_entries = [result for group in groups for result in group]
+        draws: list[dict[str, str]] = []
+        for result, card in zip(tied_entries, cards, strict=False):
+            self._tiebreak[result.plate] = card
+            draws.append({"entry_id": result.plate, "card": card.code()})
+        self._append(
+            Event(
+                action="tiebreak_draw",
+                payload={
+                    "draws": draws,
+                    "summary": ", ".join(f"{row['entry_id']} · {row['card']}" for row in draws),
+                },
+            )
+        )
 
     def _total_time(self, laps: tuple[Crossing, ...]) -> float:
         """Return the last crossing minus ``actual_start`` (spec §6)."""
@@ -2863,7 +3084,12 @@ class RideEngine:
         docstring's E5.1.2 resolutions); ``finish``/``reopen``
         re-apply the persisted instant through :meth:`_finish_at`/
         :meth:`_reopen_at`, keeping an old ride's recorded finish time
-        (C3). ``continue`` from a replayed REOPENED ride is legal
+        (C3). A replayed ``finish`` also re-applies its own
+        ``self_test_failed_checks`` (E6.4.3), so a reloaded overridden
+        ride's results stay marked self-test unverified; the venue's
+        high-card draw arrives as its own ``tiebreak_draw`` row, which
+        rebuilds from that payload's cards rather than redrawing them
+        (R-14). ``continue`` from a replayed REOPENED ride is legal
         (:meth:`start` accepts it). ``dnf`` replays its payload's own
         scope, never a roster re-resolve, because a rider's DNF has no
         roster column to come back from. The shoe's open/closed state
@@ -2958,9 +3184,19 @@ class RideEngine:
         elif action == "stop":
             self.stop()
         elif action == "finish":
-            self._finish_at(_payload_dt(event, "finished_at"))
+            self._finish_at(
+                _payload_dt(event, "finished_at"),
+                self_test_failed_checks=_payload_strings(event, "self_test_failed_checks"),
+            )
         elif action == "reopen":
             self._reopen_at(_payload_dt(event, "reopened_at"))
+        elif action == "tiebreak_draw":
+            # R-14's draw rebuilds verbatim from its own rows -- the
+            # cards are never redrawn -- and the row re-appends, so a
+            # reloaded ride's snapshot and audit trail keep exactly the
+            # cards the venue drew.
+            self._tiebreak = _payload_draws(event)
+            self._append(event)
         elif action == "shoe_reshuffle":
             # Deliberate no-op (class docstring, E5.1.2): the deal loop
             # reproduces the reshuffle when the fresh shoe empties.

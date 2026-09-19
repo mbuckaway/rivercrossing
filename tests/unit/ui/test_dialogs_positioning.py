@@ -34,6 +34,7 @@ is the sizing step's GUI I/O boundary (T-10), not its logic.
 """
 
 import json
+import re
 import string
 from typing import TYPE_CHECKING
 
@@ -282,11 +283,57 @@ def test_first_field_for_dnf_confirm_names_the_plate_input() -> None:
 
 
 def test_finish_ride_message_states_the_lock_and_the_reopen_offer() -> None:
-    """The finish confirm explains what finishing does."""
+    """The finish confirm explains what finishing does.
+
+    E6.4.3: the parenthetical names the real flow -- a BLOCKING
+    self-test failure asks a second confirm and marks the results
+    self-test unverified, so a red evaluator never refuses the finish
+    outright (the advisory timing check never gates at all).
+    """
     message = dialogs.finish_ride_message()
 
-    assert "evaluator self-test" in message
-    assert "reopen" in message.lower()
+    assert message == (
+        "Locks entry and computes final standings (a blocking evaluator "
+        "self-test failure asks for a second confirm and marks the results "
+        "self-test unverified). You can reopen later for corrections."
+    )
+
+
+def test_self_test_override_labels_name_the_failure_and_the_override() -> None:
+    """E6.4.3: the override confirm never reads as a plain finish."""
+    assert dialogs.self_test_override_labels() == (
+        "Evaluator Self-Test Failed",
+        "Finish anyway",
+    )
+
+
+def test_self_test_override_message_names_the_single_failed_check() -> None:
+    """T-4 single-item boundary: the one failed check is named."""
+    message = dialogs.self_test_override_message(["Joker vector table (28)"])
+
+    assert "Joker vector table (28)" in message
+    assert "self-test unverified" in message
+
+
+def test_self_test_override_message_names_every_failed_check() -> None:
+    """T-4 many-item boundary: all failed checks are named, in order."""
+    message = dialogs.self_test_override_message(["7,462 distinct ranks", "compare() total order"])
+
+    assert "7,462 distinct ranks" in message
+    assert "compare() total order" in message
+    assert message.index("7,462 distinct ranks") < message.index("compare() total order")
+
+
+def test_self_test_override_message_given_no_failed_checks_raises() -> None:
+    """T-4 empty boundary: a confirm naming nothing is a bug, not copy.
+
+    The route only asks this question when a blocking check failed
+    (UX-DESKTOP §4: name the object), so an empty list is a caller
+    error and must fail loudly rather than show a question about
+    nothing.
+    """
+    with pytest.raises(ValueError, match=re.escape("at least one failed check")):
+        dialogs.self_test_override_message([])
 
 
 def test_duplicate_ride_message_names_the_ride_and_the_copied_parts() -> None:

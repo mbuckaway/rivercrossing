@@ -15,6 +15,13 @@ target. The native dialogs are the GUI I/O boundary (T-10), so each
 test swaps the specific ``std_dialogs`` function for a recorder and
 asserts both the copy the route passes and the action the confirmed
 result triggers. No wx window is ever constructed.
+
+E6.4.3 adds the finish route's second question: a BLOCKING evaluator
+self-test failure asks one more danger confirm naming the failed
+checks, and Cancel there finishes nothing. The route's gate is
+``console.FINISH_GATE``, the same injectable module seam the console
+presenter uses, so these tests answer it instead of running the real
+suite.
 """
 
 from types import SimpleNamespace
@@ -22,9 +29,11 @@ from typing import TYPE_CHECKING
 
 import wx
 
+from rivercrossing.hands import SelfTestCheck, SelfTestReport
 from rivercrossing.ride import RideStatus
 from rivercrossing.ui import app as app_module
 from rivercrossing.ui import quit_flow, std_dialogs
+from rivercrossing.ui.presenters import console as console_module
 from rivercrossing.ui.views import dialogs
 
 if TYPE_CHECKING:
@@ -59,10 +68,13 @@ class _FakePresenter:
         """Thread *engine* in; start with an empty action log."""
         self.engine = engine
         self.actions: list[str] = []
+        # E6.4.3: the gate report the finish route hands on_finish.
+        self.reports: list[SelfTestReport | None] = []
 
-    def on_finish(self) -> None:
-        """Record the finish action."""
+    def on_finish(self, report: SelfTestReport | None = None) -> None:
+        """Record the finish action and the report it was given."""
         self.actions.append("finish")
+        self.reports.append(report)
 
     def on_reopen(self) -> None:
         """Record the reopen action."""
@@ -125,6 +137,43 @@ def _stub_show(
     return calls
 
 
+def _stub_show_sequence(
+    monkeypatch: pytest.MonkeyPatch, name: str, results: list[int]
+) -> list[tuple[tuple[object, ...], dict[str, object]]]:
+    """Swap ``std_dialogs.<name>`` for a recorder using *results*."""
+    calls: list[tuple[tuple[object, ...], dict[str, object]]] = []
+    answers = iter(results)
+
+    def _show(*args: object, **kwargs: object) -> int:
+        calls.append((args, kwargs))
+        return next(answers)
+
+    monkeypatch.setattr(std_dialogs, name, _show)
+    return calls
+
+
+def _report(*checks: SelfTestCheck) -> SelfTestReport:
+    """Build a self-test report over *checks*."""
+    return SelfTestReport(checks=checks)
+
+
+def _checked(name: str, *, passed: bool, blocking: bool = True) -> SelfTestCheck:
+    """Build one self-test check with a zero duration and no detail."""
+    return SelfTestCheck(
+        name=name, passed=passed, duration_seconds=0.0, detail="", blocking=blocking
+    )
+
+
+def _stub_gate(monkeypatch: pytest.MonkeyPatch, report: SelfTestReport) -> None:
+    """Answer the E6.4.3 finish gate with *report*, never the suite.
+
+    ``console.FINISH_GATE`` is the documented injectable seam (the same
+    shape as ``settings.WARN``), so swapping it is the module-seam use
+    the production code expects -- not a mock of an internal module.
+    """
+    monkeypatch.setattr(console_module, "FINISH_GATE", lambda: report)
+
+
 # ---------------------------------------------------- Finish Ride…
 
 
@@ -135,6 +184,8 @@ def test_handle_finish_route_confirmed_danger_finishes_the_ride(
     presenter = _FakePresenter(_FakeEngine(RideStatus.RUNNING))
     context = _context(presenter=presenter)
     calls = _stub_show(monkeypatch, "show_danger", wx.ID_OK)
+    report = _report(_checked("7,462 distinct ranks", passed=True))
+    _stub_gate(monkeypatch, report)
 
     app_module._handle_finish_route(context)
 
@@ -147,6 +198,77 @@ def test_handle_finish_route_confirmed_danger_finishes_the_ride(
     )
     assert "reopen" in message.lower()
     assert presenter.actions == ["finish"]
+    assert presenter.reports == [report]
+
+
+def test_handle_finish_route_given_a_blocking_failure_asks_the_override_question(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """E6.4.3: a red self-test asks a second, check-naming confirm.
+
+    The operator is never stranded at the end of a multi-hour ride: the
+    override question names every failed check and finishes the ride on
+    OK, handing the report on so the presenter records the override.
+    """
+    presenter = _FakePresenter(_FakeEngine(RideStatus.RUNNING))
+    context = _context(presenter=presenter)
+    calls = _stub_show(monkeypatch, "show_danger", wx.ID_OK)
+    report = _report(
+        _checked("7,462 distinct ranks", passed=False),
+        _checked("compare() total order", passed=False),
+    )
+    _stub_gate(monkeypatch, report)
+
+    app_module._handle_finish_route(context)
+
+    parent, title, message, ok_label, cancel_label = calls[1][0]
+    assert (parent, title, ok_label, cancel_label) == (
+        context.frame,
+        "Evaluator Self-Test Failed",
+        "Finish anyway",
+        "Cancel",
+    )
+    assert "7,462 distinct ranks" in message
+    assert "compare() total order" in message
+    assert presenter.actions == ["finish"]
+    assert presenter.reports == [report]
+
+
+def test_handle_finish_route_given_a_clean_gate_never_asks_the_override_question(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A green gate shows the finish confirm alone, not a second one."""
+    presenter = _FakePresenter(_FakeEngine(RideStatus.RUNNING))
+    context = _context(presenter=presenter)
+    calls = _stub_show(monkeypatch, "show_danger", wx.ID_OK)
+    _stub_gate(
+        monkeypatch,
+        _report(
+            _checked("7,462 distinct ranks", passed=True),
+            _checked("Whole-field 180×12 timing", passed=False, blocking=False),  # noqa: RUF001
+        ),
+    )
+
+    app_module._handle_finish_route(context)
+
+    assert [call[0][1] for call in calls] == ["Finish Ride?"]
+    assert presenter.actions == ["finish"]
+
+
+def test_handle_finish_route_given_a_cancelled_override_does_not_finish(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """E6.4.3: declining the override does not finish the ride."""
+    presenter = _FakePresenter(_FakeEngine(RideStatus.RUNNING))
+    context = _context(presenter=presenter)
+    calls = _stub_show_sequence(monkeypatch, "show_danger", [wx.ID_OK, wx.ID_CANCEL])
+    _stub_gate(monkeypatch, _report(_checked("compare() total order", passed=False)))
+
+    app_module._handle_finish_route(context)
+
+    assert len(calls) == 2
+    assert presenter.actions == []
+    assert presenter.reports == []
 
 
 def test_handle_finish_route_reopened_ride_offers_finish_again(
@@ -156,6 +278,7 @@ def test_handle_finish_route_reopened_ride_offers_finish_again(
     presenter = _FakePresenter(_FakeEngine(RideStatus.REOPENED))
     context = _context(presenter=presenter)
     calls = _stub_show(monkeypatch, "show_danger", wx.ID_OK)
+    _stub_gate(monkeypatch, _report(_checked("Joker vector table (28)", passed=True)))
 
     app_module._handle_finish_route(context)
 
@@ -175,6 +298,32 @@ def test_handle_finish_route_cancelled_danger_does_not_finish(
     app_module._handle_finish_route(context)
 
     assert presenter.actions == []
+
+
+def test_handle_finish_route_cancelled_danger_never_runs_the_gate(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A cancelled finish confirm does no evaluator work at all.
+
+    Both the observable state (nothing was finished) and the seam
+    record (the suite never ran) are asserted, so this is never a
+    call-record-only test.
+    """
+    presenter = _FakePresenter(_FakeEngine(RideStatus.RUNNING))
+    context = _context(presenter=presenter)
+    _stub_show(monkeypatch, "show_danger", wx.ID_CANCEL)
+    gate_reports: list[int] = []
+
+    def _record_gate() -> SelfTestReport:
+        """Record one gate consultation; never expected to run."""
+        gate_reports.append(1)
+        return _report(_checked("7,462 distinct ranks", passed=True))
+
+    monkeypatch.setattr(console_module, "FINISH_GATE", _record_gate)
+
+    app_module._handle_finish_route(context)
+
+    assert (presenter.actions, gate_reports) == ([], [])
 
 
 def test_handle_finish_route_without_a_presenter_posts_the_notice(

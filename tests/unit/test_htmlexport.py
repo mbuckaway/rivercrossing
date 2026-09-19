@@ -54,6 +54,7 @@ from rivercrossing.cards import Card, Rank, Suit
 from rivercrossing.hands import best_hand
 from rivercrossing.htmlexport import (
     _TRANSPARENT_PNG,
+    SELF_TEST_NOTE,
     ExportOptions,
     LapsBoardRow,
     RacePayload,
@@ -648,6 +649,149 @@ def test_render_public_non_numeric_plate_raises_value_error() -> None:
 
     with pytest.raises(ValueError, match=re.escape("plate 'ABC' is not numeric")):
         render(_StubRide(), placed, ExportOptions())
+
+
+# ------------------------------ R-14 drawn card / E6.4.3 self-test note
+
+
+def _drawn_placed(*, code: str = "AH", kind: str = "solo", place: int = 1) -> tuple[Placed, ...]:
+    """One placed entry carrying a recorded tie-break draw."""
+    result = replace(
+        _sample_entry("88", "Moss Ridge Riders", 11, kind=kind), tiebreak_card=Card.parse(code)
+    )
+    return (Placed(place=place, result=result, tie_note=None, draw_required=False),)
+
+
+# The podium card's own badge form: with no text class of its own it
+# inherits the card's tone (light on the dark first-place card), where
+# the table rows' badge states the steel-700 body tone.
+_CARD_DRAW_BADGE = (
+    '<span class="text-[10px] uppercase border border-steel-600 px-1.5 py-0.5">'
+    'draw <span class="chip r">A ♥</span></span>'
+)
+
+
+def test_render_public_carries_a_drawn_card_on_the_results_row() -> None:
+    """R-14: the payload records the drawn card as a rank/suit pair."""
+    html = render(_StubRide(), _drawn_placed(), ExportOptions())
+
+    record = json.loads(race_data_block(html))
+    assert record["results"][0]["draw"] == ["A", "h"]
+
+
+def test_render_public_given_no_draw_leaves_the_draw_key_absent() -> None:
+    """T-3 negative: an undrawn field carries no ``draw`` key at all."""
+    html = render(_StubRide(), _placed_pair(), ExportOptions())
+
+    record = json.loads(race_data_block(html))
+    assert "draw" not in record["results"][0]
+
+
+def test_render_public_renders_the_drawn_card_badge_in_the_top_list_row() -> None:
+    """The top-list row shows the drawn card beside its hand."""
+    html = render(_StubRide(), _drawn_placed(), ExportOptions())
+
+    assert 'draw <span class="chip r">A ♥</span>' in _section_after(html, ">Top ten</h2>")
+
+
+def test_render_public_renders_the_drawn_card_badge_in_the_full_field_row() -> None:
+    """The full field's row carries the same drawn-card badge."""
+    html = render(_StubRide(), _drawn_placed(), ExportOptions())
+
+    assert 'draw <span class="chip r">A ♥</span>' in _section_after(html, ">Solo riders</h3>")
+
+
+def test_render_public_renders_the_drawn_card_badge_on_a_team_row() -> None:
+    """A team's top-list row carries it too (its own macro)."""
+    html = render(_StubRide(), _drawn_placed(kind="team"), ExportOptions())
+
+    assert 'draw <span class="chip r">A ♥</span>' in _section_after(html, ">Top teams</h2>")
+
+
+def test_render_public_given_no_draw_renders_no_draw_badge() -> None:
+    """T-3 negative: an undrawn field renders no draw markup."""
+    html = render(_StubRide(), _placed_pair(), ExportOptions())
+
+    assert "draw <span" not in html
+
+
+def test_render_public_given_a_drawn_joker_renders_the_joker_chip() -> None:
+    """T-4 boundary: a joker draw renders the chip's own joker face."""
+    html = render(_StubRide(), _drawn_placed(code="JK"), ExportOptions())
+
+    assert 'draw <span class="chip j">★ JOKER</span>' in html
+
+
+@pytest.mark.parametrize("place", [1, 2, 3, 4])
+def test_render_public_renders_the_drawn_card_badge_on_every_podium_card(place: int) -> None:
+    """R-14: a drawn card shows on the podium, 1st through 3rd.
+
+    The draw decides 1st from 2nd, so the card that decided it belongs
+    on the most visible surface -- the dark first-place card and the
+    two plain ones all render the badge. Row 4 is the T-4 max+1
+    boundary: the macro renders whatever place it is handed.
+    """
+    html = render(_StubRide(), _drawn_placed(place=place), ExportOptions())
+
+    assert _CARD_DRAW_BADGE in _section_after(html, ">Best hands — top 3</h2>")
+
+
+def test_render_public_given_no_draw_renders_no_badge_on_the_podium() -> None:
+    """T-3 negative: an undrawn podium card carries no draw markup."""
+    html = render(_StubRide(), _placed_pair(), ExportOptions())
+
+    assert "draw <span" not in _section_after(html, ">Best hands — top 3</h2>")
+
+
+def test_render_public_renders_the_drawn_card_badge_in_the_team_full_field_row() -> None:
+    """R-14: the Teams full-field row shows it like the solo one."""
+    html = render(_StubRide(), _drawn_placed(kind="team"), ExportOptions())
+
+    assert 'draw <span class="chip r">A ♥</span>' in _section_after(html, ">Teams</h3>")
+
+
+def test_render_public_given_no_draw_renders_no_badge_in_the_team_full_field_row() -> None:
+    """T-3 negative: an undrawn team full-field row has no badge."""
+    html = render(_StubRide(), _field(teams=1, solo=0), ExportOptions())
+
+    assert "draw <span" not in _section_after(html, ">Teams</h3>")
+
+
+def test_build_payload_given_an_unverified_ride_carries_the_self_test_note() -> None:
+    """E6.4.3: the shared model composes the note the page renders."""
+    payload = build_payload(
+        _StubRide(),
+        _placed_pair(),
+        ExportOptions(),
+        _FIXTURE_GENERATED,
+        self_test_unverified=True,
+    )
+
+    assert payload.self_test_note == SELF_TEST_NOTE
+
+
+def test_build_payload_given_a_verified_ride_leaves_the_note_unset() -> None:
+    """T-3 negative: a verified ride carries no note to render."""
+    payload = build_payload(_StubRide(), _placed_pair(), ExportOptions(), _FIXTURE_GENERATED)
+
+    assert payload.self_test_note is None
+
+
+def test_render_public_given_an_unverified_ride_renders_the_note() -> None:
+    """E6.4.3: the page says so where it already renders its notes."""
+    html = render(_StubRide(), _placed_pair(), ExportOptions(), self_test_unverified=True)
+
+    assert f'<p class="mt-2 text-xs font-semibold text-steel-700">{SELF_TEST_NOTE}</p>' in html
+    record = json.loads(race_data_block(html))
+    assert record["selfTestNote"] == SELF_TEST_NOTE
+
+
+def test_render_public_given_a_verified_ride_renders_no_note() -> None:
+    """T-3 negative: a verified ride's page carries no note or key."""
+    html = render(_StubRide(), _placed_pair(), ExportOptions())
+
+    assert "Self-test unverified" not in html
+    assert "selfTestNote" not in race_data_block(html)
 
 
 # ------------------------------------------------- pure-function bounds
@@ -2041,6 +2185,44 @@ def test_render_poster_given_no_logo_embeds_the_transparent_fallback() -> None:
 
     assert _TRANSPARENT_PNG in page
     assert 'src=""' not in page
+
+
+def test_render_poster_given_a_drawn_card_renders_the_draw_badge() -> None:
+    """R-14: a poster card that drew shows the card it drew.
+
+    The HTML sibling of the PDF poster's own marker: the same badge the
+    results page's podium cards carry.
+    """
+    page = _poster_page(_drawn_placed(kind="team"))
+
+    assert _CARD_DRAW_BADGE in page
+
+
+def test_render_poster_given_no_draw_renders_no_draw_badge() -> None:
+    """T-3 negative: an undrawn field's poster has no draw badge."""
+    page = _poster_page(_poster_placed())
+
+    assert "draw <span" not in page
+
+
+def test_render_poster_given_an_unverified_ride_renders_the_self_test_note() -> None:
+    """E6.4.3: the poster's note seam carries the caption."""
+    page = render_poster(
+        _StubRide(),
+        _poster_placed(),
+        ExportOptions(),
+        generated=_FIXTURE_GENERATED,
+        self_test_unverified=True,
+    )
+
+    assert f'<p class="mt-2 text-xs font-semibold text-steel-700">{SELF_TEST_NOTE}</p>' in page
+
+
+def test_render_poster_given_a_verified_ride_renders_no_self_test_note() -> None:
+    """T-3 negative: a verified ride's poster carries no such note."""
+    page = _poster_page(_poster_placed())
+
+    assert "Self-test unverified" not in page
 
 
 def test_render_poster_given_a_logo_path_embeds_the_file_as_a_data_uri(
