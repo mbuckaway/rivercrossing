@@ -269,7 +269,7 @@ h2, h3 { scroll-margin-top: 1rem; }
 <h2 id="hand-rankings">Hand rankings</h2>
 <p>This list is the exact order the app uses, strongest first. A hand lower on the list beats every hand below it.</p>
 <ol>
-<li><strong>Five of a kind</strong> — needs a joker, or five identical physical cards from a multi-deck shoe.</li>
+<li><strong>Five of a kind</strong> — needs a joker (wild).</li>
 <li><strong>Royal flush</strong> — A-K-Q-J-10 of one suit.</li>
 <li><strong>Straight flush</strong> — five in a row of one suit.</li>
 <li><strong>Four of a kind</strong>.</li>
@@ -281,7 +281,7 @@ h2, h3 { scroll-margin-top: 1rem; }
 <li><strong>One pair</strong>.</li>
 <li><strong>High card</strong>.</li>
 </ol>
-<p>Duplicates across one entry are legal. A multi-deck shoe can deal the same card twice, so 9H 9H is a pair of nines. Two entries can also hold the same card code, because the shoe is shuffled, not dealt from a single deck.</p>
+<p>Duplicates across one entry are legal. A multi-deck shoe can deal the same card twice, so 9H 9H is a pair of nines. Five natural cards of one rank score as four of a kind, because five of a kind needs a joker. Two entries can also hold the same card code, because the shoe is shuffled, not dealt from a single deck.</p>
 <h2 id="scoring-references">Scoring references</h2>
 <p>These sources describe the rules the app follows. They corroborate the hand rankings and the shuffle.</p>
 <ul>
@@ -297,7 +297,7 @@ h2, h3 { scroll-margin-top: 1rem; }
 <ol>
 <li><strong>7,462 distinct ranks</strong> — the packaged rank table sorts to exactly the 7,462 natural 5-card ranks, with no gap and no repeat.</li>
 <li><strong>Joker vector table (28)</strong> — the 28 hand-authored wild-card vectors each still evaluate to their expected hand class and kickers.</li>
-<li><strong>Five-of-a-kind ordering</strong> — five of a kind outranks a royal flush, and a natural five of a kind outranks a wild one.</li>
+<li><strong>Five-of-a-kind ordering</strong> — five of a kind outranks a royal flush.</li>
 <li><strong>Whole-field 180×12 timing</strong> — a seeded 180-entry field of 12-card hands scores inside its budget.</li>
 <li><strong>compare() total order</strong> — hand comparison is still a strict total order, so the standings sort by the hands, not by crossing order.</li>
 <li><strong>best_hand() joker bound</strong> — a best hand never plays more than five jokers, even when the pool holds six or seven.</li>

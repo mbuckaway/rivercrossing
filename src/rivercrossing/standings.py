@@ -484,18 +484,15 @@ _RANK_PLURAL: dict[int, str] = {
 
 # The four classes built from a same-rank group, each named from that
 # group's rank in the plural: "Pair -- Aces", "Three of a Kind --
-# Sevens", "Four of a Kind -- Nines", "Five of a Kind -- Aces".
+# Sevens", "Four of a Kind -- Nines", "Five of a Kind -- Aces". The
+# rank is the highest-multiplicity one (_highest_count_rank), never an
+# exact group size: QUADS covers a four-card group and the five
+# identical naturals that also evaluate as quads.
 _GROUP_LABELS: dict[HandClass, str] = {
     HandClass.PAIR: "Pair",
     HandClass.TRIPS: "Three of a Kind",
     HandClass.QUADS: "Four of a Kind",
     HandClass.FIVE_OF_A_KIND: "Five of a Kind",
-}
-_GROUP_SIZE: dict[HandClass, int] = {
-    HandClass.PAIR: 2,
-    HandClass.TRIPS: 3,
-    HandClass.QUADS: 4,
-    HandClass.FIVE_OF_A_KIND: 5,
 }
 
 # The FULL_HOUSE branch needs its own two group sizes (3 over 2), and
@@ -528,6 +525,21 @@ def _rank_with_count(ranks: Sequence[int], count: int) -> int:
     return by_count[count]
 
 
+def _highest_count_rank(ranks: Sequence[int]) -> int:
+    """Return the rank appearing most often in *ranks*.
+
+    Ties break towards the higher rank, the order a hand's groups are
+    already sorted by. Needing no exact count is the point: five
+    identical naturals evaluate as QUADS (E2.1.3), so a group class's
+    own rank can appear anywhere from twice to five times, and an
+    exact-size lookup would raise :class:`KeyError` on that hand.
+
+    ``ranks`` is never empty here -- :func:`hand_name` rejects an
+    empty hand first -- so ``max()`` always has something to return.
+    """
+    return max(Counter(ranks).items(), key=lambda item: (item[1], item[0]))[0]
+
+
 def _straight_high(ranks: Sequence[int]) -> int:
     """Return a straight's display high rank, mindful of the wheel.
 
@@ -546,10 +558,12 @@ def hand_name(hand: EvaluatedHand) -> str:
     the exact vocabulary the golden exports pin: "High Card -- Ace",
     "Pair -- Aces", "Two Pair -- Kings & Fives", "Full House -- Aces
     over Fours", "Straight -- Nine high" (wheel = "Five high"), and
-    "Royal Flush" with no kicker suffix. A joker's resolution
-    (``jokers_played_as``) supplies its rank, so a joker-completed hand
-    names its true kickers. Fewer than 5 cards render the same prose
-    form as the class they make, with no marker.
+    "Royal Flush" with no kicker suffix. A group class names the rank
+    it holds most often, never a fixed group size -- five identical
+    naturals are quads, and still name their nines. A joker's
+    resolution (``jokers_played_as``) supplies its rank, so a
+    joker-completed hand names its true kickers. Fewer than 5 cards
+    render the same prose form as the class they make, with no marker.
 
     Args:
         hand: The evaluated hand to name.
@@ -567,7 +581,7 @@ def hand_name(hand: EvaluatedHand) -> str:
         raise ValueError(msg)
     cls = hand.cls
     if cls in _GROUP_LABELS:
-        rank = _rank_with_count(ranks, _GROUP_SIZE[cls])
+        rank = _highest_count_rank(ranks)
         return f"{_GROUP_LABELS[cls]} — {_RANK_PLURAL[rank]}"
     if cls is HandClass.TWO_PAIR:
         pair_ranks = sorted(rank for rank, n in Counter(ranks).items() if n == _PAIR_COUNT)
