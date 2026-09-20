@@ -1577,9 +1577,9 @@ def test_edit_rider_presenter_submit_given_a_relay_member_leaving_shows_validati
     assert len(roster.entries[0].riders) == 2
 
 
-def test_edit_rider_presenter_submit_given_a_post_start_leave_shows_validation() -> None:
-    """extract_rider_to_solo is DRAFT-only; a running ride refuses."""
-    roster = _draft_mixed_roster()
+def test_edit_rider_presenter_submit_given_a_post_start_relay_leave_shows_validation() -> None:
+    """A relay leave is still refused once the ride is RUNNING."""
+    roster = _draft_relay_roster()
     presenter, view = _edit_presenter(roster)
     roster.status = RideStatus.RUNNING
 
@@ -1590,7 +1590,7 @@ def test_edit_rider_presenter_submit_given_a_post_start_leave_shows_validation()
     assert view.calls == [
         (
             "show_validation",
-            ("a rider cannot be extracted to solo once the ride is running",),
+            ("a rider cannot be extracted to solo on a team_relay ride once running",),
         )
     ]
     assert len(roster.entries[0].riders) == 2

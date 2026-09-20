@@ -1158,10 +1158,14 @@ class Roster:
     def move_rider(self, rider: Rider, *, to_entry: Entry) -> None:
         """Move *rider* onto *to_entry* if the lock matrix allows it.
 
-        Both entries must be type TEAM -- a solo entry's one rider
-        is fixed by definition (S1) -- and the move must keep the
-        destination within max_team_size (R-12). The source team's
-        lower bound is a start-time check now
+        The destination must be type TEAM, keeping within
+        max_team_size (R-12); the source may be a team or a *solo*
+        entry. A solo source is one audited move: on a
+        ``rider_pooled`` ride the rider carries their own plate onto
+        the team, which recomputes its pooled plate (S1), and the
+        emptied solo entry dissolves (:meth:`_dissolve_entry`) -- a
+        solo entry has exactly one rider, so it never survives the
+        move. The source team's lower bound is a start-time check now
         (:meth:`validate_for_start`), not a move_rider invariant
         (2026-08-09 follow-on decision): dropping to a transient
         size-1 team succeeds; dropping its last rider dissolves the
@@ -1177,7 +1181,7 @@ class Roster:
                 roster.
             LockedError: the lock matrix forbids a move in the
                 ride's current state and plate model.
-            InvalidMoveError: either entry is not type TEAM, or the
+            InvalidMoveError: *to_entry* is not type TEAM, or the
                 move would exceed the destination's max size.
         """
         from_entry = self._find_owning_entry(rider)
@@ -1188,8 +1192,8 @@ class Roster:
         if not can_move_rider(self._status, self._plate_model):
             msg = f"rider moves are locked for a {self._plate_model} ride once {self._status}"
             raise LockedError(msg)
-        if from_entry.type is not EntryType.TEAM or to_entry.type is not EntryType.TEAM:
-            msg = "move_rider requires both entries to be team entries"
+        if to_entry.type is not EntryType.TEAM:
+            msg = "move_rider's destination must be a team entry"
             raise InvalidMoveError(msg)
         if len(to_entry.riders) + 1 > self._max_team_size:
             msg = "move would exceed the destination team's max size"
@@ -1275,15 +1279,19 @@ class Roster:
     def extract_rider_to_solo(self, rider: Rider) -> Entry:
         """Convert a rider_pooled team member into their own solo entry.
 
-        Spec S1 scopes team<->solo conversions to pre-start; R-17's
-        running carve-out covers only moves between teams, not this.
+        Gated by :func:`can_move_rider` -- the same (status,
+        plate_model) carve-out a move uses (R-17): DRAFT always
+        allows it, ``rider_pooled`` stays open while RUNNING and, as
+        a correction, once REOPENED, and FINISHED or any
+        post-start ``team_relay`` state refuses it.
         *rider*'s own plate becomes the new entry's; the source team
         recomputes its adopted plate, and dissolves outright if
         *rider* was its last member (:meth:`_dissolve_entry`).
 
         Raises:
             RiderNotFoundError: *rider* is not on any entry here.
-            LockedError: the ride has left DRAFT.
+            LockedError: the lock matrix forbids a conversion in the
+                ride's current state and plate model.
             PlateShapeError: this ride's plate_model is not
                 rider_pooled, or *rider*'s entry is not type TEAM.
         """
@@ -1291,8 +1299,11 @@ class Roster:
         if entry is None:
             msg = "rider is not on any entry in this roster"
             raise RiderNotFoundError(msg)
-        if not can_edit_structure(self._status):
-            msg = f"a rider cannot be extracted to solo once the ride is {self._status}"
+        if not can_move_rider(self._status, self._plate_model):
+            msg = (
+                f"a rider cannot be extracted to solo on a {self._plate_model} "
+                f"ride once {self._status}"
+            )
             raise LockedError(msg)
         if self._plate_model is not PlateModel.RIDER_POOLED or entry.type is not EntryType.TEAM:
             msg = "extract_rider_to_solo requires a rider_pooled team member"
@@ -1469,16 +1480,18 @@ class Roster:
         return f"entries can no longer be deleted once the ride is {self._status}"
 
     def _dissolve_entry(self, entry: Entry) -> None:
-        """Remove *entry* once move_rider has emptied it (E3.2).
+        """Remove *entry* once a move or removal has emptied it (E3.2).
 
-        An empty team has no plate owner and no size-0 representation
+        An empty entry has no plate owner and no size-0 representation
         (spec S2); it ceases to exist rather than lingering as an
-        empty row in :attr:`entries`.
+        empty row in :attr:`entries`. The logged action names what
+        dissolved: a TEAM entry logs ``dissolve_team_entry``, any
+        other entry -- a solo one, once :meth:`move_rider` carries its
+        single rider away -- logs ``dissolve_entry``.
         """
         self._entries.remove(entry)
-        self._log(
-            "dissolve_team_entry", {"plate": entry.plate, "display_name": entry.display_name}
-        )
+        action = "dissolve_team_entry" if entry.type is EntryType.TEAM else "dissolve_entry"
+        self._log(action, {"plate": entry.plate, "display_name": entry.display_name})
 
     def _require_plate_free_for_change(self, new_plate: str, *, exclude: str) -> None:
         """Raise unless *new_plate* is free, or equal to *exclude*.
