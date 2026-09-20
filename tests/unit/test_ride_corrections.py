@@ -101,6 +101,32 @@ def _pooled_team_roster() -> Roster:
     return roster
 
 
+def _two_team_pooled_roster() -> Roster:
+    """Build a MIXED rider_pooled roster of two two-rider teams.
+
+    Team A's riders hold plates "1" and "2" -- so A's own derived
+    plate is "1" -- and team B's hold "3" and "4" (derived "3"): two
+    teams of a pooled ride, the pair E3.1.2's lock matrix keeps
+    team-to-team rider moves open between while the ride is RUNNING.
+    """
+    roster = Roster(entry_mode=EntryMode.MIXED, plate_model=PlateModel.RIDER_POOLED)
+    roster.create_team_entry(
+        display_name="Team A",
+        riders=[
+            Rider(first_name="Ada", last_name="", plate="1"),
+            Rider(first_name="Bea", last_name="", plate="2"),
+        ],
+    )
+    roster.create_team_entry(
+        display_name="Team B",
+        riders=[
+            Rider(first_name="Cleo", last_name="", plate="3"),
+            Rider(first_name="Dana", last_name="", plate="4"),
+        ],
+    )
+    return roster
+
+
 def _make_engine(
     *,
     roster: Roster | None = None,
@@ -1048,3 +1074,57 @@ def test_apply_confirm_held_event_finds_the_target_beyond_the_first_crossing() -
 # The snapshot DNF behavior itself is pinned in tests/unit/test_ride.py
 # (test_snapshot_includes_dnf_entries_with_dnf_flag); mark_dnf's own
 # "keeps laps/cards and flips snapshot().dnf" cascade is covered above.
+
+
+# ============== E3.1.2 pooled live move vs replay equivalence
+
+
+def test_ride_move_replay_diverges_red() -> None:
+    """A RUNNING pooled move leaves the live engine unlike a replay.
+
+    RED -- a de-risk spike for the pooled-live-move work, pinning the
+    seam that work must close. The engine keys ``_laps``/``_hand`` and
+    each ``Crossing.entry_id`` by ``entry.plate``, and a
+    ``rider_pooled`` team's plate is *derived* from its
+    lowest-numbered member and re-derived by ``Roster.move_rider``.
+    E3.1.2's lock matrix keeps team-to-team moves open while the ride
+    is RUNNING, so a mid-ride move re-plates both teams with no engine
+    notification: the live engine keeps the crossings, the held card
+    and the credited hand under team A's old plate "1", while a fresh
+    replay of the same event log against the FINAL roster resolves the
+    typed plate "2" to team A's new plate "2" and keys them there.
+    Live and replay must agree; today they do not.
+    """
+    config = _config(hold_short_laps=True)
+    live_roster = _two_team_pooled_roster()
+    team_a, team_b = live_roster.entries
+    live, _ = _make_engine(roster=live_roster, config=config)
+    live.start(at=_dt(10, 0))
+    live.record_crossing("2", at=_dt(10, 0, 30))  # 30 s < min_lap_s -> held
+    live.record_crossing("2", at=_dt(10, 30))  # 1770 s lap -> credited
+
+    # E3.1.2: a RUNNING rider_pooled ride still allows the move, and
+    # moving A's anchor re-derives both derived plates -- A "1" -> "2"
+    # and B "3" -> "1", the very plate the crossings were keyed under.
+    anchor = next(rider for rider in team_a.riders if rider.plate == "1")
+    live_roster.move_rider(anchor, to_entry=team_b)
+
+    # The Store.load_engine rebuild: a fresh same-seed shoe and clock,
+    # the FINAL roster, then the live engine's own event log.
+    replay_roster = _two_team_pooled_roster()
+    replay_a, replay_b = replay_roster.entries
+    replay_anchor = next(rider for rider in replay_a.riders if rider.plate == "1")
+    replay_roster.move_rider(replay_anchor, to_entry=replay_b)
+    replayed, _ = _make_engine(roster=replay_roster, config=config)
+    for event in live.events:
+        replayed.apply(event)
+
+    assert (
+        replayed.crossings,
+        replayed.held_crossings(),
+        tuple(replayed.credited_cards(entry.plate) for entry in replayed._roster.entries),
+    ) == (
+        live.crossings,
+        live.held_crossings(),
+        tuple(live.credited_cards(entry.plate) for entry in live._roster.entries),
+    )
