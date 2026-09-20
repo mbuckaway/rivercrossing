@@ -1158,17 +1158,17 @@ class RideEngine:
       is already final (``Store.load_engine`` rebuilds it from the
       entry/rider tables, never from the event log), so the recorded
       laps re-key onto the destination exactly as they did live.
-    - **Known gap: a solo-sourced move cannot be replayed.** The
-      ``record_crossing`` rows recorded before such a move carry the
-      *dissolved* solo entry's key, and ``apply`` resolves those by
-      key -- a key the reloaded roster no longer holds, because
-      ``Store.save_roster`` writes a snapshot of the live entries and
-      a dissolved entry is not among them. Reopening such a ride
-      raises ``UnknownPlateError`` from the replay seam. The same gap
-      already exists for the roster-level solo move Phase 2 opened;
-      closing it needs a decision above this module (persist a
-      retired entry row, or re-key the earlier rows), so it is
-      recorded here rather than invented.
+    - **A dissolved source entry is retired, so its key survives.**
+      The ``record_crossing`` rows recorded before a solo-sourced move
+      carry the *dissolved* solo entry's key, and ``apply`` resolves
+      those by key -- so a dissolve keeps an entry that carries
+      recorded data instead of discarding it (``Roster``'s retired
+      collection, persisted by ``Store.save_roster`` as
+      ``entry.retired = 1`` and restored by ``Store._load_roster``).
+      A reloaded ride therefore still resolves the pre-move rows, and
+      a replayed ``mark_has_data`` on the retired entry is a known
+      entry, not a foreign one. An entry dissolved with no recorded
+      data is still discarded outright: nothing names its key.
     - **A voided lap of the moved rider is re-interpreted, not
       restored.** The pre-void held/credited disposition is not
       stored, so the restored lap's short-lap disposition is

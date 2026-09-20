@@ -53,6 +53,14 @@ start"): ``add_rider_to_team`` attaches a brand-new or currently-
 solo rider straight onto a team, and ``extract_rider_to_solo``
 converts a pooled team member into their own solo entry.
 
+A dissolved entry that carries recorded data is **retired**, never
+discarded (:attr:`Roster.retired_entries`): the ride engine files its
+crossings and credited hands under ``Entry.key`` and replay resolves
+those stored rows by key, so the key of the entry a move dissolves
+has to stay resolvable -- across a reload too, which is why
+:class:`~rivercrossing.store.Store` persists retired entries.
+An entry with no recorded data is removed outright: nothing names it.
+
 ``Entry`` and ``Rider`` compare by identity, not by field value
 (``eq=False``): they are living records a caller holds a reference
 to across renames and moves, not interchangeable values like
@@ -512,6 +520,7 @@ class Roster:
         self._plate_model = plate_model
         self._status = RideStatus.DRAFT
         self._entries: list[Entry] = []
+        self._retired: list[Entry] = []
         self._audit_log: list[AuditEvent] = []
         self._team_logo_seed = team_logo_seed
         self._team_logo_codes = (
@@ -587,6 +596,19 @@ class Roster:
         return tuple(self._entries)
 
     @property
+    def retired_entries(self) -> tuple[Entry, ...]:
+        """Return every retired entry, in dissolve order, read-only.
+
+        A dissolved entry that carried recorded data keeps its
+        :attr:`Entry.key` resolvable here (:meth:`entry_by_key`) so a
+        reloaded ride's replay can still resolve the rows recorded
+        before the move that dissolved it (E3.1.2's pooled-live-move
+        replay seam). A data-less entry is discarded outright and
+        never appears.
+        """
+        return tuple(self._retired)
+
+    @property
     def audit_log(self) -> tuple[AuditEvent, ...]:
         """Return every audit event, oldest first, read-only."""
         return tuple(self._audit_log)
@@ -621,6 +643,25 @@ class Roster:
             entries: The entries to restore, in creation order.
         """
         self._entries.extend(entries)
+
+    def load_retired_entries(self, entries: Sequence[Entry]) -> None:
+        """Restore persisted retired entries wholesale (store seam).
+
+        :meth:`load_entries`'s counterpart for
+        :attr:`retired_entries`, with the same
+        reconstruction-not-mutation contract: appends *entries* with no
+        validation and no audit logging, because the rows came from a
+        consistent persisted state and a restore is not a live edit.
+        ``Store._load_roster`` calls this to rebuild the entries a ride
+        has retired, which is what keeps their keys resolvable for
+        replay. A restored retired entry carries no riders and no
+        ``has_data`` flag -- the store persists neither for a retired
+        row.
+
+        Args:
+            entries: The retired entries to restore, in dissolve order.
+        """
+        self._retired.extend(entries)
 
     def next_team_logo_card(self, after: str | None = None) -> str | None:
         """Return the next unused seeded logo card at/after *after*.
@@ -724,10 +765,13 @@ class Roster:
         replaying an event resolves its entry by the key the payload
         carries -- a lookup no re-plating can invalidate, where the
         plate the operator typed at the time is exactly what a move
-        re-derives. An unknown key is the None case, never an error:
-        replay's own ``_require_entry_by_key`` is what refuses.
+        re-derives. Retired entries are searched too, because a move
+        that dissolves a solo entry still leaves the crossings it
+        recorded filed under that entry's key (:attr:`retired_entries`).
+        An unknown key is the None case, never an error: replay's own
+        ``_require_entry_by_key`` is what refuses.
         """
-        for entry in self._entries:
+        for entry in (*self._entries, *self._retired):
             if entry.key == key:
                 return entry
         return None
@@ -1488,8 +1532,16 @@ class Roster:
         dissolved: a TEAM entry logs ``dissolve_team_entry``, any
         other entry -- a solo one, once :meth:`move_rider` carries its
         single rider away -- logs ``dissolve_entry``.
+
+        An entry that carries recorded data is *retired* instead of
+        discarded (:attr:`retired_entries`): replay resolves the
+        crossings filed under its key, so a key that vanished here
+        would leave the ride un-reopenable. A data-less entry is
+        removed outright -- nothing names it.
         """
         self._entries.remove(entry)
+        if entry.has_data:
+            self._retired.append(entry)
         action = "dissolve_team_entry" if entry.type is EntryType.TEAM else "dissolve_entry"
         self._log(action, {"plate": entry.plate, "display_name": entry.display_name})
 
@@ -1515,8 +1567,13 @@ class Roster:
         return self.next_team_logo_card()
 
     def _require_known_entry(self, entry: Entry) -> None:
-        """Raise EntryNotFoundError unless *entry* is a member here."""
-        if entry not in self._entries:
+        """Raise EntryNotFoundError unless *entry* is known here.
+
+        A retired entry is known: replay marks the retired entry a
+        pre-move crossing row names (:meth:`mark_has_data`), and that
+        must not read as a foreign entry.
+        """
+        if entry not in self._entries and entry not in self._retired:
             msg = "entry is not a member of this roster"
             raise EntryNotFoundError(msg)
 

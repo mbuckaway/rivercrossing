@@ -1,17 +1,26 @@
 # SPDX-License-Identifier: GPL-3.0-only
 """Unit tests for rivercrossing.store (E5.1.1: schema + version gate).
 
-Tests first (R-70). The store's schema is a single flattened v1
-baseline: ``Store.open`` creates it on a fresh file and stamps
-``schema_version.version = 1``, re-opening a v1 file is an idempotent
-no-op, and a file stamped with any other version refuses to open with
+Tests first (R-70). The store's schema is versioned and migrated:
+``Store.open`` creates the current schema on a fresh file and stamps
+``SCHEMA_VERSION``, re-opening a current file is an idempotent no-op,
+a file stamped OLDER is upgraded in place by the migration chain, and
+only a file stamped NEWER than this build refuses to open, with
 :class:`~rivercrossing.store.SchemaVersionMismatchError` naming what
-it found. The v0 -> v1 -> v2 -> v3 migration chain was removed with
-the flatten (unreleased code; migrations return post-release).
+it found (product-owner policy: every schema change bumps the version
+and ships a migration, spec §2).
 
 E5.1.1's own surface is small: ``create_ride`` persists a
 :class:`RideConfig` row (logo BLOB, JSON tiebreak order, DB-owned
 seed) and ``rides()`` lists the library.
+
+The last section covers the pooled-live-move persistence seam: an
+entry a move dissolved after it recorded data is written with
+``entry.retired = 1`` and reloads into the roster's retired
+collection, which is what keeps its stable key resolvable for a
+replayed ``record_crossing``. The per-ride plate uniqueness moved to
+a partial unique index over the live rows alone, so a retired row may
+hold the plate the destination team has since adopted.
 
 No mocks anywhere: every test drives real sqlite3 against a
 ``tmp_path`` file (the task's own "no mocks of sqlite3 beyond
@@ -28,6 +37,7 @@ import json
 import re
 import sqlite3
 import tempfile
+import uuid
 from contextlib import closing
 from datetime import UTC, date, datetime
 from pathlib import Path
@@ -59,6 +69,7 @@ from rivercrossing.store import (
     StoreError,
     backup,
 )
+from rivercrossing.store.migrations import MIGRATIONS, run_migrations
 from rivercrossing.store.schema import (
     SCHEMA_STATEMENTS,
     SCHEMA_VERSION,
@@ -126,12 +137,13 @@ def _deal_all(shoe: Shoe) -> list[Card]:
 # ------------------------------------------------------------- open
 
 
-def test_store_open_fresh_db_creates_the_full_v1_schema(tmp_path: Path) -> None:
-    """A fresh database opens with every spec table at schema version 1.
+def test_store_open_fresh_db_creates_the_full_current_schema(tmp_path: Path) -> None:
+    """A fresh file gets every spec table at the current shape.
 
-    The flattened baseline: ``ride.hold_short_laps`` is part of v1 (no
-    ALTER brings it later), ``entry`` carries no retired ``logo_png``
-    image column, and ``rider`` carries the nullable ``sex`` column.
+    The current (v2) shape: ``ride.hold_short_laps`` and
+    ``ride.jokers_mode`` are plain columns, ``entry`` carries the stable
+    ``key`` and the ``retired`` flag, ``rider`` carries the nullable
+    ``sex``, and no retired ``logo_png`` image column is anywhere.
     """
     db_path = tmp_path / "rides.db"
 
@@ -158,9 +170,9 @@ def test_store_open_fresh_db_creates_the_full_v1_schema(tmp_path: Path) -> None:
         assert conn.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
 
     assert expected <= names
-    assert "hold_short_laps" in ride_columns
+    assert {"hold_short_laps", "jokers_mode"} <= ride_columns
+    assert {"key", "retired", "logo_card"} <= entry_columns
     assert "logo_png" not in entry_columns
-    assert "logo_card" in entry_columns
     assert "sex" in rider_columns
 
 
@@ -183,8 +195,8 @@ def test_store_open_creates_missing_parent_directories(tmp_path: Path) -> None:
         assert conn.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
 
 
-def test_store_open_stamps_the_ledger_at_schema_version_1(tmp_path: Path) -> None:
-    """schema_version holds exactly one row, stamped at v1."""
+def test_store_open_stamps_the_ledger_at_the_current_schema_version(tmp_path: Path) -> None:
+    """One ledger row, stamped at the current schema version."""
     db_path = tmp_path / "rides.db"
 
     Store.open(db_path).close()
@@ -193,7 +205,7 @@ def test_store_open_stamps_the_ledger_at_schema_version_1(tmp_path: Path) -> Non
         version = conn.execute("SELECT version FROM schema_version WHERE id = 1").fetchone()[0]
         rows = conn.execute("SELECT COUNT(*) FROM schema_version").fetchone()[0]
 
-    assert SCHEMA_VERSION == 1
+    assert SCHEMA_VERSION == 2
     assert (version, rows) == (SCHEMA_VERSION, 1)
 
 
@@ -220,10 +232,10 @@ def test_store_open_applies_spec_pragmas_to_every_connection(tmp_path: Path) -> 
         assert conn.execute("PRAGMA journal_mode").fetchone()[0] == "wal"
 
 
-def test_store_open_version_1_database_reopens_as_a_noop_keeping_its_rides(
+def test_store_open_current_version_database_reopens_as_a_noop_keeping_its_rides(
     tmp_path: Path,
 ) -> None:
-    """Reopening a version-1 database keeps its rides untouched."""
+    """Reopening a current file keeps its rides untouched."""
     db_path = tmp_path / "rides.db"
     store = Store.open(db_path)
     ride_id = store.create_ride(_config(name="Idempotent"))
@@ -250,8 +262,8 @@ def test_store_open_version_1_database_reopens_as_a_noop_keeping_its_rides(
     assert (version, rows) == (SCHEMA_VERSION, 1)
 
 
-def test_store_open_given_an_empty_file_creates_the_full_v1_schema(tmp_path: Path) -> None:
-    """A pre-schema file becomes a full v1 database."""
+def test_store_open_given_an_empty_file_creates_the_full_current_schema(tmp_path: Path) -> None:
+    """A pre-schema file becomes a full current-version database."""
     db_path = tmp_path / "v0.db"
     sqlite3.connect(str(db_path)).close()
 
@@ -274,18 +286,18 @@ def test_store_open_given_an_empty_file_creates_the_full_v1_schema(tmp_path: Pat
     assert "hold_short_laps" in columns
 
 
-@pytest.mark.parametrize("stored_version", [2, 3, 99])
-def test_store_open_given_a_mismatched_version_raises_naming_it(
+@pytest.mark.parametrize("stored_version", [3, 99, 999])
+def test_store_open_given_a_newer_version_raises_naming_it(
     tmp_path: Path, stored_version: int
 ) -> None:
-    """A file stamped with any version but 1 refuses to open, naming it.
+    """A file stamped above SCHEMA_VERSION refuses to open, naming it.
 
-    The flattened schema has exactly one version -- 1 -- so a file from
-    an older (v2/v3) or newer (99) build cannot be read honestly. The
-    refusal names what the ledger holds, what this build expects, and
-    the way out (rename or delete the file), and it is a
-    :class:`StoreError` subclass so existing "did it fail" callers keep
-    working.
+    Older stamps migrate (there is no reason to refuse a file this build
+    can upgrade); a NEWER one has no downgrade path, so it is refused
+    rather than read under a shape it was not written with. The refusal
+    names what the ledger holds, what this build expects, and the way
+    out (rename or delete the file), and it is a :class:`StoreError`
+    subclass so existing "did it fail" callers keep working.
     """
     db_path = tmp_path / f"v{stored_version}.db"
     conn = sqlite3.connect(str(db_path))
@@ -398,6 +410,607 @@ def test_store_open_does_not_retry_persistent_errors(
 def test_store_schema_version_mismatch_error_is_a_store_error() -> None:
     """The refusal surfaces as a StoreError subclass."""
     assert issubclass(SchemaVersionMismatchError, StoreError)
+
+
+# ------------------------------------------------ v1 -> v2 migration
+# Product-owner policy (spec §2): every schema change bumps
+# SCHEMA_VERSION and ships a migration that upgrades an older file in
+# place. These tests hand-build a released-build v1 database -- the
+# frozen DDL below, never SCHEMA_STATEMENTS, because what is actually on
+# disk in a 1.0.x file is the whole point -- and drive it through
+# Store.open.
+#
+# v1 -> v2 touches ``entry`` alone: it gains the stable ``key`` and the
+# ``retired`` flag, and its inline ``UNIQUE (ride_id, plate)`` moves to
+# the partial unique index over the live rows (SQLite cannot drop a
+# table-level UNIQUE, so the migration is the standard table rebuild).
+# Every other table is frozen here unchanged, so a later edit to
+# SCHEMA_STATEMENTS can never rewrite what an existing file holds.
+
+_V1_LEDGER_DDL = (
+    "CREATE TABLE schema_version (id INTEGER PRIMARY KEY CHECK (id = 1), version INTEGER NOT NULL)"
+)
+
+_V1_DDL: tuple[str, ...] = (
+    """
+    CREATE TABLE ride (
+        id                 INTEGER PRIMARY KEY,
+        name               TEXT    NOT NULL,
+        event_date         TEXT    NOT NULL,
+        venue              TEXT    NOT NULL,
+        course_name        TEXT    NOT NULL,
+        lap_km             REAL    NOT NULL,
+        organizer          TEXT    NOT NULL,
+        scorer             TEXT    NOT NULL,
+        logo_png           BLOB,
+        planned_start      INTEGER NOT NULL,
+        planned_duration_s INTEGER NOT NULL,
+        actual_start       INTEGER,
+        finished_at        INTEGER,
+        status             TEXT    NOT NULL DEFAULT 'draft'
+                             CHECK (status IN
+                               ('draft', 'running', 'finished', 'reopened')),
+        entry_mode         TEXT    NOT NULL
+                             CHECK (entry_mode IN ('solo', 'mixed')),
+        max_team_size      INTEGER NOT NULL,
+        plate_model        TEXT    NOT NULL
+                             CHECK (plate_model IN
+                               ('rider_pooled', 'team_relay')),
+        min_lap_s          INTEGER NOT NULL,
+        deck_count         INTEGER NOT NULL,
+        jokers_per_deck    INTEGER NOT NULL,
+        jokers_mode        TEXT    NOT NULL DEFAULT 'total'
+                             CHECK (jokers_mode IN ('per_deck', 'total')),
+        max_cards          INTEGER,
+        tiebreak_order     TEXT    NOT NULL,
+        rng_seed           INTEGER NOT NULL,
+        created_at         INTEGER NOT NULL,
+        updated_at         INTEGER NOT NULL,
+        hold_short_laps    INTEGER NOT NULL DEFAULT 1
+    )
+    """,
+    """
+    CREATE TABLE entry (
+        id           INTEGER PRIMARY KEY,
+        ride_id      INTEGER NOT NULL REFERENCES ride(id),
+        plate        TEXT    NOT NULL,
+        display_name TEXT    NOT NULL,
+        type         TEXT    NOT NULL CHECK (type IN ('solo', 'team')),
+        team_size    INTEGER NOT NULL,
+        status       TEXT    NOT NULL CHECK (status IN ('active', 'dnf')),
+        dnf_at       INTEGER,
+        notes        TEXT,
+        logo_card    TEXT,
+        UNIQUE (ride_id, plate)
+    )
+    """,
+    """
+    CREATE TABLE rider (
+        id                INTEGER PRIMARY KEY,
+        entry_id          INTEGER NOT NULL REFERENCES entry(id),
+        first_name        TEXT    NOT NULL,
+        last_name         TEXT    NOT NULL,
+        plate             TEXT,
+        sort_order        INTEGER NOT NULL,
+        sex               TEXT    CHECK (sex IN ('M', 'F')),
+        emergency_contact TEXT,
+        waiver_signed     INTEGER,
+        ccn_reg_id        TEXT
+    )
+    """,
+    """
+    CREATE TABLE crossing (
+        id          INTEGER PRIMARY KEY,
+        ride_id     INTEGER NOT NULL REFERENCES ride(id),
+        entry_id    INTEGER NOT NULL REFERENCES entry(id),
+        rider_id    INTEGER REFERENCES rider(id),
+        seq         INTEGER NOT NULL,
+        crossed_at  INTEGER NOT NULL,
+        lap_s       INTEGER NOT NULL,
+        flag        TEXT    NOT NULL
+                      CHECK (flag IN ('none', 'short', 'manual')),
+        voided      INTEGER NOT NULL DEFAULT 0,
+        void_reason TEXT,
+        UNIQUE (entry_id, seq)
+    )
+    """,
+    """
+    CREATE TABLE card (
+        id          INTEGER PRIMARY KEY,
+        ride_id     INTEGER NOT NULL REFERENCES ride(id),
+        entry_id    INTEGER NOT NULL REFERENCES entry(id),
+        crossing_id INTEGER REFERENCES crossing(id),
+        shoe_index  INTEGER,
+        rank        INTEGER NOT NULL
+                      CHECK (rank = 0 OR rank BETWEEN 2 AND 14),
+        suit        TEXT    CHECK (suit IN ('s', 'h', 'd', 'c')),
+        state       TEXT    NOT NULL
+                      CHECK (state IN ('held', 'dealt', 'voided')),
+        dealt_at    INTEGER NOT NULL
+    )
+    """,
+    """
+    CREATE TABLE app_session (
+        id             INTEGER PRIMARY KEY,
+        opened_at      INTEGER NOT NULL,
+        closed_at      INTEGER,
+        active_ride_id INTEGER REFERENCES ride(id),
+        heartbeat_at   INTEGER
+    )
+    """,
+    """
+    CREATE TABLE audit (
+        id           INTEGER PRIMARY KEY,
+        ride_id      INTEGER NOT NULL REFERENCES ride(id),
+        at           INTEGER NOT NULL,
+        action       TEXT    NOT NULL,
+        payload_json TEXT    NOT NULL
+    )
+    """,
+)
+
+_V1_RIDE_ROW = """
+    INSERT INTO ride (
+        id, name, event_date, venue, course_name, lap_km, organizer, scorer,
+        logo_png, planned_start, planned_duration_s, actual_start, finished_at,
+        status, entry_mode, max_team_size, plate_model, min_lap_s, deck_count,
+        jokers_per_deck, jokers_mode, max_cards, tiebreak_order, rng_seed,
+        created_at, updated_at, hold_short_laps
+    ) VALUES (
+        1, 'GORBA EPIC 2026', '2026-09-20', 'Sea to Sky Gondola', 'Gondola Loop',
+        8.0, 'GORBA', 'K. Singh', NULL, 1789898400, 21600, 1789898400, NULL,
+        'running', 'mixed', 4, 'rider_pooled', 1080, 8, 2, 'total', NULL,
+        '["laps","total_time","high_card"]', 20260920, 1789898400, 1789898400, 1
+    )
+"""
+
+# Three entries: a solo entry with recorded data, a team entry, and a
+# DNF solo -- the id/plate/name/status spread the migration must copy.
+_V1_ENTRY_ROWS: tuple[str, ...] = (
+    """
+    INSERT INTO entry (id, ride_id, plate, display_name, type, team_size,
+                       status, dnf_at, notes, logo_card)
+    VALUES (1, 1, '12', 'Alice', 'solo', 1, 'active', NULL, '', NULL)
+    """,
+    """
+    INSERT INTO entry (id, ride_id, plate, display_name, type, team_size,
+                       status, dnf_at, notes, logo_card)
+    VALUES (2, 1, '45', 'Dirt Dynamos', 'team', 2, 'active', NULL,
+            'carry a tail light', NULL)
+    """,
+    """
+    INSERT INTO entry (id, ride_id, plate, display_name, type, team_size,
+                       status, dnf_at, notes, logo_card)
+    VALUES (3, 1, '9', 'Bo', 'solo', 1, 'dnf', 1789899000, 'cramp', 'As')
+    """,
+)
+
+# The child rows whose ``entry_id`` links the entry rebuild must keep
+# resolving: 4 riders, 3 crossings, 3 cards, one open app_session and
+# one audit row.
+_V1_CHILD_ROWS: tuple[str, ...] = (
+    """
+    INSERT INTO rider (id, entry_id, first_name, last_name, plate, sort_order,
+                       sex, emergency_contact, waiver_signed, ccn_reg_id)
+    VALUES (1, 1, 'Alice', 'Wong', '12', 0, 'F', '604-555-0101', 1, 'CCN-77')
+    """,
+    """
+    INSERT INTO rider (id, entry_id, first_name, last_name, plate, sort_order,
+                       sex, emergency_contact, waiver_signed, ccn_reg_id)
+    VALUES (2, 2, 'Sarah', 'Roy', '45', 0, 'F', NULL, NULL, NULL)
+    """,
+    """
+    INSERT INTO rider (id, entry_id, first_name, last_name, plate, sort_order,
+                       sex, emergency_contact, waiver_signed, ccn_reg_id)
+    VALUES (3, 2, 'Priya', 'Nair', '46', 1, 'F', NULL, NULL, NULL)
+    """,
+    """
+    INSERT INTO rider (id, entry_id, first_name, last_name, plate, sort_order,
+                       sex, emergency_contact, waiver_signed, ccn_reg_id)
+    VALUES (4, 3, 'Bo', 'Diaz', '9', 0, 'M', NULL, NULL, NULL)
+    """,
+    """
+    INSERT INTO crossing (id, ride_id, entry_id, rider_id, seq, crossed_at,
+                          lap_s, flag, voided, void_reason)
+    VALUES (1, 1, 1, 1, 1, 1789898520, 120, 'none', 0, NULL)
+    """,
+    """
+    INSERT INTO crossing (id, ride_id, entry_id, rider_id, seq, crossed_at,
+                          lap_s, flag, voided, void_reason)
+    VALUES (2, 1, 1, 1, 2, 1789898640, 132, 'none', 0, NULL)
+    """,
+    """
+    INSERT INTO crossing (id, ride_id, entry_id, rider_id, seq, crossed_at,
+                          lap_s, flag, voided, void_reason)
+    VALUES (3, 1, 2, 2, 1, 1789898700, 180, 'short', 1, 'cut the loop')
+    """,
+    """
+    INSERT INTO card (id, ride_id, entry_id, crossing_id, shoe_index, rank,
+                      suit, state, dealt_at)
+    VALUES (1, 1, 1, 1, 0, 14, 's', 'dealt', 1789898520)
+    """,
+    """
+    INSERT INTO card (id, ride_id, entry_id, crossing_id, shoe_index, rank,
+                      suit, state, dealt_at)
+    VALUES (2, 1, 1, 2, 1, 3, 'h', 'dealt', 1789898640)
+    """,
+    """
+    INSERT INTO card (id, ride_id, entry_id, crossing_id, shoe_index, rank,
+                      suit, state, dealt_at)
+    VALUES (3, 1, 2, 3, 2, 0, NULL, 'held', 1789898700)
+    """,
+    """
+    INSERT INTO app_session (id, opened_at, closed_at, active_ride_id, heartbeat_at)
+    VALUES (1, 1789898000, NULL, 1, 1789898900)
+    """,
+    """
+    INSERT INTO audit (id, ride_id, at, action, payload_json)
+    VALUES (1, 1, 1789898400, 'start_ride', '{"source": "setup"}')
+    """,
+)
+
+_V1_SEED: tuple[str, ...] = (_V1_RIDE_ROW, *_V1_ENTRY_ROWS, *_V1_CHILD_ROWS)
+
+# One lone entry, and one no-entry ride: the single/many/empty boundary
+# rows a rebuild has to copy (or not) without special-casing.
+_V1_SINGLE_ENTRY_SEED: tuple[str, ...] = (
+    _V1_RIDE_ROW,
+    """
+    INSERT INTO entry (id, ride_id, plate, display_name, type, team_size,
+                       status, dnf_at, notes, logo_card)
+    VALUES (1, 1, '12', 'Alice', 'solo', 1, 'active', NULL, '', NULL)
+    """,
+)
+
+# A v1 file whose rider row points at an entry that does not exist (a
+# corruption an FK-off writer can leave behind). The rebuild's
+# ``foreign_key_check`` must catch it rather than paper over it.
+_V1_ORPHAN_SEED: tuple[str, ...] = (
+    _V1_RIDE_ROW,
+    """
+    INSERT INTO rider (id, entry_id, first_name, last_name, plate, sort_order)
+    VALUES (1, 7, 'Ghost', 'Rider', '7', 0)
+    """,
+)
+
+
+def _write_v1_file(db_path: Path, seed: tuple[str, ...] = ()) -> None:
+    """Write a released-build v1 database file (arrange).
+
+    The frozen v1 DDL, the ledger stamped 1, then the *seed* rows -- the
+    exact file a 1.0.x build left on disk.
+    """
+    conn = sqlite3.connect(str(db_path))
+    try:
+        for statement in (*_V1_DDL, _V1_LEDGER_DDL, "INSERT INTO schema_version VALUES (1, 1)"):
+            conn.execute(statement)
+        for statement in seed:
+            conn.execute(statement)
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def _read(db_path: Path, sql: str) -> list[tuple[object, ...]]:
+    """Run one read-only query against *db_path* (assertion aid).
+
+    Reads through a second, independent connection: the point is what
+    landed on disk, not what the facade keeps in memory.
+    """
+    with closing(sqlite3.connect(str(db_path))) as conn:
+        return [tuple(row) for row in conn.execute(sql)]
+
+
+def test_store_open_migrates_a_v1_file_to_the_current_schema_version(tmp_path: Path) -> None:
+    """A v1 file is upgraded in place, not refused."""
+    db_path = tmp_path / "v1.db"
+    _write_v1_file(db_path, seed=_V1_SEED)
+
+    Store.open(db_path).close()
+
+    assert _read(db_path, "SELECT version FROM schema_version WHERE id = 1") == [(2,)]
+
+
+def test_store_open_v1_migration_rebuilds_entry_in_the_v2_shape(tmp_path: Path) -> None:
+    """The rebuilt entry table is the v2 column list, in order."""
+    db_path = tmp_path / "v1.db"
+    _write_v1_file(db_path, seed=_V1_SEED)
+
+    Store.open(db_path).close()
+
+    columns = [row[1] for row in _read(db_path, "PRAGMA table_info(entry)")]
+
+    assert columns == [
+        "id",
+        "ride_id",
+        "plate",
+        "key",
+        "display_name",
+        "type",
+        "team_size",
+        "status",
+        "dnf_at",
+        "notes",
+        "logo_card",
+        "retired",
+    ]
+
+
+def test_store_open_v1_migration_mints_a_fresh_uuid4_key_per_entry(tmp_path: Path) -> None:
+    """Every migrated entry gets a fresh key in Entry.key's own format.
+
+    ``uuid.uuid4().hex`` is the expression ``roster.Entry.key`` mints
+    with (32 lowercase hex digits, version nibble 4), so a migrated key
+    is indistinguishable from one the roster would have drawn.
+    """
+    db_path = tmp_path / "v1.db"
+    _write_v1_file(db_path, seed=_V1_SEED)
+
+    Store.open(db_path).close()
+
+    keys = [row[0] for row in _read(db_path, "SELECT key FROM entry ORDER BY id")]
+    parsed = [uuid.UUID(str(key)) for key in keys]
+
+    assert [(entry.version, entry.hex) for entry in parsed] == [(4, str(key)) for key in keys]
+    assert len(set(keys)) == len(keys) == 3
+
+
+def test_store_open_v1_migration_marks_every_migrated_entry_live(tmp_path: Path) -> None:
+    """Every migrated entry is live: retired = 0."""
+    db_path = tmp_path / "v1.db"
+    _write_v1_file(db_path, seed=_V1_SEED)
+
+    Store.open(db_path).close()
+
+    assert _read(db_path, "SELECT id, retired FROM entry ORDER BY id") == [
+        (1, 0),
+        (2, 0),
+        (3, 0),
+    ]
+
+
+def test_store_open_v1_migration_preserves_every_v1_entry_column(tmp_path: Path) -> None:
+    """Ids, plates, names, types, sizes and notes survive."""
+    db_path = tmp_path / "v1.db"
+    _write_v1_file(db_path, seed=_V1_SEED)
+
+    Store.open(db_path).close()
+
+    rows = _read(
+        db_path,
+        "SELECT id, ride_id, plate, display_name, type, team_size, status,"
+        " dnf_at, notes, logo_card FROM entry ORDER BY id",
+    )
+
+    assert rows == [
+        (1, 1, "12", "Alice", "solo", 1, "active", None, "", None),
+        (2, 1, "45", "Dirt Dynamos", "team", 2, "active", None, "carry a tail light", None),
+        (3, 1, "9", "Bo", "solo", 1, "dnf", 1789899000, "cramp", "As"),
+    ]
+
+
+def test_store_open_v1_migration_preserves_the_links_child_rows_hold(tmp_path: Path) -> None:
+    """Rider, crossing and card rows still resolve the same entry ids.
+
+    The rebuild keeps each entry's ``id`` because these three tables
+    reference it; a fresh id would silently orphan every recorded lap.
+    """
+    db_path = tmp_path / "v1.db"
+    _write_v1_file(db_path, seed=_V1_SEED)
+
+    Store.open(db_path).close()
+
+    violations = _read(db_path, "PRAGMA foreign_key_check")
+    rider_links = _read(db_path, "SELECT id, entry_id FROM rider ORDER BY id")
+    crossing_links = _read(db_path, "SELECT id, entry_id FROM crossing ORDER BY id")
+    card_links = _read(db_path, "SELECT id, entry_id FROM card ORDER BY id")
+
+    assert (violations, rider_links, crossing_links, card_links) == (
+        [],
+        [(1, 1), (2, 2), (3, 2), (4, 3)],
+        [(1, 1), (2, 1), (3, 2)],
+        [(1, 1), (2, 1), (3, 2)],
+    )
+
+
+def test_store_open_v1_migration_leaves_only_the_live_plate_unique_index(tmp_path: Path) -> None:
+    """v1's inline UNIQUE is gone; the partial index replaces it."""
+    db_path = tmp_path / "v1.db"
+    _write_v1_file(db_path, seed=_V1_SEED)
+
+    Store.open(db_path).close()
+
+    indexes = {row[1]: (row[2], row[4]) for row in _read(db_path, "PRAGMA index_list(entry)")}
+    index_columns = [
+        row[2] for row in _read(db_path, "PRAGMA index_info(entry_plate_live_unique)")
+    ]
+
+    assert indexes == {"entry_plate_live_unique": (1, 1)}
+    assert index_columns == ["ride_id", "plate"]
+
+
+def test_store_open_v1_migration_enforces_plate_uniqueness_among_live_rows(
+    tmp_path: Path,
+) -> None:
+    """After migration two live entries may not share a ride's plate."""
+    db_path = tmp_path / "v1.db"
+    _write_v1_file(db_path, seed=_V1_SEED)
+    Store.open(db_path).close()
+
+    with (
+        closing(sqlite3.connect(str(db_path))) as conn,
+        pytest.raises(
+            sqlite3.IntegrityError,
+            match=re.escape("UNIQUE constraint failed: entry.ride_id, entry.plate"),
+        ),
+    ):
+        conn.execute(
+            "INSERT INTO entry (ride_id, plate, key, display_name, type,"
+            " team_size, status, retired)"
+            " VALUES (1, '12', 'a' * 32, 'Ghost', 'solo', 1, 'active', 0)"
+        )
+
+
+def test_store_open_v1_migration_allows_a_retired_row_to_hold_a_live_plate(
+    tmp_path: Path,
+) -> None:
+    """The partial index leaves retired plates free (S1's move seam)."""
+    db_path = tmp_path / "v1.db"
+    _write_v1_file(db_path, seed=_V1_SEED)
+    Store.open(db_path).close()
+
+    with closing(sqlite3.connect(str(db_path))) as conn:
+        conn.execute(
+            "INSERT INTO entry (ride_id, plate, key, display_name, type,"
+            " team_size, status, retired)"
+            " VALUES (1, '12', 'b' * 32, 'Alice', 'solo', 1, 'active', 1)"
+        )
+        conn.commit()
+
+    assert _read(
+        db_path, "SELECT plate, retired FROM entry WHERE ride_id = 1 AND plate = '12' ORDER BY id"
+    ) == [("12", 0), ("12", 1)]
+
+
+def test_store_open_v1_migration_leaves_entry_matching_a_fresh_file(tmp_path: Path) -> None:
+    """A migrated file's entry shape matches a fresh file's.
+
+    The migration's ``entry`` DDL is frozen at v2 while
+    ``SCHEMA_STATEMENTS`` is edited in place by later versions, so this
+    pins the two together: a v3 edit that forgot its own migration (or a
+    migration drift) fails here rather than in the field.
+    """
+    migrated_path = tmp_path / "v1.db"
+    _write_v1_file(migrated_path, seed=_V1_SEED)
+    Store.open(migrated_path).close()
+    fresh_path = tmp_path / "fresh.db"
+    Store.open(fresh_path).close()
+
+    migrated = (
+        _read(migrated_path, "PRAGMA table_info(entry)"),
+        sorted(_read(migrated_path, "PRAGMA index_list(entry)")),
+    )
+    fresh = (
+        _read(fresh_path, "PRAGMA table_info(entry)"),
+        sorted(_read(fresh_path, "PRAGMA index_list(entry)")),
+    )
+
+    assert migrated == fresh
+
+
+def test_store_open_v1_migration_given_no_entry_rows_migrates_cleanly(tmp_path: Path) -> None:
+    """No entries at all rebuilds to an empty v2 table."""
+    db_path = tmp_path / "v1.db"
+    _write_v1_file(db_path, seed=(_V1_RIDE_ROW,))
+
+    Store.open(db_path).close()
+
+    assert (
+        _read(db_path, "SELECT COUNT(*) FROM entry"),
+        _read(db_path, "SELECT version FROM schema_version WHERE id = 1"),
+    ) == ([(0,)], [(2,)])
+
+
+def test_store_open_v1_migration_given_one_entry_row_copies_it(tmp_path: Path) -> None:
+    """A single v1 entry row survives with its id and plate intact."""
+    db_path = tmp_path / "v1.db"
+    _write_v1_file(db_path, seed=_V1_SINGLE_ENTRY_SEED)
+
+    Store.open(db_path).close()
+
+    assert _read(db_path, "SELECT id, plate, retired FROM entry") == [(1, "12", 0)]
+
+
+def test_store_open_v1_migration_with_an_orphan_child_row_raises_and_rolls_back(
+    tmp_path: Path,
+) -> None:
+    """An FK the rebuild cannot honour aborts the migration."""
+    db_path = tmp_path / "orphan.db"
+    _write_v1_file(db_path, seed=_V1_ORPHAN_SEED)
+
+    with pytest.raises(sqlite3.IntegrityError, match=re.escape("foreign key violations in rider")):
+        Store.open(db_path)
+
+    version = _read(db_path, "SELECT version FROM schema_version WHERE id = 1")
+    columns = [row[1] for row in _read(db_path, "PRAGMA table_info(entry)")]
+
+    assert (version, columns) == (
+        [(1,)],
+        [
+            "id",
+            "ride_id",
+            "plate",
+            "display_name",
+            "type",
+            "team_size",
+            "status",
+            "dnf_at",
+            "notes",
+            "logo_card",
+        ],
+    )
+
+
+def test_run_migrations_stamps_the_ledger_at_the_target_version(tmp_path: Path) -> None:
+    """Each step runs in order, then the ledger is stamped."""
+    db_path = tmp_path / "v1.db"
+    _write_v1_file(db_path, seed=_V1_SEED)
+
+    conn = sqlite3.connect(str(db_path))
+    try:
+        run_migrations(conn, 1, SCHEMA_VERSION)
+    finally:
+        conn.close()
+
+    assert (
+        _read(db_path, "SELECT version FROM schema_version WHERE id = 1"),
+        _read(db_path, "SELECT COUNT(*) FROM entry WHERE key <> ''"),
+    ) == ([(2,)], [(3,)])
+
+
+def test_run_migrations_from_the_target_version_changes_nothing(tmp_path: Path) -> None:
+    """An empty range is a no-op: the data is untouched."""
+    db_path = tmp_path / "v2.db"
+    Store.open(db_path).close()
+    before = _read(db_path, "SELECT id, key FROM entry")
+
+    conn = sqlite3.connect(str(db_path))
+    try:
+        run_migrations(conn, SCHEMA_VERSION, SCHEMA_VERSION)
+    finally:
+        conn.close()
+
+    assert (
+        _read(db_path, "SELECT version FROM schema_version WHERE id = 1"),
+        _read(db_path, "SELECT id, key FROM entry"),
+    ) == ([(2,)], before)
+
+
+def test_run_migrations_given_a_version_below_the_first_migration_raises_key_error(
+    tmp_path: Path,
+) -> None:
+    """Version 0 is the create path, not a migration.
+
+    ``range(0, 2)`` asks for a v0 -> v1 step that cannot exist (v0
+    is an empty file, which :func:`ensure_schema` creates rather than
+    migrates), so the missing registry entry surfaces as a KeyError
+    naming it.
+    """
+    db_path = tmp_path / "v0.db"
+    sqlite3.connect(str(db_path)).close()
+    conn = sqlite3.connect(str(db_path))
+    try:
+        conn.execute(SCHEMA_VERSION_DDL)
+
+        with pytest.raises(KeyError, match=re.escape("0")):
+            run_migrations(conn, 0, SCHEMA_VERSION)
+    finally:
+        conn.close()
+
+
+def test_migrations_cover_every_version_below_the_current_one() -> None:
+    """Every version below SCHEMA_VERSION has a step."""
+    assert sorted(MIGRATIONS) == list(range(1, SCHEMA_VERSION))
 
 
 # --------------------------------------------------------- create_ride
@@ -548,7 +1161,7 @@ def test_store_load_engine_given_a_row_without_a_policy_rebuilds_the_hold_defaul
     try:
         for statement in (*SCHEMA_STATEMENTS, SCHEMA_VERSION_DDL):
             conn.execute(statement)
-        conn.execute("INSERT INTO schema_version (id, version) VALUES (1, 1)")
+        conn.execute("INSERT INTO schema_version (id, version) VALUES (1, ?)", (SCHEMA_VERSION,))
         conn.execute(
             """
             INSERT INTO ride (
@@ -1391,7 +2004,7 @@ def test_store_load_engine_given_a_row_without_a_jokers_mode_rebuilds_total(
     try:
         for statement in (*SCHEMA_STATEMENTS, SCHEMA_VERSION_DDL):
             conn.execute(statement)
-        conn.execute("INSERT INTO schema_version (id, version) VALUES (1, 1)")
+        conn.execute("INSERT INTO schema_version (id, version) VALUES (1, ?)", (SCHEMA_VERSION,))
         conn.execute(
             """
             INSERT INTO ride (
@@ -3772,3 +4385,233 @@ def test_store_update_ride_config_unknown_ride_raises_naming_it(tmp_path: Path) 
             store.update_ride_config(999, _config())
     finally:
         store.close()
+
+
+# ============================================================ retired
+# The pooled-live-move replay seam: a dissolved entry that carries
+# recorded data is persisted with ``entry.retired = 1`` so its stable
+# key comes back on reload -- the engine's replay resolves every stored
+# ``record_crossing`` row by that key. ``retired`` also relaxes the
+# per-ride plate uniqueness to live rows (the partial unique index),
+# because a solo->team move makes the destination team's derived plate
+# equal the retired solo entry's.
+
+
+def _retired_roster() -> Roster:
+    """Build the roster a solo->team move leaves behind (arrange).
+
+    Solo "1" carries recorded data, so the move that empties it retires
+    it (never discards it); Team B adopts the lowest-numbered member's
+    plate, now "1" -- the live/retired plate collision the partial
+    unique index exists for.
+    """
+    roster = Roster(entry_mode=EntryMode.MIXED, plate_model=PlateModel.RIDER_POOLED)
+    solo = roster.create_solo_entry(first_name="Alice", last_name="", plate="1")
+    team = roster.create_team_entry(
+        display_name="Trail Blazers",
+        riders=[
+            Rider(first_name="A.", last_name="Roy", plate="3"),
+            Rider(first_name="K.", last_name="Singh", plate="4"),
+        ],
+    )
+    roster.mark_has_data(solo)
+    roster.move_rider(solo.riders[0], to_entry=team)
+    return roster
+
+
+def test_store_save_roster_round_trips_retired_entries_with_their_keys(
+    tmp_path: Path,
+) -> None:
+    """A retired entry's stable key survives save_roster -> roster_for.
+
+    The key is the replay seam (E3.1.2): without it the reloaded roster
+    cannot resolve the pre-move ``record_crossing`` rows and the ride
+    will not reopen.
+    """
+    db_path = tmp_path / "rides.db"
+    roster = _retired_roster()
+    (retired,) = roster.retired_entries
+    ride_id = _save_roster_ride(
+        db_path,
+        roster,
+        entry_mode=EntryMode.MIXED,
+        plate_model=PlateModel.RIDER_POOLED,
+    )
+
+    rebuilt = _round_trip_roster(db_path, ride_id)
+
+    assert [entry.key for entry in rebuilt.retired_entries] == [retired.key]
+    assert rebuilt.entry_by_key(retired.key) is rebuilt.retired_entries[0]
+
+
+def test_store_save_roster_keeps_a_retired_entry_out_of_the_live_entries(
+    tmp_path: Path,
+) -> None:
+    """Only the live entry reconstructs into ``entries``."""
+    db_path = tmp_path / "rides.db"
+    ride_id = _save_roster_ride(
+        db_path,
+        _retired_roster(),
+        entry_mode=EntryMode.MIXED,
+        plate_model=PlateModel.RIDER_POOLED,
+    )
+
+    rebuilt = _round_trip_roster(db_path, ride_id)
+
+    assert [(entry.display_name, entry.team_size) for entry in rebuilt.entries] == [
+        ("Trail Blazers", 3)
+    ]
+
+
+def test_store_save_roster_writes_the_retired_flag_on_each_entry_row(
+    tmp_path: Path,
+) -> None:
+    """The entry rows carry 0 live, 1 retired -- one per entry."""
+    db_path = tmp_path / "rides.db"
+    ride_id = _save_roster_ride(
+        db_path,
+        _retired_roster(),
+        entry_mode=EntryMode.MIXED,
+        plate_model=PlateModel.RIDER_POOLED,
+    )
+
+    with closing(sqlite3.connect(str(db_path))) as conn:
+        rows = conn.execute(
+            "SELECT plate, retired FROM entry WHERE ride_id = ? ORDER BY id", (ride_id,)
+        ).fetchall()
+
+    assert rows == [("1", 0), ("1", 1)]
+
+
+def test_store_save_roster_retains_a_retired_plate_a_live_entry_adopted(
+    tmp_path: Path,
+) -> None:
+    """The partial index lets a retired plate equal a live one (S1).
+
+    A solo->team move re-derives the destination team's plate to the
+    lowest-numbered member's -- exactly the plate the dissolved solo
+    entry still holds.
+    """
+    db_path = tmp_path / "rides.db"
+    ride_id = _save_roster_ride(
+        db_path,
+        _retired_roster(),
+        entry_mode=EntryMode.MIXED,
+        plate_model=PlateModel.RIDER_POOLED,
+    )
+
+    rebuilt = _round_trip_roster(db_path, ride_id)
+
+    assert [entry.plate for entry in (*rebuilt.entries, *rebuilt.retired_entries)] == ["1", "1"]
+
+
+def test_store_load_roster_gives_a_retired_entry_no_riders(tmp_path: Path) -> None:
+    """A retired entry was emptied by the move that retired it."""
+    db_path = tmp_path / "rides.db"
+    ride_id = _save_roster_ride(
+        db_path,
+        _retired_roster(),
+        entry_mode=EntryMode.MIXED,
+        plate_model=PlateModel.RIDER_POOLED,
+    )
+
+    rebuilt = _round_trip_roster(db_path, ride_id)
+
+    (retired,) = rebuilt.retired_entries
+    assert (retired.type.value, retired.riders) == ("solo", [])
+
+
+def test_store_save_roster_replaces_the_previous_retired_entries(tmp_path: Path) -> None:
+    """A second save is a snapshot: an earlier retired row is gone."""
+    db_path = tmp_path / "rides.db"
+    ride_id = _save_roster_ride(
+        db_path,
+        _retired_roster(),
+        entry_mode=EntryMode.MIXED,
+        plate_model=PlateModel.RIDER_POOLED,
+    )
+    store = Store.open(db_path)
+    try:
+        store.save_roster(ride_id, _pooled_roster())
+    finally:
+        store.close()
+
+    rebuilt = _round_trip_roster(db_path, ride_id)
+
+    assert (
+        len(rebuilt.entries),
+        rebuilt.retired_entries,
+    ) == (2, ())
+
+
+def test_store_entry_plate_uniqueness_still_applies_to_live_entries(
+    tmp_path: Path,
+) -> None:
+    """Two live entries may not share a plate (the partial index)."""
+    db_path = tmp_path / "rides.db"
+    ride_id = _save_roster_ride(
+        db_path,
+        _solo_roster(),
+        entry_mode=EntryMode.SOLO,
+        plate_model=PlateModel.RIDER_POOLED,
+    )
+    store = Store.open(db_path)
+    try:
+        with pytest.raises(
+            sqlite3.IntegrityError,
+            match=re.escape("UNIQUE constraint failed: entry.ride_id, entry.plate"),
+        ):
+            store._conn.execute(
+                "INSERT INTO entry"
+                " (ride_id, plate, key, display_name, type, team_size, status, retired)"
+                " VALUES (?, '12', 'duplicate-key', 'Copy', 'solo', 1, 'active', 0)",
+                (ride_id,),
+            )
+    finally:
+        store.close()
+
+
+def test_store_rides_counts_live_entries_not_retired_ones(tmp_path: Path) -> None:
+    """The library's Entries column counts the live roster alone."""
+    db_path = tmp_path / "rides.db"
+    ride_id = _save_roster_ride(
+        db_path,
+        _retired_roster(),
+        entry_mode=EntryMode.MIXED,
+        plate_model=PlateModel.RIDER_POOLED,
+    )
+
+    store = Store.open(db_path)
+    try:
+        counts = {row.id: row.entries for row in store.rides()}
+    finally:
+        store.close()
+
+    assert counts[ride_id] == 1
+
+
+def test_store_duplicate_ride_copies_retired_entries_with_fresh_keys(
+    tmp_path: Path,
+) -> None:
+    """R-15: the copy keeps the key history, under fresh keys."""
+    db_path = tmp_path / "rides.db"
+    source = _retired_roster()
+    (source_retired,) = source.retired_entries
+    source_id = _save_roster_ride(
+        db_path,
+        source,
+        entry_mode=EntryMode.MIXED,
+        plate_model=PlateModel.RIDER_POOLED,
+    )
+    store = Store.open(db_path)
+    try:
+        copy_id = store.duplicate_ride(source_id)
+        copied = store.roster_for(copy_id)
+    finally:
+        store.close()
+
+    (copied_retired,) = copied.retired_entries
+    assert (copied_retired.plate, copied_retired.display_name) == ("1", "Alice")
+    assert {copied_retired.key, *(entry.key for entry in copied.entries)}.isdisjoint(
+        {source_retired.key, *(entry.key for entry in source.entries)}
+    )

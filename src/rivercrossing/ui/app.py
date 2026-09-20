@@ -5404,9 +5404,10 @@ def main(db_path: Path | None = None) -> int:
         app.MainLoop()
     except SchemaVersionMismatchError as exc:
         # A version mismatch is an expected condition, not a crash: the
-        # database was written by a different build. Tell the operator
-        # the way out (rename or delete the file) and exit without
-        # re-raising, so the crash excepthook files no exception.
+        # database was written by a NEWER build (an older one is
+        # migrated in place on open). Tell the operator the way out
+        # (rename or delete the file) and exit without re-raising, so
+        # the crash excepthook files no exception.
         from rivercrossing.ui import std_dialogs  # noqa: PLC0415 -- deferred, see module docstring
 
         std_dialogs.show_error(None, "Database Mismatch", str(exc))

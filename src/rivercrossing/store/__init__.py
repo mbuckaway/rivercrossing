@@ -4,9 +4,10 @@
 :class:`Store` is the public entry point to the
 ``rivercrossing.store`` package. It opens one SQLite file per
 database, applies the spec §2 PRAGMAs (WAL, synchronous NORMAL,
-foreign_keys ON) to every connection, ensures the schema is the one
-flattened v1 baseline (``store/schema.py``; a file stamped with any
-other version is refused), and exposes the ride surface E5.1.1/E5.1.2
+foreign_keys ON) to every connection, and brings the schema to the
+current version (``store/schema.py``: an empty or older file is
+created or migrated up in place, a file stamped NEWER than this build
+is refused), and exposes the ride surface E5.1.1/E5.1.2
 own: :meth:`Store.create_ride`
 and :meth:`Store.rides` (E5.1.1) and the event log --
 :meth:`Store.append` persists one :class:`~rivercrossing.ride.Event`
@@ -50,9 +51,11 @@ them open and later EPICs will build on them:
 - **transaction shape**: the connection runs in sqlite3's default
   (legacy) mode. Each operator action is one committed transaction --
   ``create_ride`` wraps its insert in ``with conn``;
-  ``schema.ensure_schema`` wraps the whole v1 CREATE plus its version
-  record in an explicit BEGIN/COMMIT, because DDL alone autocommits
-  and the two must stay atomic (see ``schema.py``).
+  ``schema.ensure_schema`` wraps the whole current CREATE plus its
+  version record in an explicit BEGIN/COMMIT, and each migration step
+  in ``schema.migrations`` runs in its own, because DDL alone
+  autocommits and the shape and its version record must stay atomic
+  (see ``schema.py``).
 - **audit at column (E5.1.2)**: ``append`` derives ``audit.at`` from
   the event's own payload timestamp when it carries one
   (``actual_start``/``crossed_at``/``stopped_at``/``finished_at``/
@@ -99,6 +102,18 @@ them open and later EPICs will build on them:
   stays NULL and the rider's ``emergency_contact``/``waiver_signed``/
   ``ccn_reg_id`` stay NULL -- the in-memory Roster model carries no
   such fields, so there is nothing honest to store.
+- **retired entries (E3.1.2's pooled-live-move seam)**: an entry a
+  pool move dissolves after it recorded data is persisted with
+  ``entry.retired = 1``, and ``_load_roster`` restores it into the
+  roster's own retired collection (riderless, ``has_data`` unset).
+  The row exists for one reason: replay resolves a stored
+  ``record_crossing`` by the entry's stable ``key``, so the
+  dissolved entry's key has to survive the snapshot or the ride
+  cannot reopen. ``roster.entries`` is unaffected -- a retired entry
+  is not on the field -- and :meth:`Store.rides` counts the live rows
+  alone, so the library's Entries column still reads the roster.
+  ``duplicate_ride`` copies retired rows with a fresh key each, like
+  every other entry row (:meth:`Store._copy_roster_rows`).
 - **duplicate name (E5.4.1)**: :meth:`Store.duplicate_ride` names the
   copy ``f"{source name} (copy)"`` by default (the retired 3d mock
   drew a "New ride name" input, but the E5.4.1 confirm dialog is
@@ -703,8 +718,9 @@ class Store:
 
         Raises:
             SchemaVersionMismatchError: If the database is stamped with
-                a schema version this build does not support (any value
-                but 1 and the empty/0 case).
+                a schema version NEWER than this build's (an older
+                stamp is migrated up in place; see
+                ``schema.ensure_schema``).
             sqlite3.IntegrityError: If *active_ride_id* names no ride
                 row (the ``REFERENCES ride(id)`` foreign key).
             sqlite3.OperationalError: A persistent transient-class
@@ -914,6 +930,13 @@ class Store:
         resolution): an entry that owns a crossing or card row has
         recorded data.
 
+        A row with ``retired = 1`` reconstructs into the roster's own
+        retired collection instead: its key has to stay resolvable for
+        replay, and nothing else about it is read -- a retired entry
+        was emptied by the move that retired it, so it carries no
+        riders, and its ``has_data`` flag is not re-derived (the
+        retired flag is that fact, persisted).
+
         Raises:
             RideNotFoundError: No ``ride`` row has *ride_id*.
         """
@@ -932,46 +955,69 @@ class Store:
             team_logo_seed=row["rng_seed"],
         )
         entries: list[Entry] = []
+        retired: list[Entry] = []
         for entry_row in self._conn.execute(
-            "SELECT id, plate, key, display_name, type, status, notes, logo_card"
+            "SELECT id, plate, key, display_name, type, status, notes, logo_card, retired"
             " FROM entry WHERE ride_id = ? ORDER BY id",
             (ride_id,),
         ).fetchall():
-            riders = [
-                Rider(
-                    first_name=rider_row["first_name"],
-                    last_name=rider_row["last_name"],
-                    plate=rider_row["plate"],
-                    sex=rider_row["sex"],
-                    sort_order=rider_row["sort_order"],
-                )
-                for rider_row in self._conn.execute(
-                    "SELECT first_name, last_name, plate, sex, sort_order FROM rider"
-                    " WHERE entry_id = ? ORDER BY sort_order, id",
-                    (entry_row["id"],),
-                ).fetchall()
-            ]
-            has_data = bool(
-                self._conn.execute(
-                    "SELECT EXISTS(SELECT 1 FROM crossing WHERE entry_id = ?)"
-                    " OR EXISTS(SELECT 1 FROM card WHERE entry_id = ?)",
-                    (entry_row["id"], entry_row["id"]),
-                ).fetchone()[0]
-            )
+            is_retired = bool(entry_row["retired"])
+            # A retired entry was emptied by the move that retired it.
             entry = Entry(
                 plate=entry_row["plate"],
                 display_name=entry_row["display_name"],
                 type=EntryType(entry_row["type"]),
-                riders=riders,
+                riders=[] if is_retired else self._entry_riders(entry_row["id"]),
                 status=EntryStatus(entry_row["status"]),
                 notes=entry_row["notes"] or "",
                 logo_card=entry_row["logo_card"],
                 key=entry_row["key"],
             )
-            entry.has_data = has_data
+            if is_retired:
+                retired.append(entry)
+                continue
+            entry.has_data = self._entry_has_recorded_data(entry_row["id"])
             entries.append(entry)
         roster.load_entries(entries)
+        roster.load_retired_entries(retired)
         return roster
+
+    def _entry_riders(self, entry_id: int) -> list[Rider]:
+        """Return *entry_id*'s riders, in stored order.
+
+        The reconstruction half of ``_load_roster``: ``sort_order`` then
+        insert id, so a roster reads back exactly as it was written (a
+        pooled team's plate derivation depends on that order).
+        """
+        return [
+            Rider(
+                first_name=rider_row["first_name"],
+                last_name=rider_row["last_name"],
+                plate=rider_row["plate"],
+                sex=rider_row["sex"],
+                sort_order=rider_row["sort_order"],
+            )
+            for rider_row in self._conn.execute(
+                "SELECT first_name, last_name, plate, sex, sort_order FROM rider"
+                " WHERE entry_id = ? ORDER BY sort_order, id",
+                (entry_id,),
+            ).fetchall()
+        ]
+
+    def _entry_has_recorded_data(self, entry_id: int) -> bool:
+        """Return whether *entry_id* owns a crossing or card row.
+
+        ``has_data`` is derived, never stored (module docstring's
+        E5.4.1 resolution): R-15's permanent delete guard is exactly
+        "has recorded data", and the recorded rows are the truth.
+        """
+        return bool(
+            self._conn.execute(
+                "SELECT EXISTS(SELECT 1 FROM crossing WHERE entry_id = ?)"
+                " OR EXISTS(SELECT 1 FROM card WHERE entry_id = ?)",
+                (entry_id, entry_id),
+            ).fetchone()[0]
+        )
 
     def save_roster(self, ride_id: int, roster: Roster) -> None:
         """Persist one ride's roster, replacing any previously saved.
@@ -992,6 +1038,11 @@ class Store:
         ``ccn_reg_id`` stay NULL -- the in-memory Roster model carries
         no such fields (module docstring's E5.4.1 resolutions).
 
+        Entries the roster has retired are written too, with
+        ``retired = 1``: the rows recorded before the move that retired
+        one are resolved by its key, so it has to survive the snapshot
+        like any live entry.
+
         Args:
             ride_id: The ride whose roster to write.
             roster: The roster to persist.
@@ -1009,39 +1060,53 @@ class Store:
             )
             self._conn.execute("DELETE FROM entry WHERE ride_id = ?", (ride_id,))
             for entry in roster.entries:
-                cursor = self._conn.execute(
-                    "INSERT INTO entry"
-                    " (ride_id, plate, key, display_name, type, team_size, status, dnf_at, notes,"
-                    " logo_card)"
-                    " VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?, ?)",
-                    (
-                        ride_id,
-                        entry.plate,
-                        entry.key,
-                        entry.display_name,
-                        entry.type.value,
-                        len(entry.riders),
-                        entry.status.value,
-                        entry.notes,
-                        entry.logo_card,
-                    ),
-                )
-                entry_id = _require_rowid(cursor)
-                for rider in entry.riders:
-                    self._conn.execute(
-                        "INSERT INTO rider"
-                        " (entry_id, first_name, last_name, plate, sex, sort_order,"
-                        " emergency_contact, waiver_signed, ccn_reg_id)"
-                        " VALUES (?, ?, ?, ?, ?, ?, NULL, NULL, NULL)",
-                        (
-                            entry_id,
-                            rider.first_name,
-                            rider.last_name,
-                            rider.plate,
-                            rider.sex,
-                            rider.sort_order,
-                        ),
-                    )
+                self._insert_entry_row(ride_id, entry, retired=0)
+            for entry in roster.retired_entries:
+                self._insert_entry_row(ride_id, entry, retired=1)
+
+    def _insert_entry_row(self, ride_id: int, entry: Entry, *, retired: int) -> None:
+        """Insert one entry row and its riders.
+
+        The write half of :meth:`save_roster`'s snapshot: *retired* is
+        the stored 0/1 flag, and a retired entry has no riders to write
+        (a dissolve only ever fires on an emptied entry). Runs inside
+        the caller's transaction -- a failure rolls the whole snapshot
+        back.
+        """
+        cursor = self._conn.execute(
+            "INSERT INTO entry"
+            " (ride_id, plate, key, display_name, type, team_size, status, dnf_at, notes,"
+            " logo_card, retired)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?)",
+            (
+                ride_id,
+                entry.plate,
+                entry.key,
+                entry.display_name,
+                entry.type.value,
+                len(entry.riders),
+                entry.status.value,
+                entry.notes,
+                entry.logo_card,
+                retired,
+            ),
+        )
+        entry_id = _require_rowid(cursor)
+        for rider in entry.riders:
+            self._conn.execute(
+                "INSERT INTO rider"
+                " (entry_id, first_name, last_name, plate, sex, sort_order,"
+                " emergency_contact, waiver_signed, ccn_reg_id)"
+                " VALUES (?, ?, ?, ?, ?, ?, NULL, NULL, NULL)",
+                (
+                    entry_id,
+                    rider.first_name,
+                    rider.last_name,
+                    rider.plate,
+                    rider.sex,
+                    rider.sort_order,
+                ),
+            )
 
     def create_ride(self, config: RideConfig, *, rng_seed: int | None = None) -> int:
         """Persist one ride from its config; return the new ride id.
@@ -1105,7 +1170,9 @@ class Store:
 
         Each row carries the ride's entry count (the library's Entries
         column) via a correlated subquery -- cheap, and the schema has
-        the data.
+        the data. Retired entries are not part of the field: they are
+        keys a replay still resolves, not entries on the roster the
+        library shows.
 
         Returns:
             One :class:`RideRow` per ride, ordered by ``created_at``
@@ -1113,7 +1180,8 @@ class Store:
         """
         rows = self._conn.execute(
             "SELECT r.id, r.name, r.event_date, r.status,"
-            " (SELECT COUNT(*) FROM entry e WHERE e.ride_id = r.id) AS entries"
+            " (SELECT COUNT(*) FROM entry e WHERE e.ride_id = r.id AND e.retired = 0)"
+            " AS entries"
             " FROM ride r ORDER BY r.created_at, r.id"
         ).fetchall()
         return [
@@ -1171,8 +1239,10 @@ class Store:
         Because the schema declares plain ``REFERENCES`` with no ON
         DELETE CASCADE (module docstring's E5.3.2 resolution), the
         dependents are removed explicitly, in FK-safe order, in one
-        transaction: cards, crossings, riders, entries, audit rows;
-        ``app_session.active_ride_id`` is NULLed; then the ride row.
+        transaction: cards, crossings, riders, entries (live and
+        retired alike -- :meth:`Store.save_roster` snapshots both),
+        audit rows; ``app_session.active_ride_id`` is NULLed; then the
+        ride row.
 
         Args:
             ride_id: The ride to delete.
@@ -1520,12 +1590,12 @@ class Store:
         fresh DB-owned ``rng_seed`` (spec §4 -- a new ride gets its own
         seed, never the source's), status DRAFT and NULL
         ``actual_start``/``finished_at``, then copies the roster rows
-        (entries + riders, in creation order). No crossings, cards or
-        audit rows are written -- the copy has no timing data by
-        construction. The duplication itself is not audited either
-        (module docstring's E5.4.1 decision): the audit replay channel
-        only knows ride mutations, so a ``duplicate_ride`` row would
-        break :meth:`load_engine`.
+        (entries -- retired ones included -- plus riders, in creation
+        order). No crossings, cards or audit rows are written -- the
+        copy has no timing data by construction. The duplication itself
+        is not audited either (module docstring's E5.4.1 decision): the
+        audit replay channel only knows ride mutations, so a
+        ``duplicate_ride`` row would break :meth:`load_engine`.
 
         Args:
             ride_id: The source ride.
@@ -1586,8 +1656,11 @@ class Store:
         entry gets a **fresh** ``key``: the copy is a new ride whose
         crossings are its own, so it must never share the source's
         entry identities (the fresh-``rng_seed`` rule one level down).
-        Runs inside the caller's transaction: a failure rolls the whole
-        copy back.
+        Retired rows copy too, flag and all: they are the source's key
+        history, and a copy whose replay is ever wired to its own log
+        needs the same retired keys -- under its own fresh ones. Runs
+        inside the caller's transaction: a failure rolls the whole copy
+        back.
 
         Args:
             new_id: The ride the rows are copied onto.
@@ -1595,14 +1668,14 @@ class Store:
         """
         for source_entry in self._conn.execute(
             "SELECT id, plate, display_name, type, team_size, status, notes,"
-            " logo_card FROM entry WHERE ride_id = ? ORDER BY id",
+            " logo_card, retired FROM entry WHERE ride_id = ? ORDER BY id",
             (ride_id,),
         ).fetchall():
             entry_cursor = self._conn.execute(
                 "INSERT INTO entry"
                 " (ride_id, plate, key, display_name, type, team_size, status, dnf_at, notes,"
-                " logo_card)"
-                " VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?, ?)",
+                " logo_card, retired)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?)",
                 (
                     new_id,
                     source_entry["plate"],
@@ -1615,6 +1688,7 @@ class Store:
                     source_entry["status"],
                     source_entry["notes"],
                     source_entry["logo_card"],
+                    source_entry["retired"],
                 ),
             )
             new_entry_id = _require_rowid(entry_cursor)

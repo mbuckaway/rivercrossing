@@ -11,13 +11,18 @@ event. The hard gate is replay equivalence: the live and replayed
 crossings, hold queue, credited hands and voided record must be
 byte-identical.
 
-The arrange-time builders (``_config``/``_dt``/``_make_engine``/
+The last section drives that gate through the real
+:class:`~rivercrossing.store.Store` -- save the final roster, reload,
+replay -- because a move that dissolves a data-carrying entry only
+replays if that entry's stable key survives the round trip. The
+arrange-time builders (``_config``/``_dt``/``_make_engine``/
 ``_two_team_pooled_roster``) are imported from ``test_ride_corrections``
 so the two suites' fixture values cannot drift; this repo otherwise
 keeps every test module self-contained.
 """
 
 import re
+from pathlib import Path  # noqa: TC003 -- pytest evaluates test-param annotations at collection
 
 import pytest
 from test_ride_corrections import _config, _dt, _make_engine, _two_team_pooled_roster
@@ -25,6 +30,7 @@ from test_ride_corrections import _config, _dt, _make_engine, _two_team_pooled_r
 from conftest import entry_key, restore_entry_keys
 from rivercrossing import ride as ride_module
 from rivercrossing.ride import (
+    JOKERS_MODE_PER_DECK,
     Event,
     IllegalStateError,
     RideConfig,
@@ -32,6 +38,7 @@ from rivercrossing.ride import (
     UnknownPlateError,
 )
 from rivercrossing.roster import EntryMode, PlateModel, Rider, Roster
+from rivercrossing.store import Store
 
 # ------------------------------------------------------------- fixtures
 
@@ -799,3 +806,113 @@ def test_apply_extract_rider_to_solo_event_reattributes_from_the_payload() -> No
 
     assert [c.entry_id for c in engine.crossings] == [team_b.key]
     assert engine.events[-1] == event
+
+
+# =========================== persisted replay (pooled-live-move seam)
+# Phase 1 made replay resolve a stored ``record_crossing`` row by the
+# entry's stable key, so a key a move dissolves must survive the
+# save/reload round trip: the Store persists retired entries too, and
+# the reloaded roster resolves them. These two tests drive the real
+# Store -- save, reload, replay -- which is the path a ride reopens on.
+
+# The seed ``test_ride_corrections._make_engine`` builds its shoe from,
+# repeated here so a store-created ride's replayed deals are the live
+# engine's own.
+_SHOE_SEED = 20260920
+
+
+def _persist(db_path: Path, roster: Roster, events: tuple[Event, ...]) -> int:
+    """Save *roster* and *events* as one ride on a fresh database.
+
+    The store half of a ride reopen: ``create_ride`` with the live
+    engine's own shoe seed, one ``save_roster`` snapshot (the final
+    roster, retired entries included) and one ``append`` per recorded
+    event, exactly as the app persists them.
+    """
+    store = Store.open(db_path)
+    try:
+        ride_id = store.create_ride(_reopen_config(), rng_seed=_SHOE_SEED)
+        store.save_roster(ride_id, roster)
+        for event in events:
+            store.append(ride_id, event)
+    finally:
+        store.close()
+    return ride_id
+
+
+def _reopen_config() -> RideConfig:
+    """Return the config both sides of a reopen build their shoe from.
+
+    ``test_ride_corrections._make_engine`` builds its shoe without the
+    ``jokers_total`` keyword (the per-deck default), while
+    ``Store.load_engine`` rebuilds one with
+    ``jokers_total=(jokers_mode == "total")``; naming per-deck here is
+    what makes the live and replayed deal sequences one shoe.
+    """
+    return _config(jokers_mode=JOKERS_MODE_PER_DECK)
+
+
+def test_move_rider_solo_to_team_replays_after_the_ride_is_persisted(
+    tmp_path: Path,
+) -> None:
+    """Regression: a reloaded solo->team move replays without raising.
+
+    The solo entry's crossings are filed under its key and the move
+    dissolves that entry, so the key is exactly what the stored
+    ``record_crossing`` rows name. Before dissolved entries was
+    persisted, ``Store.load_engine`` raised ``UnknownPlateError`` here
+    and the ride would not reopen.
+    """
+    db_path = tmp_path / "rides.db"
+    roster = _solo_and_team_roster()
+    solo, team_b = roster.entries
+    config = _reopen_config()
+    live, _clock = _make_engine(roster=roster, config=config)
+    live.start(at=_dt(10, 0))
+    live.record_crossing("5", at=_dt(10, 30))
+    live.stop()
+    live.move_rider("5", to_team="Team B", reason="rider joins a team")
+    ride_id = _persist(db_path, roster, live.events)
+
+    store = Store.open(db_path)
+    try:
+        replayed = store.load_engine(ride_id)
+    finally:
+        store.close()
+
+    assert replayed.crossings == live.crossings
+    assert replayed.credited_cards(team_b.key) == live.credited_cards(team_b.key)
+    assert [entry.key for entry in replayed._roster.retired_entries] == [solo.key]
+
+
+def test_extract_rider_to_solo_of_a_final_member_replays_after_the_ride_is_persisted(
+    tmp_path: Path,
+) -> None:
+    """Regression: the team->solo half reopens too.
+
+    Extracting a team's last member dissolves that team, whose key the
+    pre-move ``record_crossing`` row names -- so the dissolved team has
+    to come back as a retired entry for the replay to resolve it.
+    """
+    db_path = tmp_path / "rides.db"
+    roster = _two_team_pooled_roster()
+    team_a, _team_b = roster.entries
+    config = _reopen_config()
+    live, _clock = _make_engine(roster=roster, config=config)
+    live.start(at=_dt(10, 0))
+    live.record_crossing("1", at=_dt(10, 30))
+    live.stop()
+    live.extract_rider_to_solo("1", reason="rider rides alone")
+    live.extract_rider_to_solo("2", reason="rider rides alone")
+    solo_key = entry_key(live._roster, "1")
+    ride_id = _persist(db_path, roster, live.events)
+
+    store = Store.open(db_path)
+    try:
+        replayed = store.load_engine(ride_id)
+    finally:
+        store.close()
+
+    assert replayed.crossings == live.crossings
+    assert replayed.credited_cards(solo_key) == live.credited_cards(solo_key)
+    assert [entry.key for entry in replayed._roster.retired_entries] == [team_a.key]

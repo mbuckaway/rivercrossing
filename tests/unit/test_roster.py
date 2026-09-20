@@ -34,7 +34,10 @@ audited move, the emptied solo entry dissolving), and
 ``extract_rider_to_solo`` is gated by
 :func:`~rivercrossing.roster.can_move_rider` like a move is, so a
 pooled team member may leave for solo while the ride is RUNNING or
-REOPENED.
+REOPENED. A dissolve that empties an entry carrying recorded data
+*retires* it instead of discarding it (``retired_entries``), so the
+key a replayed crossing row names stays resolvable after a reload;
+the suite pins both halves of that rule.
 """
 
 import re
@@ -2812,6 +2815,139 @@ def test_entry_by_key_picks_the_matching_entry_among_many() -> None:
     roster.create_solo_entry(first_name="Cy", last_name="", plate="3")
 
     assert roster.entry_by_key(wanted.key) is wanted
+
+
+# --------------------------------------- retired entries (E3.1.2)
+# A dissolved entry that carries recorded data is *retired*, not
+# discarded: the ride engine files crossings under ``Entry.key`` and
+# replay resolves them by that key, so the key of an entry a move
+# dissolves must stay resolvable after a reload (the pooled-live-move
+# replay seam). An entry with no recorded data is still removed
+# outright -- nothing names it.
+
+
+def _dissolved_solo(*, has_data: bool) -> tuple[Roster, Entry]:
+    """Dissolve a solo "1" into Team B, with or without data (arrange).
+
+    The solo entry is emptied by :meth:`Roster.move_rider`, so it
+    reaches the dissolve either carrying recorded data (``has_data``)
+    or carrying none.
+    """
+    roster = Roster(entry_mode=EntryMode.MIXED)
+    solo = roster.create_solo_entry(first_name="Alex", last_name="", plate="1")
+    team_b = roster.create_team_entry(
+        display_name="Team B",
+        riders=[
+            Rider(first_name="Cy", last_name="", plate="3"),
+            Rider(first_name="Do", last_name="", plate="4"),
+        ],
+    )
+    if has_data:
+        roster.mark_has_data(solo)
+    roster.move_rider(solo.riders[0], to_entry=team_b)
+    return roster, solo
+
+
+def test_retired_entries_is_empty_on_a_fresh_roster() -> None:
+    """A roster that never dissolved an entry has nothing retired."""
+    roster = Roster()
+
+    assert roster.retired_entries == ()
+
+
+def test_move_rider_dissolving_a_has_data_solo_entry_retires_it() -> None:
+    """A dissolved entry carrying recorded data is retired, not lost."""
+    roster, solo = _dissolved_solo(has_data=True)
+
+    assert roster.retired_entries == (solo,)
+
+
+def test_move_rider_dissolving_a_has_data_solo_entry_drops_it_from_entries() -> None:
+    """Retiring is not a revive: the live entries no longer hold it."""
+    roster, solo = _dissolved_solo(has_data=True)
+
+    assert solo not in roster.entries
+
+
+def test_move_rider_dissolving_a_data_less_solo_entry_removes_it_outright() -> None:
+    """An entry with nothing recorded is still discarded outright."""
+    roster, solo = _dissolved_solo(has_data=False)
+
+    assert (roster.retired_entries, solo in roster.entries) == ((), False)
+
+
+def test_move_rider_dissolving_a_has_data_solo_entry_keeps_its_key_resolvable() -> None:
+    """entry_by_key finds the retired entry the move dissolved."""
+    roster, solo = _dissolved_solo(has_data=True)
+
+    assert roster.entry_by_key(solo.key) is solo
+
+
+def test_entry_by_key_unknown_key_still_returns_none_with_a_retired_entry() -> None:
+    """Searching retired entries leaves an unknown key unresolved."""
+    roster, _solo = _dissolved_solo(has_data=True)
+
+    assert roster.entry_by_key("0" * 32) is None
+
+
+def test_mark_has_data_accepts_a_retired_entry() -> None:
+    """Replay's mark_has_data on a retired entry must not raise."""
+    roster, solo = _dissolved_solo(has_data=True)
+    before = len(roster.audit_log)
+
+    roster.mark_has_data(solo)
+
+    assert (len(roster.audit_log), roster.audit_log[-1]) == (
+        before + 1,
+        AuditEvent(action="mark_has_data", payload={"plate": "1"}),
+    )
+
+
+def test_move_rider_dissolving_a_has_data_team_entry_logs_dissolve_team_entry() -> None:
+    """Retiring a TEAM entry keeps the dissolve_team_entry action."""
+    roster = Roster(entry_mode=EntryMode.MIXED)
+    alex = Rider(first_name="Alex", last_name="", plate="1")
+    team_a = roster.create_team_entry_of_one(display_name="Team A", rider=alex)
+    team_b = roster.create_team_entry(
+        display_name="Team B",
+        riders=[
+            Rider(first_name="Cy", last_name="", plate="3"),
+            Rider(first_name="Do", last_name="", plate="4"),
+        ],
+    )
+    roster.mark_has_data(team_a)
+
+    roster.move_rider(alex, to_entry=team_b)
+
+    assert roster.audit_log[-1] == AuditEvent(
+        action="dissolve_team_entry", payload={"plate": "1", "display_name": "Team A"}
+    )
+
+
+def test_load_retired_entries_restores_them_without_auditing() -> None:
+    """The store restore seam appends retired entries, silently."""
+    roster = Roster()
+    retired = Entry(plate="1", display_name="Alex", type=EntryType.SOLO)
+
+    roster.load_retired_entries([retired])
+
+    assert (roster.retired_entries, roster.entries, roster.audit_log) == ((retired,), (), ())
+
+
+@pytest.mark.parametrize(
+    ("count", "expected"), [(0, []), (1, ["0"]), (3, ["0", "1", "2"])], ids=["none", "one", "many"]
+)
+def test_load_retired_entries_restores_every_given_count(count: int, expected: list[str]) -> None:
+    """T-4 collections: none, one and many restore in order."""
+    entries = [
+        Entry(plate=str(number), display_name=f"Rider {number}", type=EntryType.SOLO)
+        for number in range(count)
+    ]
+    roster = Roster()
+
+    roster.load_retired_entries(entries)
+
+    assert [entry.plate for entry in roster.retired_entries] == expected
 
 
 # ======================================================== name split
