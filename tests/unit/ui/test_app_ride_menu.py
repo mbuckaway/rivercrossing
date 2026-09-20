@@ -25,7 +25,7 @@ from typing import TYPE_CHECKING
 import pytest
 import wx
 
-from conftest import gorba_config
+from conftest import entry_key, gorba_config
 from rivercrossing.cards import Shoe
 from rivercrossing.ride import Event, RideEngine, RideStatus
 from rivercrossing.roster import EntryMode, PlateModel, Roster
@@ -42,12 +42,22 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 _START = "2026-09-20T10:00:00"
-_CROSSING = {
-    "plate": "12",
-    "entry_id": "12",
-    "lap": 1,
-    "crossed_at": "2026-09-20T10:02:00",
-}
+
+
+def _crossing(roster: Roster) -> dict[str, object]:
+    """Return the staged ``record_crossing`` payload (arrange).
+
+    ``entry_id`` is the entry's stable key -- the identity the entry
+    table persists and a replay resolves (E3.1.2's pooled-live-move
+    seam) -- so a hand-written audit row has to carry the staged
+    roster's own key.
+    """
+    return {
+        "plate": "12",
+        "entry_id": entry_key(roster, "12"),
+        "lap": 1,
+        "crossed_at": "2026-09-20T10:02:00",
+    }
 
 
 class _FakeFrame:
@@ -279,12 +289,13 @@ def _live_console(
 
 def _stage_running_ride(db_path: Path) -> int:
     """Stage a RUNNING ride with one crossing and the active marker."""
+    roster = _roster()
     store = Store.open(db_path)
     try:
         ride_id = store.create_ride(gorba_config())
-        store.save_roster(ride_id, _roster())
+        store.save_roster(ride_id, roster)
         store.append(ride_id, Event(action="start", payload={"actual_start": _START}))
-        store.append(ride_id, Event(action="record_crossing", payload=dict(_CROSSING)))
+        store.append(ride_id, Event(action="record_crossing", payload=_crossing(roster)))
         store.set_active_ride(ride_id)
     finally:
         store.close()
@@ -374,7 +385,10 @@ def test_handle_clear_ride_route_given_a_cancelled_danger_leaves_the_ride_alone(
         view = _FakeConsoleView()
         context = _context(store=store, view=view)
         context.active_ride_id = ride_id
-        presenter = _live_console(context, store.load_engine(ride_id, context.roster), view)
+        # The app's own open path: the engine rebuilds its roster, keys
+        # included, from the persisted entry rows (``roster_for`` +
+        # ``load_engine``), so the staged events replay.
+        presenter = _live_console(context, store.load_engine(ride_id), view)
         _stub_danger(monkeypatch, result=wx.ID_CANCEL)
         view.calls.clear()
 

@@ -233,7 +233,7 @@ def _rider_name(entry: Entry | None, rider_plate: str | None) -> str | None:
     return None
 
 
-def _team_name(entry: Entry | None, entry_id: str) -> str:
+def _team_name(entry: Entry | None, entry_plate: str) -> str:
     """Return the Team field's text for *entry*.
 
     A solo rider has no team to name, so the field reads the word
@@ -241,14 +241,29 @@ def _team_name(entry: Entry | None, entry_id: str) -> str:
     repeating the rider's own name from the Rider field -- the word
     the console feed's Team column shows for the same crossing. A
     crossing whose entry has left the roster has nothing to type-check,
-    so it falls back to the raw *entry_id* (``build_fields``' own
-    ``entry_name`` rule).
+    so it falls back to the entry's plate, which is what the dialog's
+    other entry cells show (``build_fields``' own ``entry_name`` rule);
+    the crossing's stable key is never rendered.
     """
     if entry is None:
-        return entry_id
+        return entry_plate
     if entry.type is EntryType.SOLO:
         return SOLO_TEAM_TEXT
     return entry.display_name
+
+
+def _display_plate(crossing: Crossing, entry: Entry | None) -> str:
+    """Return the Plate cell's text for *crossing*.
+
+    The plate the operator typed for this crossing (J1), or -- when
+    the crossing carries none, as a hand-built one might -- the entry's
+    own. An entry that has left the roster leaves the cell blank rather
+    than showing the crossing's stable key, a uuid no operator has ever
+    seen (E3.1.2's pooled-live-move seam).
+    """
+    if crossing.rider_plate:
+        return crossing.rider_plate
+    return entry.plate if entry is not None else ""
 
 
 def _lap_and_total(engine: RideEngine, crossing: Crossing) -> tuple[float, float]:
@@ -321,11 +336,17 @@ def build_fields(crossing: Crossing, roster: Roster, engine: RideEngine) -> Cros
     the hold queue nor the entry's hand -- so its glyph would name a
     card the entry does not hold. A held, credited or duplicate card
     keeps the real dealt code's glyph, the feed's own rule.
+
+    The crossing's ``entry_id`` is the entry's stable key, so the entry
+    comes back through ``Roster.entry_by_key`` (E3.1.2's
+    pooled-live-move seam) and every rendered cell shows the entry's
+    plate or display name -- never the uuid.
     """
-    entry = roster.resolve_plate(crossing.entry_id)
-    entry_name = entry.display_name if entry is not None else crossing.entry_id
+    entry = roster.entry_by_key(crossing.entry_id)
+    entry_plate = entry.plate if entry is not None else (crossing.rider_plate or "")
+    entry_name = entry.display_name if entry is not None else entry_plate
     rider = _rider_name(entry, crossing.rider_plate)
-    team = _team_name(entry, crossing.entry_id)
+    team = _team_name(entry, entry_plate)
     lap_time, total = _lap_and_total(engine, crossing)
     # W9's feed rule: a held crossing still shows the real dealt code,
     # never a placeholder -- held_card_for is that answer.
@@ -335,7 +356,7 @@ def build_fields(crossing: Crossing, roster: Roster, engine: RideEngine) -> Cros
     return CrossingDetailFields(
         rider=rider or entry_name,
         team=team,
-        plate=crossing.rider_plate or crossing.entry_id,
+        plate=_display_plate(crossing, entry),
         lap=str(crossing.seq),
         time=_local_time(crossing.crossed_at),
         lap_time=_format_lap_time(lap_time),
@@ -771,7 +792,7 @@ class _DetailDialogView(DialogFindMixin):  # _find: ui.views._support
         new_plate = run_plate_dialog(
             wx.xrc.XmlResource.Get(),
             opener=self.dialog,
-            plate=crossing.rider_plate or crossing.entry_id,
+            plate=_display_plate(crossing, self.roster.entry_by_key(crossing.entry_id)),
         )
         if new_plate is None:
             return
@@ -876,7 +897,10 @@ class _DetailDialogView(DialogFindMixin):  # _find: ui.views._support
         ``edit_crossing`` raises for a lap retimed at or before its
         predecessor (Phase 3), which would otherwise escape this wx
         handler as a crash. A crossing the engine no longer holds is
-        refused the same way, before either.
+        refused the same way, before either. The engine addresses the
+        crossing by its entry's stable key and its own ``seq`` -- the
+        dialog's entry field only ever showed the plate, and stays
+        locked.
         """
         event.Skip()
         crossing = self._shown_crossing()
@@ -884,7 +908,7 @@ class _DetailDialogView(DialogFindMixin):  # _find: ui.views._support
             wx.xrc.XmlResource.Get(),
             frame=self.dialog,
             adding=False,
-            plate=crossing.rider_plate or crossing.entry_id,
+            plate=_display_plate(crossing, self.roster.entry_by_key(crossing.entry_id)),
             time=_local_time(crossing.crossed_at),
             seq=crossing.seq,
             base_date=self.engine.config.event_date,
@@ -904,7 +928,10 @@ class _DetailDialogView(DialogFindMixin):  # _find: ui.views._support
             self.show_refusal(f"Could not edit crossing: {_STALE_CROSSING}")
             return
         try:
-            self.engine.edit_crossing(edit.entry_id, seq, edit.crossed_at, edit.reason)
+            # The engine addresses a crossing by its entry's stable key
+            # + seq; the dialog's own entry_id is the read-only plate it
+            # displayed (the field is locked, `read_only_plate`).
+            self.engine.edit_crossing(crossing.entry_id, seq, edit.crossed_at, edit.reason)
         except (RideEngineError, ValueError) as exc:
             self.show_refusal(f"Could not edit crossing: {exc}")
             return
@@ -959,6 +986,7 @@ class _DetailDialogView(DialogFindMixin):  # _find: ui.views._support
         crossing = self._shown_crossing()
         card = self.engine.card_for(crossing)
         entry = build_fields(crossing, self.roster, self.engine)
+        owning = self.roster.entry_by_key(crossing.entry_id)
         # xrc-windows.md pins this confirm's label to "the entry the
         # card was dealt to" ("45 · J. Okafor"), and fields.team reads
         # "solo" for a solo rider, so the name comes from the rider
@@ -967,7 +995,10 @@ class _DetailDialogView(DialogFindMixin):  # _find: ui.views._support
         void = corrections.run_void_card(
             wx.xrc.XmlResource.Get(),
             frame=self.dialog,
-            entry_id=crossing.entry_id,
+            # void_card resolves the entry from a plate (R-16), so this
+            # branch's own commit carries the entry's own plate, never
+            # the crossing's internal stable key.
+            entry_id=owning.plate if owning is not None else entry.plate,
             card=card.code(),
             entry=f"{entry.plate} · {entry.rider}",
         )

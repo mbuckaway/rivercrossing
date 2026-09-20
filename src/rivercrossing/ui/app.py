@@ -3453,6 +3453,22 @@ _HELD_VOID_LABEL = "Void card"
 _HELD_CANCEL_LABEL = "Cancel"
 
 
+def _plate_label(crossing: Crossing, roster: Roster) -> str:
+    """Return the plate *crossing* renders as, never its stable key.
+
+    ``Crossing.entry_id`` is the entry's own
+    :attr:`~rivercrossing.roster.Entry.key` (E3.1.2's pooled-live-move
+    seam), so every display or status line renders the plate the
+    operator typed (J1), or the entry's own when the crossing carries
+    none. An entry that has left the roster leaves no plate to show, so
+    the cell reads blank rather than the uuid.
+    """
+    if crossing.rider_plate:
+        return crossing.rider_plate
+    entry = roster.entry_by_key(crossing.entry_id)
+    return entry.plate if entry is not None else ""
+
+
 def _held_card_facts(engine: RideEngine, crossing: Crossing, roster: Roster) -> str:
     """Return the summary line the held-card review confirms carry.
 
@@ -3460,16 +3476,20 @@ def _held_card_facts(engine: RideEngine, crossing: Crossing, roster: Roster) -> 
     question carries the entry, the plate, the lap, that lap's time and
     the card awaiting disposition. A crossing whose lap is past the
     entry's recorded times (a stale row) renders the zero duration; a
-    crossing the hold queue no longer carries renders ``no card``.
+    crossing the hold queue no longer carries renders ``no card``. The
+    entry is resolved by the crossing's stable key, and the line names
+    its display name and plate (``_plate_label``) -- never the uuid; an
+    entry that has left the roster falls back to the plate the operator
+    typed.
     """
-    entry = roster.resolve_plate(crossing.entry_id)
-    name = entry.display_name if entry is not None else crossing.entry_id
+    entry = roster.entry_by_key(crossing.entry_id)
+    name = entry.display_name if entry is not None else _plate_label(crossing, roster)
     times = engine.lap_times(crossing.entry_id)
     lap_time = times[crossing.seq - 1] if crossing.seq <= len(times) else 0.0
     card = engine.held_card_for(crossing)
     card_text = card.code() if card is not None else "no card"
     return (
-        f"{name} · plate {crossing.rider_plate or crossing.entry_id} · "
+        f"{name} · plate {_plate_label(crossing, roster)} · "
         f"Lap {crossing.seq} · {format_duration(lap_time)} · {card_text}"
     )
 
@@ -3489,7 +3509,7 @@ def _review_held_crossing(context: _RouteContext, engine: RideEngine, crossing: 
     from rivercrossing.ui import std_dialogs  # noqa: PLC0415 -- deferred, see module docstring
 
     facts = _held_card_facts(engine, crossing, context.roster)
-    plate = crossing.rider_plate or crossing.entry_id
+    plate = _plate_label(crossing, context.roster)
     choice = std_dialogs.show_three_choice(
         context.frame,
         _HELD_REVIEW_TITLE,
@@ -3524,7 +3544,7 @@ def _return_to_held_confirm(
     from rivercrossing.ui import std_dialogs  # noqa: PLC0415 -- deferred, see module docstring
 
     facts = _held_card_facts(engine, crossing, context.roster)
-    plate = crossing.rider_plate or crossing.entry_id
+    plate = _plate_label(crossing, context.roster)
     returned = std_dialogs.show_prompt(
         context.frame,
         "Return Card to Held",
@@ -3540,6 +3560,7 @@ def _return_to_held_confirm(
 def _flagged_crossing_for(  # noqa: PLR0913, PLR0917 -- the seam's own (plate, held) pair
     source: DataSource,
     engine: RideEngine,
+    roster: Roster,
     plate: str,
     held: bool,  # noqa: FBT001 -- the seam's flag travels positionally
 ) -> Crossing | None:
@@ -3552,9 +3573,10 @@ def _flagged_crossing_for(  # noqa: PLR0913, PLR0917 -- the seam's own (plate, h
     pair's own half of the engine -- the hold queue for a held row,
     every recorded crossing for a credited one (a duplicate is credited
     unless its own short lap held it, exactly like any other lap).
-    Both halves use the feed's own identity, ``crossing.rider_plate or
-    crossing.entry_id``. ``None`` is a stale row: nothing in the feed
-    matches the activated pair.
+    Both halves use the feed's own display plate,
+    :func:`_plate_label` -- the plate the operator typed, or the
+    entry's own -- never the crossing's stable key. ``None`` is a stale
+    row: nothing in the feed matches the activated pair.
     """
     row = next(
         (
@@ -3578,7 +3600,7 @@ def _flagged_crossing_for(  # noqa: PLR0913, PLR0917 -- the seam's own (plate, h
         (
             crossing
             for crossing in candidates
-            if (crossing.rider_plate or crossing.entry_id) == plate and crossing.seq == row.lap
+            if _plate_label(crossing, roster) == plate and crossing.seq == row.lap
         ),
         None,
     )
@@ -3608,7 +3630,9 @@ def _open_flagged_review_for(  # noqa: PLR0913, PLR0917
     if presenter is None:
         return
     engine = presenter.engine
-    crossing = _flagged_crossing_for(presenter.source, engine, plate, card_status == "held")
+    crossing = _flagged_crossing_for(
+        presenter.source, engine, context.roster, plate, card_status == "held"
+    )
     if crossing is None:
         context.frame.SetStatusText(f"Review — no crossing found for plate {plate}")
         return
@@ -3847,7 +3871,7 @@ def _edit_plate_crossing_for(context: _RouteContext, row: int) -> None:
     new_plate = run_plate_dialog(
         context.resource,
         opener=context.frame,
-        plate=target.rider_plate or target.entry_id,
+        plate=_plate_label(target, context.roster),
     )
     if new_plate is None:
         return

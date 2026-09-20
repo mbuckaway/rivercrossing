@@ -45,7 +45,7 @@ import pytest
 from hypothesis import given
 from hypothesis import strategies as st
 
-from conftest import _pooled_team_roster, _roster_with_entries
+from conftest import _pooled_team_roster, _roster_with_entries, entry_key, restore_entry_keys
 from rivercrossing import ride as ride_module
 from rivercrossing.cards import Card, Shoe, ShoeClosedError
 from rivercrossing.hands import best_hand, compare
@@ -435,6 +435,17 @@ def _make_engine(
     return engine, clock
 
 
+def _engine_key(engine: RideEngine, plate: str) -> str:
+    """Return the stable entry key *plate* resolves to (arrange).
+
+    The engine keys its crossings, laps and credited hands by
+    ``Entry.key`` (E3.1.2's pooled-live-move seam), so a test that
+    reaches for an entry identity -- ``lap_times``, ``credited_cards``,
+    a replayed payload -- passes this.
+    """
+    return entry_key(engine._roster, plate)
+
+
 # The identity-keyed void tests below need two physically different
 # cards sharing one code. A two-deck shoe under this seed deals the
 # same code on two consecutive deals (deals 6 and 7), which the
@@ -571,7 +582,7 @@ def test_engine_on_event_receives_the_exact_crossing_payload() -> None:
             action="record_crossing",
             payload={
                 "plate": "12",
-                "entry_id": "12",
+                "entry_id": _engine_key(engine, "12"),
                 "lap": 1,
                 "crossed_at": "2026-09-20T10:01:00",
                 "reason": "Rider 12 · solo",
@@ -854,7 +865,7 @@ def test_set_start_time_recomputes_lap_one_and_writes_audit_row() -> None:
 
     event = engine.set_start_time(_dt(9, 55))
 
-    assert engine.lap_times("12") == (500.0,)
+    assert engine.lap_times(_engine_key(engine, "12")) == (500.0,)
     assert event == Event(
         action="set_start_time",
         payload={
@@ -874,7 +885,7 @@ def test_set_start_time_recomputes_only_lap_one_never_later_laps() -> None:
 
     engine.set_start_time(_dt(9, 55))
 
-    assert engine.lap_times("12") == (500.0, 100.0)
+    assert engine.lap_times(_engine_key(engine, "12")) == (500.0, 100.0)
 
 
 # -------------------------------------------------------- stop/continue
@@ -892,7 +903,7 @@ def test_stop_returns_event_and_blocks_crossings_with_refusal_result() -> None:
     assert result.reason == "ride is stopped"
     assert result.lap == 0
     assert engine.state is RideStatus.RUNNING
-    assert engine.lap_times("12") == ()
+    assert engine.lap_times(_engine_key(engine, "12")) == ()
 
 
 def test_start_after_stop_continues_with_unchanged_actual_start() -> None:
@@ -1108,7 +1119,7 @@ def test_record_crossing_credits_one_lap_and_marks_has_data() -> None:
         action="record_crossing",
         payload={
             "plate": "12",
-            "entry_id": "12",
+            "entry_id": _engine_key(engine, "12"),
             "lap": 1,
             "crossed_at": "2026-09-20T10:02:00",
             "reason": "Rider 12 · solo",
@@ -1255,7 +1266,7 @@ def test_snapshot_keeps_a_dnf_riders_cards_in_the_credited_hand_read() -> None:
 
     engine.mark_dnf("45", reason="mechanical failure")
 
-    assert engine.credited_cards("9") == (card,)
+    assert engine.credited_cards(_engine_key(engine, "9")) == (card,)
 
 
 def test_snapshot_sets_a_solo_entries_sex_from_its_lone_rider() -> None:
@@ -1302,7 +1313,7 @@ def test_lap_times_empty_for_entry_without_laps() -> None:
     engine, _ = _make_engine()
     engine.start()
 
-    assert engine.lap_times("34") == ()
+    assert engine.lap_times(_engine_key(engine, "34")) == ()
 
 
 def test_on_course_counts_active_entries_with_odd_lap_counts() -> None:
@@ -1504,7 +1515,15 @@ def test_record_crossing_pooled_rider_out_lapping_teammates_is_uncapped() -> Non
 
     assert results["9"].laps == 7
     assert len(results["9"].cards) == 7
-    assert engine.lap_times("9") == (60.0, 600.0, 600.0, 600.0, 600.0, 600.0, 600.0)
+    assert engine.lap_times(_engine_key(engine, "9")) == (
+        60.0,
+        600.0,
+        600.0,
+        600.0,
+        600.0,
+        600.0,
+        600.0,
+    )
 
 
 # ----------------------------------------- E4.2 held cards (R-34)
@@ -1545,7 +1564,7 @@ def test_confirm_held_returns_audit_event_and_best_hand_improves() -> None:
 
     assert event == Event(
         action="confirm_held",
-        payload={"entry_id": "12", "seq": 1, "card": held.card.code()},
+        payload={"entry_id": _engine_key(engine, "12"), "seq": 1, "card": held.card.code()},
     )
     results = {entry.plate: entry for entry in engine.snapshot()}
     assert results["12"].cards == (held.card,)
@@ -1563,7 +1582,7 @@ def test_void_held_returns_audit_event_and_hand_stays_empty() -> None:
 
     assert event == Event(
         action="void_held",
-        payload={"entry_id": "12", "seq": 1, "card": held.card.code()},
+        payload={"entry_id": _engine_key(engine, "12"), "seq": 1, "card": held.card.code()},
     )
     results = {entry.plate: entry for entry in engine.snapshot()}
     assert results["12"].cards == ()
@@ -1619,15 +1638,15 @@ def test_return_to_held_moves_a_credited_card_into_the_hold_queue() -> None:
     engine.start()
     result = engine.record_crossing("12", at=_dt(10, 30))
     crossing = engine.crossings[-1]
-    assert engine.credited_cards("12") == (result.card,)
+    assert engine.credited_cards(_engine_key(engine, "12")) == (result.card,)
 
     event = engine.return_to_held(crossing)
 
     assert event == Event(
         action="return_to_held",
-        payload={"entry_id": "12", "seq": 1, "card": result.card.code()},
+        payload={"entry_id": _engine_key(engine, "12"), "seq": 1, "card": result.card.code()},
     )
-    assert engine.credited_cards("12") == ()
+    assert engine.credited_cards(_engine_key(engine, "12")) == ()
     assert engine.held_card_for(crossing) == result.card
     assert engine.held_crossings() == (HeldCrossing(crossing=crossing, card=result.card),)
 
@@ -1654,7 +1673,7 @@ def test_return_to_held_on_a_void_held_card_deals_a_fresh_card() -> None:
     assert engine.is_card_voided(old) is True
     assert event == Event(
         action="return_to_held",
-        payload={"entry_id": "12", "seq": 1, "card": fresh.code()},
+        payload={"entry_id": _engine_key(engine, "12"), "seq": 1, "card": fresh.code()},
     )
 
 
@@ -1677,7 +1696,7 @@ def test_return_to_held_on_a_void_card_deals_a_fresh_card() -> None:
     assert engine.is_card_voided(second.card) is True
     assert event == Event(
         action="return_to_held",
-        payload={"entry_id": "12", "seq": 2, "card": fresh.code()},
+        payload={"entry_id": _engine_key(engine, "12"), "seq": 2, "card": fresh.code()},
     )
 
 
@@ -1863,7 +1882,7 @@ def test_return_to_held_after_a_void_keeps_a_same_code_sibling_credited() -> Non
     engine.return_to_held(engine.crossings[6])
 
     assert engine.held_card_for(engine.crossings[6]) is second
-    assert len(engine.credited_cards("12")) == 5
+    assert len(engine.credited_cards(_engine_key(engine, "12"))) == 5
     # Private read deliberately: the shoe's deal count is exactly what
     # tells the credited branch from a fresh deal, and it has no public
     # reader.
@@ -1887,8 +1906,8 @@ def test_reassign_recredits_a_same_code_card_of_another_entry_after_a_void() -> 
 
     engine.reassign_crossing(len(engine.crossings), "56", reason="mis-keyed plate")
 
-    assert engine.credited_cards("34") == ()
-    assert engine.credited_cards("56") == (shared_34,)
+    assert engine.credited_cards(_engine_key(engine, "34")) == ()
+    assert engine.credited_cards(_engine_key(engine, "56")) == (shared_34,)
 
 
 def test_return_to_held_on_another_entrys_alias_takes_the_credited_branch() -> None:
@@ -1909,7 +1928,7 @@ def test_return_to_held_on_another_entrys_alias_takes_the_credited_branch() -> N
     engine.return_to_held(engine.crossings[6])
 
     assert engine.held_card_for(engine.crossings[6]) is shared_34
-    assert engine.credited_cards("34") == ()
+    assert engine.credited_cards(_engine_key(engine, "34")) == ()
     # Private read deliberately, as above: the deal count is the only
     # reader that separates re-holding from re-dealing.
     assert engine._shoe.dealt == dealt_before
@@ -1938,7 +1957,7 @@ def test_void_card_ignores_a_held_same_code_sibling_and_voids_the_credited_card(
     assert engine.is_card_voided(credited) is True
     assert engine.is_card_voided(held) is False
     assert engine.held_card_for(engine.crossings[5]) is held
-    assert len(engine.credited_cards("12")) == 5
+    assert len(engine.credited_cards(_engine_key(engine, "12"))) == 5
 
 
 # --------------------------------------------- E4.2 undo (R-33)
@@ -1956,14 +1975,14 @@ def test_undo_last_removes_lap_restitutes_card_and_audits() -> None:
     assert event == Event(
         action="undo",
         payload={
-            "entry_id": "12",
+            "entry_id": _engine_key(engine, "12"),
             "seq": 2,
             "crossed_at": "2026-09-20T10:32:00",
             "card": second.card.code(),
             "reason": "Undo last crossing",
         },
     )
-    assert engine.lap_times("12") == (1800.0,)
+    assert engine.lap_times(_engine_key(engine, "12")) == (1800.0,)
     results = {entry.plate: entry for entry in engine.snapshot()}
     assert results["12"].laps == 1
     assert results["12"].cards == (first.card,)
@@ -1986,7 +2005,7 @@ def test_undo_last_after_manual_deal_retires_crossing_card_not_front() -> None:
 
     assert event.action == "undo"
     assert event.payload["card"] == crossing.card.code()
-    assert engine.lap_times("12") == ()
+    assert engine.lap_times(_engine_key(engine, "12")) == ()
     results = {entry.plate: entry for entry in engine.snapshot()}
     manual_card = Card.parse(str(manual.payload["card"]))
     assert results["12"].cards == (manual_card,)
@@ -2003,7 +2022,9 @@ def test_undo_then_rerecord_deals_the_same_card_from_the_shoe_front() -> None:
     rerecord = engine.record_crossing("12", at=_dt(10, 31))
 
     assert rerecord.card == original.card
-    assert engine.lap_times("12") == (1860.0,)  # lap 1 again: crossed_at - actual_start
+    assert engine.lap_times(_engine_key(engine, "12")) == (
+        1860.0,
+    )  # lap 1 again: crossed_at - actual_start
 
 
 def test_undo_last_held_crossing_releases_hold_and_restitutes_card() -> None:
@@ -2016,7 +2037,7 @@ def test_undo_last_held_crossing_releases_hold_and_restitutes_card() -> None:
     engine.undo_last()
 
     assert engine.held_crossings() == ()
-    assert engine.lap_times("12") == ()
+    assert engine.lap_times(_engine_key(engine, "12")) == ()
     redo = engine.record_crossing("12", at=_dt(10, 0, 45))
     assert redo.card == held.card
 
@@ -2090,7 +2111,7 @@ def test_undo_last_from_reopened_reverses_the_crossing() -> None:
 
     engine.undo_last()
 
-    assert engine.lap_times("12") == ()
+    assert engine.lap_times(_engine_key(engine, "12")) == ()
 
 
 # -------------------------------------------------- R-31 perf budget
@@ -2245,7 +2266,10 @@ def test_deal_manual_credits_card_marks_has_data_and_audits_reason() -> None:
     event = engine.deal_manual("12", reason="replacement card")
 
     assert event.action == "deal_manual"
-    assert (event.payload["plate"], event.payload["entry_id"]) == ("12", "12")
+    assert (event.payload["plate"], event.payload["entry_id"]) == (
+        "12",
+        _engine_key(engine, "12"),
+    )
     assert event.payload["reason"] == "replacement card"
     manual_card = Card.parse(str(event.payload["card"]))
     results = {entry.plate: entry for entry in engine.snapshot()}
@@ -2271,7 +2295,7 @@ def test_deal_manual_pooled_rider_plate_credits_the_team() -> None:
     event = engine.deal_manual("45", reason="replacement")
 
     results = {entry.plate: entry for entry in engine.snapshot()}
-    assert event.payload["entry_id"] == "9"
+    assert event.payload["entry_id"] == _engine_key(engine, "9")
     assert results["9"].cards == (Card.parse(str(event.payload["card"])),)
 
 
@@ -2430,7 +2454,7 @@ def test_undo_last_from_reopened_after_finish_returns_card_to_the_shoe() -> None
 
     engine.undo_last()
 
-    assert engine.lap_times("12") == ()
+    assert engine.lap_times(_engine_key(engine, "12")) == ()
     assert engine._shoe.dealt == 0  # reopened shoe: card returned, not retired
     assert engine._shoe.deal()[0] == crossing.card  # next deal reproduces it
 
@@ -2449,7 +2473,7 @@ def test_engine_crossings_property_returns_recorded_crossings_oldest_first() -> 
 
     assert len(crossings) == 2
     assert [c.seq for c in crossings] == [1, 2]
-    assert crossings[0].entry_id == "12"
+    assert crossings[0].entry_id == _engine_key(engine, "12")
     assert crossings[0].crossed_at == _dt(10, 30)
 
 
@@ -2585,15 +2609,15 @@ def test_credited_cards_given_no_crossings_returns_an_empty_tuple() -> None:
     engine, _ = _make_engine()
     engine.start()
 
-    assert engine.credited_cards("12") == ()
+    assert engine.credited_cards(_engine_key(engine, "12")) == ()
 
 
-def test_credited_cards_given_an_unknown_plate_returns_an_empty_tuple() -> None:
-    """Negative: a plate no entry owns credits nothing, never raises."""
+def test_credited_cards_given_an_unknown_entry_id_returns_an_empty_tuple() -> None:
+    """Negative: an id no entry owns credits nothing, never raises."""
     engine, _ = _make_engine()
     engine.start()
 
-    assert engine.credited_cards("999") == ()
+    assert engine.credited_cards("no-such-entry") == ()
 
 
 def test_credited_cards_given_one_crossing_returns_the_dealt_card() -> None:
@@ -2602,7 +2626,7 @@ def test_credited_cards_given_one_crossing_returns_the_dealt_card() -> None:
     engine.start()
     result = engine.record_crossing("12", at=_dt(10, 30))
 
-    assert engine.credited_cards("12") == (result.card,)
+    assert engine.credited_cards(_engine_key(engine, "12")) == (result.card,)
 
 
 def test_credited_cards_given_many_crossings_returns_them_in_deal_order() -> None:
@@ -2617,7 +2641,11 @@ def test_credited_cards_given_many_crossings_returns_them_in_deal_order() -> Non
     second = engine.record_crossing("12", at=_dt(10, 31))
     third = engine.record_crossing("12", at=_dt(10, 32))
 
-    assert engine.credited_cards("12") == (first.card, second.card, third.card)
+    assert engine.credited_cards(_engine_key(engine, "12")) == (
+        first.card,
+        second.card,
+        third.card,
+    )
 
 
 def test_credited_cards_given_a_held_short_lap_credits_nothing_yet() -> None:
@@ -2626,7 +2654,7 @@ def test_credited_cards_given_a_held_short_lap_credits_nothing_yet() -> None:
     engine.start()
     engine.record_crossing("12", at=_dt(10, 0, 30))
 
-    assert engine.credited_cards("12") == ()
+    assert engine.credited_cards(_engine_key(engine, "12")) == ()
 
 
 def test_credited_cards_after_confirming_a_held_card_credits_it() -> None:
@@ -2637,7 +2665,7 @@ def test_credited_cards_after_confirming_a_held_card_credits_it() -> None:
     held = engine.held_crossings()[0]
     engine.confirm_held(held.crossing)
 
-    assert engine.credited_cards("12") == (held.card,)
+    assert engine.credited_cards(_engine_key(engine, "12")) == (held.card,)
 
 
 def test_credited_cards_after_voiding_a_held_card_still_credits_nothing() -> None:
@@ -2648,7 +2676,7 @@ def test_credited_cards_after_voiding_a_held_card_still_credits_nothing() -> Non
     held = engine.held_crossings()[0]
     engine.void_held(held.crossing)
 
-    assert engine.credited_cards("12") == ()
+    assert engine.credited_cards(_engine_key(engine, "12")) == ()
 
 
 def test_credited_cards_given_a_pooled_team_returns_the_entrys_whole_hand() -> None:
@@ -2667,7 +2695,7 @@ def test_credited_cards_given_a_pooled_team_returns_the_entrys_whole_hand() -> N
     second = engine.record_crossing("9", at=_dt(10, 31))
     entry = roster.entries[0]
 
-    assert engine.credited_cards(entry.plate) == (first.card, second.card)
+    assert engine.credited_cards(entry.key) == (first.card, second.card)
 
 
 # --------------------------------------- W9: held-card lookup (R-34)
@@ -2812,7 +2840,7 @@ def test_apply_record_crossing_event_credits_lap_and_deals_deterministic_card() 
         action="record_crossing",
         payload={
             "plate": "12",
-            "entry_id": "12",
+            "entry_id": _engine_key(engine, "12"),
             "lap": 1,
             "crossed_at": "2026-09-20T10:02:00",
             "reason": "Rider 12 · solo",
@@ -2821,7 +2849,7 @@ def test_apply_record_crossing_event_credits_lap_and_deals_deterministic_card() 
 
     engine.apply(event)
 
-    assert engine.lap_times("12") == (120.0,)
+    assert engine.lap_times(_engine_key(engine, "12")) == (120.0,)
     assert engine.events[-1] == event
 
 
@@ -2841,7 +2869,7 @@ def test_apply_set_start_time_event_backdates_actual_start() -> None:
 
     engine.apply(event)
 
-    assert engine.lap_times("12") == (420.0,)
+    assert engine.lap_times(_engine_key(engine, "12")) == (420.0,)
     assert engine.events[-1] == event
 
 
@@ -2853,7 +2881,7 @@ def test_apply_confirm_held_event_releases_held_card_into_the_hand() -> None:
     held = engine.held_crossings()[0]
     event = Event(
         action="confirm_held",
-        payload={"entry_id": "12", "seq": 1, "card": held.card.code()},
+        payload={"entry_id": _engine_key(engine, "12"), "seq": 1, "card": held.card.code()},
     )
 
     engine.apply(event)
@@ -2871,7 +2899,7 @@ def test_apply_void_held_event_discards_held_card_never_credited() -> None:
     held = engine.held_crossings()[0]
     event = Event(
         action="void_held",
-        payload={"entry_id": "12", "seq": 1, "card": held.card.code()},
+        payload={"entry_id": _engine_key(engine, "12"), "seq": 1, "card": held.card.code()},
     )
 
     engine.apply(event)
@@ -2889,13 +2917,13 @@ def test_apply_return_to_held_event_re_holds_the_credited_card() -> None:
     crossing = engine.crossings[0]
     event = Event(
         action="return_to_held",
-        payload={"entry_id": "12", "seq": 1, "card": result.card.code()},
+        payload={"entry_id": _engine_key(engine, "12"), "seq": 1, "card": result.card.code()},
     )
 
     engine.apply(event)
 
     assert engine.held_card_for(crossing) == result.card
-    assert engine.credited_cards("12") == ()
+    assert engine.credited_cards(_engine_key(engine, "12")) == ()
     assert engine.events[-1] == event
 
 
@@ -2928,6 +2956,7 @@ def test_apply_replay_return_to_held_reproduces_the_re_held_disposition() -> Non
     fifth = live.record_crossing("12", at=_dt(12, 0))  # credited -> voided
     live.void_card("12", fifth.card, reason="wrong card dealt")
     replayed, _ = _make_engine(config=_config(hold_short_laps=True))
+    restore_entry_keys(replayed, live)
     # logic-coverage-exempt: T-8 -- the loop is pure Arrange
     # (re-applying the recorded log); assertions run after the loop.
     for event in live.events:
@@ -2953,7 +2982,7 @@ def test_apply_undo_event_reverses_the_last_crossing() -> None:
     event = Event(
         action="undo",
         payload={
-            "entry_id": "12",
+            "entry_id": _engine_key(engine, "12"),
             "seq": 2,
             "crossed_at": "2026-09-20T10:32:00",
             "card": second.card.code(),
@@ -2963,7 +2992,7 @@ def test_apply_undo_event_reverses_the_last_crossing() -> None:
 
     engine.apply(event)
 
-    assert engine.lap_times("12") == (1800.0,)
+    assert engine.lap_times(_engine_key(engine, "12")) == (1800.0,)
     assert engine.events[-1] == event
 
 
@@ -2977,7 +3006,7 @@ def test_apply_deal_manual_event_credits_card_with_the_payload_reason() -> None:
         action="deal_manual",
         payload={
             "plate": "12",
-            "entry_id": "12",
+            "entry_id": _engine_key(engine, "12"),
             "card": expected.code(),
             "reason": "replacement card",
         },
@@ -3173,6 +3202,7 @@ def test_apply_replay_finish_reopen_deal_manual_is_equivalent() -> None:
     manual = live.deal_manual("12", reason="replacement")
 
     replayed, _ = _make_engine()
+    restore_entry_keys(replayed, live)
     for event in live.events:
         replayed.apply(event)
 
@@ -3222,7 +3252,7 @@ def test_apply_confirm_held_for_an_unrecorded_crossing_raises_clear_error() -> N
     engine.start(at=_dt(10, 0))
     event = Event(
         action="confirm_held",
-        payload={"entry_id": "12", "seq": 99, "card": "AS"},
+        payload={"entry_id": _engine_key(engine, "12"), "seq": 99, "card": "AS"},
     )
 
     with pytest.raises(RideEngineError, match=re.escape("no crossing")):
@@ -3235,11 +3265,53 @@ def test_apply_return_to_held_for_an_unrecorded_crossing_raises_clear_error() ->
     engine.start(at=_dt(10, 0))
     event = Event(
         action="return_to_held",
-        payload={"entry_id": "12", "seq": 99, "card": "AS"},
+        payload={"entry_id": _engine_key(engine, "12"), "seq": 99, "card": "AS"},
     )
 
     with pytest.raises(RideEngineError, match=re.escape("no crossing")):
         engine.apply(event)
+
+
+def test_apply_record_crossing_given_an_unknown_entry_key_raises_unknown_plate_error() -> None:
+    """A payload no roster entry owns fails loudly (T-5).
+
+    Replay resolves each event's entry by the stable key it carries
+    (E3.1.2's pooled-live-move seam), so a key no entry owns is an
+    inconsistent event stream rather than a plate to re-resolve.
+    """
+    engine, _ = _make_engine()
+
+    with pytest.raises(UnknownPlateError, match=re.escape("unknown entry key")):
+        engine.apply(
+            Event(
+                action="record_crossing",
+                payload={
+                    "plate": "12",
+                    "entry_id": "0" * 32,
+                    "lap": 1,
+                    "crossed_at": "2026-09-20T10:02:00",
+                },
+            )
+        )
+
+
+def test_apply_deal_manual_given_an_unknown_entry_key_raises_unknown_plate_error() -> None:
+    """Every key-resolving replay branch refuses the same way (T-5)."""
+    engine, _ = _make_engine()
+    engine.start(at=_dt(10, 0))
+
+    with pytest.raises(UnknownPlateError, match=re.escape("unknown entry key")):
+        engine.apply(
+            Event(
+                action="deal_manual",
+                payload={
+                    "plate": "12",
+                    "entry_id": "0" * 32,
+                    "card": "AS",
+                    "reason": "bonus",
+                },
+            )
+        )
 
 
 # ============================================================ D2
@@ -3370,7 +3442,7 @@ def test_record_crossing_given_pooled_rider_plate_stores_it_as_the_rider_plate()
     engine.record_crossing("45", at=_dt(10, 2))
 
     assert engine.crossings[-1] == Crossing(
-        entry_id="9", seq=1, crossed_at=_dt(10, 2), rider_plate="45"
+        entry_id=_engine_key(engine, "9"), seq=1, crossed_at=_dt(10, 2), rider_plate="45"
     )
 
 
@@ -3389,7 +3461,7 @@ def test_edit_crossing_preserves_the_typing_riders_plate() -> None:
     engine = _pooled_team_engine()
     engine.record_crossing("45", at=_dt(10, 2))
 
-    engine.edit_crossing("9", 1, _dt(10, 3), reason="mis-keyed time")
+    engine.edit_crossing(_engine_key(engine, "9"), 1, _dt(10, 3), reason="mis-keyed time")
 
     assert engine.crossings[-1].rider_plate == "45"
 
@@ -3411,7 +3483,9 @@ def test_reassign_crossing_sets_the_new_plate_as_the_rider_plate() -> None:
 
     engine.reassign_crossing(1, "34", reason="mis-keyed plate")
 
-    moved = [crossing for crossing in engine.crossings if crossing.entry_id == "34"]
+    moved = [
+        crossing for crossing in engine.crossings if crossing.entry_id == _engine_key(engine, "34")
+    ]
     assert [crossing.rider_plate for crossing in moved] == ["34"]
 
 
@@ -3421,7 +3495,7 @@ def test_void_crossing_renumbering_preserves_the_remaining_riders_plate() -> Non
     engine.record_crossing("9", at=_dt(10, 2))  # Priya, lap 1
     engine.record_crossing("45", at=_dt(10, 4))  # Sarah, lap 2
 
-    engine.void_crossing("9", 1, reason="double entry")
+    engine.void_crossing(_engine_key(engine, "9"), 1, reason="double entry")
 
     assert [(crossing.seq, crossing.rider_plate) for crossing in engine.crossings] == [(1, "45")]
 
@@ -3436,7 +3510,9 @@ def test_reassign_crossing_renumbering_preserves_the_remaining_riders_plate() ->
 
     engine.reassign_crossing(1, "34", reason="mis-keyed plate")
 
-    remaining = [crossing for crossing in engine.crossings if crossing.entry_id == "12"]
+    remaining = [
+        crossing for crossing in engine.crossings if crossing.entry_id == _engine_key(engine, "12")
+    ]
     assert [(crossing.seq, crossing.rider_plate) for crossing in remaining] == [(1, "12")]
 
 
@@ -3449,7 +3525,7 @@ def test_apply_record_crossing_event_rebuilds_the_typed_rider_plate() -> None:
         action="record_crossing",
         payload={
             "plate": "45",
-            "entry_id": "9",
+            "entry_id": _engine_key(engine, "9"),
             "lap": 1,
             "crossed_at": "2026-09-20T10:02:00",
         },
@@ -3524,7 +3600,7 @@ def test_record_miss_deals_no_card_and_leaves_the_crossings_untouched() -> None:
     engine.record_miss(_dt(10, 5), reason="missed number")
 
     assert (engine.crossings, engine.shoe_remaining) == ((), shoe_remaining)
-    assert engine.credited_cards("12") == ()
+    assert engine.credited_cards(_engine_key(engine, "12")) == ()
     assert engine.held_crossings() == ()
 
 
@@ -3580,14 +3656,16 @@ def test_assign_plate_to_miss_removes_the_miss_and_records_the_crossing() -> Non
         payload={
             "miss_seq": 1,
             "new_plate": "12",
-            "entry_id": "12",
+            "entry_id": _engine_key(engine, "12"),
             "crossed_at": "2026-09-20T10:05:00",
             "reason": "rider identified",
         },
     )
     assert engine.pending_misses() == ()
     assert engine.crossings == (
-        Crossing(entry_id="12", seq=1, crossed_at=_dt(10, 5), rider_plate="12"),
+        Crossing(
+            entry_id=_engine_key(engine, "12"), seq=1, crossed_at=_dt(10, 5), rider_plate="12"
+        ),
     )
     assert engine.events[-1] == event
 
@@ -3712,7 +3790,7 @@ def test_apply_assign_plate_to_miss_event_replays_the_crossing() -> None:
         payload={
             "miss_seq": 1,
             "new_plate": "12",
-            "entry_id": "12",
+            "entry_id": _engine_key(engine, "12"),
             "crossed_at": "2026-09-20T10:05:00",
             "reason": "rider identified",
         },
@@ -3722,7 +3800,9 @@ def test_apply_assign_plate_to_miss_event_replays_the_crossing() -> None:
 
     assert engine.pending_misses() == ()
     assert engine.crossings == (
-        Crossing(entry_id="12", seq=1, crossed_at=_dt(10, 5), rider_plate="12"),
+        Crossing(
+            entry_id=_engine_key(engine, "12"), seq=1, crossed_at=_dt(10, 5), rider_plate="12"
+        ),
     )
     assert engine.events[-1] == event
 
@@ -3735,6 +3815,7 @@ def test_apply_replay_record_miss_then_assign_is_equivalent() -> None:
     live.assign_plate_to_miss(1, "12", reason="rider identified")
 
     replayed, _ = _make_engine()
+    restore_entry_keys(replayed, live)
     # logic-coverage-exempt: T-8 -- the loop is pure Arrange
     # (re-applying the recorded log); assertions run after the loop.
     for event in live.events:
@@ -4022,7 +4103,7 @@ def test_edit_crossing_given_a_time_at_the_previous_lap_is_refused() -> None:
     engine.record_crossing("12", at=_dt(10, 40))
 
     with pytest.raises(ValueError, match=re.escape(_REFUSAL)):
-        engine.edit_crossing("12", 2, _dt(10, 30), reason="mis-keyed time")
+        engine.edit_crossing(_engine_key(engine, "12"), 2, _dt(10, 30), reason="mis-keyed time")
 
 
 def test_edit_crossing_given_a_time_before_the_previous_lap_is_refused() -> None:
@@ -4033,7 +4114,7 @@ def test_edit_crossing_given_a_time_before_the_previous_lap_is_refused() -> None
     engine.record_crossing("12", at=_dt(10, 40))
 
     with pytest.raises(ValueError, match=re.escape(_REFUSAL)):
-        engine.edit_crossing("12", 2, _dt(10, 29), reason="mis-keyed time")
+        engine.edit_crossing(_engine_key(engine, "12"), 2, _dt(10, 29), reason="mis-keyed time")
 
 
 def test_edit_crossing_given_a_time_at_actual_start_on_lap_one_is_refused() -> None:
@@ -4043,7 +4124,7 @@ def test_edit_crossing_given_a_time_at_actual_start_on_lap_one_is_refused() -> N
     engine.record_crossing("12", at=_dt(10, 30))
 
     with pytest.raises(ValueError, match=re.escape(_REFUSAL)):
-        engine.edit_crossing("12", 1, _dt(10, 0), reason="mis-keyed time")
+        engine.edit_crossing(_engine_key(engine, "12"), 1, _dt(10, 0), reason="mis-keyed time")
 
 
 def test_edit_crossing_given_a_time_before_actual_start_on_lap_one_is_refused() -> None:
@@ -4053,7 +4134,7 @@ def test_edit_crossing_given_a_time_before_actual_start_on_lap_one_is_refused() 
     engine.record_crossing("12", at=_dt(10, 30))
 
     with pytest.raises(ValueError, match=re.escape(_REFUSAL)):
-        engine.edit_crossing("12", 1, _dt(9, 59, 59), reason="mis-keyed time")
+        engine.edit_crossing(_engine_key(engine, "12"), 1, _dt(9, 59, 59), reason="mis-keyed time")
 
 
 def test_edit_crossing_given_a_time_one_second_after_the_previous_lap_is_accepted() -> None:
@@ -4063,9 +4144,9 @@ def test_edit_crossing_given_a_time_one_second_after_the_previous_lap_is_accepte
     engine.record_crossing("12", at=_dt(10, 30))
     engine.record_crossing("12", at=_dt(10, 40))
 
-    engine.edit_crossing("12", 2, _dt(10, 30, 1), reason="mis-keyed time")
+    engine.edit_crossing(_engine_key(engine, "12"), 2, _dt(10, 30, 1), reason="mis-keyed time")
 
-    assert engine.lap_times("12") == (1800.0, 1.0)
+    assert engine.lap_times(_engine_key(engine, "12")) == (1800.0, 1.0)
 
 
 def test_edit_crossing_given_a_later_time_recomputes_the_lap() -> None:
@@ -4075,9 +4156,9 @@ def test_edit_crossing_given_a_later_time_recomputes_the_lap() -> None:
     engine.record_crossing("12", at=_dt(10, 30))
     engine.record_crossing("12", at=_dt(10, 40))
 
-    engine.edit_crossing("12", 2, _dt(10, 45), reason="mis-keyed time")
+    engine.edit_crossing(_engine_key(engine, "12"), 2, _dt(10, 45), reason="mis-keyed time")
 
-    assert engine.lap_times("12") == (1800.0, 900.0)
+    assert engine.lap_times(_engine_key(engine, "12")) == (1800.0, 900.0)
 
 
 def test_edit_crossing_given_a_refused_time_leaves_the_ride_untouched() -> None:
@@ -4089,7 +4170,7 @@ def test_edit_crossing_given_a_refused_time_leaves_the_ride_untouched() -> None:
     events_before = len(engine.events)
 
     with pytest.raises(ValueError, match=re.escape(_REFUSAL)):
-        engine.edit_crossing("12", 2, _dt(10, 30), reason="mis-keyed time")
+        engine.edit_crossing(_engine_key(engine, "12"), 2, _dt(10, 30), reason="mis-keyed time")
 
     assert (len(engine.events), engine.crossings[-1].crossed_at) == (
         events_before,
@@ -4144,7 +4225,7 @@ def test_add_crossing_at_given_a_time_after_the_latest_crossing_is_accepted() ->
 
     engine.add_crossing_at("12", _dt(10, 30, 1), reason="missed crossing")
 
-    assert engine.lap_times("12") == (1800.0, 1.0)
+    assert engine.lap_times(_engine_key(engine, "12")) == (1800.0, 1.0)
 
 
 def test_add_crossing_at_given_a_time_after_actual_start_with_no_crossings_is_accepted() -> None:
@@ -4154,7 +4235,7 @@ def test_add_crossing_at_given_a_time_after_actual_start_with_no_crossings_is_ac
 
     engine.add_crossing_at("12", _dt(10, 0, 1), reason="missed crossing")
 
-    assert engine.lap_times("12") == (1.0,)
+    assert engine.lap_times(_engine_key(engine, "12")) == (1.0,)
 
 
 def test_add_crossing_at_given_a_refused_time_deals_no_card_and_appends_no_event() -> None:
@@ -4240,7 +4321,7 @@ def test_duplicate_crossings_given_one_twin_voided_returns_an_empty_tuple() -> N
     engine.record_crossing("12", at=_dt(10, 30))
     engine.record_crossing("12", at=_dt(10, 30))
 
-    engine.void_crossing("12", 2, reason="double entry")
+    engine.void_crossing(_engine_key(engine, "12"), 2, reason="double entry")
 
     assert engine.duplicate_crossings() == ()
 
@@ -4277,7 +4358,7 @@ def test_apply_edit_crossing_given_a_zero_lap_event_raises_value_error() -> None
     event = Event(
         action="edit_crossing",
         payload={
-            "entry_id": "12",
+            "entry_id": _engine_key(engine, "12"),
             "seq": 2,
             "previous_crossed_at": "2026-09-20T10:40:00",
             "crossed_at": "2026-09-20T10:30:00",
@@ -4298,7 +4379,7 @@ def test_apply_edit_crossing_given_a_negative_lap_event_raises_value_error() -> 
     event = Event(
         action="edit_crossing",
         payload={
-            "entry_id": "12",
+            "entry_id": _engine_key(engine, "12"),
             "seq": 2,
             "previous_crossed_at": "2026-09-20T10:40:00",
             "crossed_at": "2026-09-20T10:29:00",
@@ -4318,7 +4399,7 @@ def test_apply_edit_crossing_given_lap_one_at_actual_start_raises_value_error() 
     event = Event(
         action="edit_crossing",
         payload={
-            "entry_id": "12",
+            "entry_id": _engine_key(engine, "12"),
             "seq": 1,
             "previous_crossed_at": "2026-09-20T10:30:00",
             "crossed_at": "2026-09-20T10:00:00",
@@ -4339,7 +4420,7 @@ def test_apply_add_crossing_at_given_a_time_at_the_latest_crossing_raises_value_
         action="add_crossing_at",
         payload={
             "plate": "12",
-            "entry_id": "12",
+            "entry_id": _engine_key(engine, "12"),
             "crossed_at": "2026-09-20T10:30:00",
             "reason": "missed crossing",
         },
@@ -4358,7 +4439,7 @@ def test_apply_add_crossing_at_given_a_back_dated_event_raises_value_error() -> 
         action="add_crossing_at",
         payload={
             "plate": "12",
-            "entry_id": "12",
+            "entry_id": _engine_key(engine, "12"),
             "crossed_at": "2026-09-20T10:25:00",
             "reason": "missed crossing",
         },
@@ -4376,7 +4457,7 @@ def test_apply_add_crossing_at_given_a_first_lap_at_actual_start_raises_value_er
         action="add_crossing_at",
         payload={
             "plate": "12",
-            "entry_id": "12",
+            "entry_id": _engine_key(engine, "12"),
             "crossed_at": "2026-09-20T10:00:00",
             "reason": "missed crossing",
         },
@@ -4395,7 +4476,7 @@ def test_apply_edit_crossing_given_a_legal_event_still_replays_it() -> None:
     event = Event(
         action="edit_crossing",
         payload={
-            "entry_id": "12",
+            "entry_id": _engine_key(engine, "12"),
             "seq": 2,
             "previous_crossed_at": "2026-09-20T10:40:00",
             "crossed_at": "2026-09-20T10:45:00",
@@ -4405,7 +4486,10 @@ def test_apply_edit_crossing_given_a_legal_event_still_replays_it() -> None:
 
     engine.apply(event)
 
-    assert (engine.lap_times("12"), engine.events[-1]) == ((1800.0, 900.0), event)
+    assert (engine.lap_times(_engine_key(engine, "12")), engine.events[-1]) == (
+        (1800.0, 900.0),
+        event,
+    )
 
 
 def test_apply_add_crossing_at_given_a_legal_event_still_replays_it() -> None:
@@ -4417,7 +4501,7 @@ def test_apply_add_crossing_at_given_a_legal_event_still_replays_it() -> None:
         action="add_crossing_at",
         payload={
             "plate": "12",
-            "entry_id": "12",
+            "entry_id": _engine_key(engine, "12"),
             "crossed_at": "2026-09-20T10:35:00",
             "reason": "missed crossing",
         },
@@ -4425,7 +4509,10 @@ def test_apply_add_crossing_at_given_a_legal_event_still_replays_it() -> None:
 
     engine.apply(event)
 
-    assert (engine.lap_times("12"), engine.events[-1]) == ((1800.0, 300.0), event)
+    assert (engine.lap_times(_engine_key(engine, "12")), engine.events[-1]) == (
+        (1800.0, 300.0),
+        event,
+    )
 
 
 # ======================= scope 6d: the audit reason column
@@ -4685,10 +4772,10 @@ def _run_reason_carrying(engine: RideEngine, action: str) -> None:
             engine.deal_manual("12", reason=_TYPED_REASON)
         case "edit_crossing":
             engine.record_crossing("12", at=_dt(10, 30))
-            engine.edit_crossing("12", 1, _dt(10, 31), reason=_TYPED_REASON)
+            engine.edit_crossing(_engine_key(engine, "12"), 1, _dt(10, 31), reason=_TYPED_REASON)
         case "void_crossing":
             engine.record_crossing("12", at=_dt(10, 30))
-            engine.void_crossing("12", 1, reason=_TYPED_REASON)
+            engine.void_crossing(_engine_key(engine, "12"), 1, reason=_TYPED_REASON)
         case "add_crossing_at":
             engine.add_crossing_at("12", _dt(10, 30), reason=_TYPED_REASON)
         case "assign_plate_to_miss":
@@ -4739,7 +4826,10 @@ def test_audit_reason_given_a_reason_carrying_action_keeps_its_own_reason(
 
 # The default engine's shoe seed, salted by the draw's own constant,
 # gives this deck. The default roster has no crossings, so both empty
-# hands tie and the pair draws that deck's first two cards.
+# hands tie and the pair draws that deck's first two cards. Keyed by
+# plate: the engine files a draw under the entry's stable key, and
+# :func:`_draws_by_plate` reads it back the way the operator names the
+# entry.
 _DEFAULT_DRAW: dict[str, Card] = {
     "12": Card.parse("5H"),
     "34": Card.parse("AH"),
@@ -4760,6 +4850,18 @@ _RANK_TIE_DRAW: dict[str, Card] = {
 }
 
 
+def _draws_by_plate(engine: RideEngine) -> dict[str, Card]:
+    """Return *engine*'s drawn tie-break cards keyed by plate.
+
+    The engine files each draw under the entry's stable ``key``
+    (``_tiebreak``); the expectation tables above name entries by the
+    plate the operator knows, so this projection is what they compare
+    against.
+    """
+    plates_by_key = {entry.key: entry.plate for entry in engine._roster.entries}
+    return {plates_by_key[key]: card for key, card in engine._tiebreak.items()}
+
+
 def test_finish_given_two_equal_hands_draws_one_card_each() -> None:
     """R-14: a tied pair draws one card each from one fresh deck."""
     engine, _ = _make_engine()
@@ -4767,7 +4869,7 @@ def test_finish_given_two_equal_hands_draws_one_card_each() -> None:
 
     engine.finish()
 
-    assert engine._tiebreak == _DEFAULT_DRAW
+    assert _draws_by_plate(engine) == _DEFAULT_DRAW
 
 
 def test_finish_given_two_equal_hands_appends_a_tiebreak_draw_event() -> None:
@@ -4781,8 +4883,8 @@ def test_finish_given_two_equal_hands_appends_a_tiebreak_draw_event() -> None:
         action="tiebreak_draw",
         payload={
             "draws": [
-                {"entry_id": "12", "card": "5H"},
-                {"entry_id": "34", "card": "AH"},
+                {"entry_id": _engine_key(engine, "12"), "card": "5H"},
+                {"entry_id": _engine_key(engine, "34"), "card": "AH"},
             ],
             "summary": "12 · 5H, 34 · AH",
         },
@@ -4879,7 +4981,7 @@ def test_finish_given_two_tie_groups_hands_out_one_deck_in_order() -> None:
 
     engine.finish()
 
-    assert engine._tiebreak == _RANK_TIE_DRAW
+    assert _draws_by_plate(engine) == _RANK_TIE_DRAW
 
 
 def _tied_field(count: int) -> Roster:
@@ -4904,7 +5006,7 @@ def test_finish_given_fifty_three_tied_entries_leaves_the_extra_undrawn() -> Non
 
     engine.finish()
 
-    assert (len(engine._tiebreak), engine._tiebreak.get("53")) == (52, None)
+    assert (len(engine._tiebreak), _draws_by_plate(engine).get("53")) == (52, None)
 
 
 def test_finish_given_the_same_stored_seed_draws_the_same_cards() -> None:
@@ -4917,7 +5019,7 @@ def test_finish_given_the_same_stored_seed_draws_the_same_cards() -> None:
 
     second.finish()
 
-    assert second._tiebreak == first._tiebreak
+    assert _draws_by_plate(second) == _draws_by_plate(first)
 
 
 def test_finish_given_a_tie_draws_without_dealing_from_the_shoe() -> None:
@@ -4955,7 +5057,10 @@ def test_start_given_a_reopened_ride_clears_the_recorded_draws() -> None:
     engine.apply(
         Event(
             action="tiebreak_draw",
-            payload={"draws": [{"entry_id": "12", "card": "AS"}], "summary": "12 · AS"},
+            payload={
+                "draws": [{"entry_id": _engine_key(engine, "12"), "card": "AS"}],
+                "summary": "12 · AS",
+            },
         )
     )
 
@@ -4971,8 +5076,8 @@ def test_apply_tiebreak_draw_event_restores_the_draws_from_its_payload() -> None
         action="tiebreak_draw",
         payload={
             "draws": [
-                {"entry_id": "12", "card": "AS"},
-                {"entry_id": "34", "card": "7C"},
+                {"entry_id": _engine_key(engine, "12"), "card": "AS"},
+                {"entry_id": _engine_key(engine, "34"), "card": "7C"},
             ],
             "summary": "12 · AS, 34 · 7C",
         },
@@ -4981,7 +5086,10 @@ def test_apply_tiebreak_draw_event_restores_the_draws_from_its_payload() -> None
     engine.apply(event)
 
     assert (engine._tiebreak, engine.events[-1]) == (
-        {"12": Card.parse("AS"), "34": Card.parse("7C")},
+        {
+            _engine_key(engine, "12"): Card.parse("AS"),
+            _engine_key(engine, "34"): Card.parse("7C"),
+        },
         event,
     )
 
@@ -5008,9 +5116,16 @@ def test_apply_tiebreak_draw_given_a_non_row_list_reads_no_draws(
     assert engine._tiebreak == {}
 
 
-def _replay(events: tuple[Event, ...]) -> RideEngine:
-    """Rebuild an engine by applying *events* in order (E5.1.2)."""
+def _replay(events: tuple[Event, ...], *, source: RideEngine | None = None) -> RideEngine:
+    """Rebuild an engine by applying *events* in order (E5.1.2).
+
+    *source*, when given, lends the replayed roster its entry keys --
+    what ``Store.load_engine``'s roster carries back from the persisted
+    ``entry`` rows, and what the recorded events were filed under.
+    """
     engine, _ = _make_engine()
+    if source is not None:
+        restore_entry_keys(engine, source)
     for event in events:
         engine.apply(event)
     return engine
@@ -5022,7 +5137,7 @@ def test_apply_replay_of_a_finished_ride_reproduces_the_draw() -> None:
     live.start(at=_dt(10, 0))
     live.finish()
 
-    replayed = _replay(live.events)
+    replayed = _replay(live.events, source=live)
 
     assert (replayed._tiebreak, replayed.snapshot()) == (live._tiebreak, live.snapshot())
     assert replayed.events == live.events

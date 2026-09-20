@@ -312,8 +312,10 @@ def test_feed_rows_given_a_crossing_whose_entry_left_the_roster_is_blank() -> No
 
     The crossing is recorded against the real roster and then read
     through a source whose roster no longer holds that entry -- the
-    feed's own "entry left the roster" case, where Plate and Name fall
-    back to the stored id and the Team cell has nothing to render.
+    feed's own "entry left the roster" case, where the plate the
+    operator typed is the row's only handle: Plate and Name both fall
+    back to it (never the crossing's internal key) and the Team cell
+    has nothing to render.
     """
     roster = _pooled_team_roster()
     engine = _running_engine(roster)
@@ -322,7 +324,7 @@ def test_feed_rows_given_a_crossing_whose_entry_left_the_roster_is_blank() -> No
 
     feed = source.feed_rows()
 
-    assert (feed[0].entry, feed[0].team) == ("9", "")
+    assert (feed[0].plate, feed[0].entry, feed[0].team) == ("45", "45", "")
 
 
 def test_rider_name_for_given_matching_plate_returns_that_riders_full_name() -> None:
@@ -1210,6 +1212,6 @@ def test_audit_entry_given_any_payload_renders_a_string(
     action: str, payload: dict[str, object]
 ) -> None:
     """Property (T-7): whatever a payload holds, the cell is text."""
-    cell = data_source_module._audit_entry(Event(action=action, payload=payload))
+    cell = data_source_module._audit_entry(Event(action=action, payload=payload), {"key": "12"})
 
     assert isinstance(cell, str)

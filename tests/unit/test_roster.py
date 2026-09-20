@@ -2509,6 +2509,113 @@ def test_resolve_plate_relay_unknown_plate_returns_none() -> None:
     assert roster.resolve_plate("999") is None
 
 
+# ------------------------------------------------------- entry key
+# The stable entry identity the ride engine keys its crossings and
+# credited hands by (E3.1.2's pooled-live-move seam): a plate is
+# mutable -- a pooled team re-derives its own from its members, and a
+# mid-ride move re-derives it again -- so it can never be what a
+# crossing is filed under. ``key`` is a per-entry surrogate: unique
+# for the life of the entry, never shown, never edited.
+
+
+def test_entry_bare_construction_carries_a_hex_key() -> None:
+    """A hand-built Entry still gets a usable stable key."""
+    entry = Entry(plate="12", display_name="Alex", type=EntryType.SOLO)
+
+    assert re.fullmatch(r"[0-9a-f]{32}", entry.key)
+
+
+def test_create_solo_entry_assigns_distinct_keys() -> None:
+    """Each solo entry's key is its own, never a shared default."""
+    roster = Roster()
+    first = roster.create_solo_entry(first_name="Alex", last_name="", plate="1")
+    second = roster.create_solo_entry(first_name="Bo", last_name="", plate="2")
+
+    assert first.key != second.key
+    assert len(first.key) == 32
+
+
+def test_create_team_entry_assigns_distinct_keys() -> None:
+    """Each team entry's key is its own, never a shared default."""
+    roster = Roster(entry_mode=EntryMode.MIXED)
+    first = roster.create_team_entry(
+        display_name="Team A",
+        riders=[Rider(first_name="Alex", plate="1"), Rider(first_name="Bo", plate="2")],
+    )
+    second = roster.create_team_entry(
+        display_name="Team B",
+        riders=[Rider(first_name="Cy", plate="3"), Rider(first_name="Di", plate="4")],
+    )
+
+    assert first.key != second.key
+    assert len(second.key) == 32
+
+
+def test_create_empty_team_assigns_a_key() -> None:
+    """A riderless team carries a key like any other entry."""
+    roster = Roster(entry_mode=EntryMode.MIXED, plate_model=PlateModel.RIDER_POOLED)
+
+    entry = roster.create_empty_team(display_name="Later")
+
+    assert re.fullmatch(r"[0-9a-f]{32}", entry.key)
+
+
+def test_extract_rider_to_solo_assigns_a_key_different_from_the_source_team() -> None:
+    """The rider's new solo entry is a new identity, not the team's."""
+    roster = Roster(entry_mode=EntryMode.MIXED)
+    team = roster.create_team_entry(
+        display_name="Team A",
+        riders=[Rider(first_name="Alex", plate="1"), Rider(first_name="Bo", plate="2")],
+    )
+    rider = team.riders[0]
+
+    solo = roster.extract_rider_to_solo(rider)
+
+    assert solo.key != team.key
+    assert len(solo.key) == 32
+
+
+def test_entry_by_key_returns_the_entry_carrying_that_key() -> None:
+    """The key resolves to its own entry -- the engine's lookup."""
+    roster = Roster()
+    entry = roster.create_solo_entry(first_name="Alex", last_name="", plate="12")
+
+    assert roster.entry_by_key(entry.key) is entry
+
+
+def test_entry_by_key_unknown_key_returns_none() -> None:
+    """An unknown key resolves to None, not an error."""
+    roster = Roster()
+    roster.create_solo_entry(first_name="Alex", last_name="", plate="12")
+
+    assert roster.entry_by_key("0" * 32) is None
+
+
+def test_entry_by_key_empty_key_returns_none() -> None:
+    """A present-but-empty key resolves to None."""
+    roster = Roster()
+    roster.create_solo_entry(first_name="Alex", last_name="", plate="12")
+
+    assert roster.entry_by_key("") is None
+
+
+def test_entry_by_key_on_empty_roster_returns_none() -> None:
+    """No entries means no key resolution."""
+    roster = Roster()
+
+    assert roster.entry_by_key("0" * 32) is None
+
+
+def test_entry_by_key_picks_the_matching_entry_among_many() -> None:
+    """The lookup keys off ``key`` alone, not roster position."""
+    roster = Roster()
+    roster.create_solo_entry(first_name="Alex", last_name="", plate="1")
+    wanted = roster.create_solo_entry(first_name="Bo", last_name="", plate="2")
+    roster.create_solo_entry(first_name="Cy", last_name="", plate="3")
+
+    assert roster.entry_by_key(wanted.key) is wanted
+
+
 # ======================================================== name split
 # Phase 1 (rider name split): first/last storage plus the full_name
 # projection every display/audit site now mirrors.

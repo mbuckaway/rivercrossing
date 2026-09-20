@@ -27,7 +27,7 @@ from datetime import date, datetime, timedelta
 
 import pytest
 
-from conftest import _roster_with_entries
+from conftest import _roster_with_entries, entry_key, restore_entry_keys
 from rivercrossing.cards import Shoe
 from rivercrossing.ride import RideConfig, RideEngine
 from rivercrossing.roster import EntryMode, PlateModel, Roster
@@ -105,13 +105,23 @@ def _engine_with_corrected_ride() -> RideEngine:
     engine.record_crossing("12", at=_dt(10, 30))
     engine.record_crossing("12", at=_dt(10, 40))
     engine.add_crossing_at("12", _dt(10, 50), reason="missed crossing")
-    engine.edit_crossing("12", 3, _dt(10, 45), reason="mis-keyed time")
+    engine.edit_crossing(_entry_key(engine, "12"), 3, _dt(10, 45), reason="mis-keyed time")
     engine.undo_last()
     engine.record_crossing("12", at=_dt(10, 50))
     engine.record_crossing("34", at=_dt(10, 35))
     engine.reassign_crossing(3, "34", reason="mis-keyed plate")
-    engine.void_crossing("34", 1, reason="double entry")
+    engine.void_crossing(_entry_key(engine, "34"), 1, reason="double entry")
     return engine
+
+
+def _entry_key(engine: RideEngine, plate: str) -> str:
+    """Return the stable entry key *plate* resolves to (arrange).
+
+    ``_laps_for`` and the correction commands take an entry id, which
+    is the entry's ``key`` -- the identity a re-plating leaves alone --
+    while these tests name entries by the operator's plate.
+    """
+    return entry_key(engine._roster, plate)
 
 
 class _ExplodingCrossings(list):
@@ -136,8 +146,8 @@ def test_laps_for_mixed_corrections_returns_sorted_tuple_and_snapshot_matches() 
     """The index agrees with the derived timing after every mutator."""
     engine = _engine_with_corrected_ride()
 
-    laps_12 = engine._laps_for("12")
-    laps_34 = engine._laps_for("34")
+    laps_12 = engine._laps_for(_entry_key(engine, "12"))
+    laps_34 = engine._laps_for(_entry_key(engine, "34"))
 
     assert [(c.seq, c.crossed_at) for c in laps_12] == [(1, _dt(10, 30)), (2, _dt(10, 40))]
     assert [(c.seq, c.crossed_at) for c in laps_34] == [(1, _dt(10, 50))]
@@ -160,7 +170,7 @@ def test_laps_for_entry_without_crossings_returns_empty_tuple() -> None:
     """An entry with no laps reports an empty index entry."""
     engine, _ = _make_engine()
 
-    assert engine._laps_for("34") == ()
+    assert engine._laps_for(_entry_key(engine, "34")) == ()
 
 
 def test_laps_for_undo_of_out_of_order_crossing_keeps_chronological_order() -> None:
@@ -178,10 +188,10 @@ def test_laps_for_undo_of_out_of_order_crossing_keeps_chronological_order() -> N
     engine.reassign_crossing(2, "34", reason="mis-keyed plate")
     engine.undo_last()
 
-    laps = engine._laps_for("34")
+    laps = engine._laps_for(_entry_key(engine, "34"))
 
     assert laps == (engine.crossings[0],)
-    assert engine.lap_times("34") == (2400.0,)
+    assert engine.lap_times(_entry_key(engine, "34")) == (2400.0,)
 
 
 def test_laps_index_tie_at_same_instant_keeps_record_order() -> None:
@@ -192,7 +202,7 @@ def test_laps_index_tie_at_same_instant_keeps_record_order() -> None:
     engine.record_crossing("12", at=_dt(10, 30))
     first, second = engine.crossings
 
-    laps = engine._laps_for("12")
+    laps = engine._laps_for(_entry_key(engine, "12"))
 
     assert laps == (first, second)
 
@@ -206,9 +216,9 @@ def test_laps_index_renumber_keeps_tied_record_order() -> None:
     engine.record_crossing("12", at=_dt(10, 30))
     engine.record_crossing("12", at=_dt(10, 32))
 
-    engine.void_crossing("12", 1, reason="double entry")
+    engine.void_crossing(_entry_key(engine, "12"), 1, reason="double entry")
 
-    laps = engine._laps_for("12")
+    laps = engine._laps_for(_entry_key(engine, "12"))
     assert [(c.seq, c.crossed_at) for c in laps] == [
         (1, _dt(10, 30)),
         (2, _dt(10, 30)),
@@ -231,9 +241,9 @@ def test_laps_index_edit_to_tie_with_later_crossing_keeps_record_order() -> None
     engine.record_crossing("12", at=_dt(10, 31))
     engine.record_crossing("12", at=_dt(10, 35))
 
-    engine.edit_crossing("12", 2, _dt(10, 35), reason="mis-keyed time")
+    engine.edit_crossing(_entry_key(engine, "12"), 2, _dt(10, 35), reason="mis-keyed time")
 
-    laps = engine._laps_for("12")
+    laps = engine._laps_for(_entry_key(engine, "12"))
     assert [(c.seq, c.crossed_at) for c in laps] == [
         (1, _dt(10, 30)),
         (2, _dt(10, 35)),
@@ -245,10 +255,11 @@ def test_laps_index_edit_to_tie_with_later_crossing_keeps_record_order() -> None
 # ============================================== object identity
 
 
-@pytest.mark.parametrize("entry_id", ["12", "34"])
-def test_laps_index_holds_the_same_objects_as_crossings(entry_id: str) -> None:
+@pytest.mark.parametrize("plate", ["12", "34"])
+def test_laps_index_holds_the_same_objects_as_crossings(plate: str) -> None:
     """The index aliases _crossings' objects, never copies them."""
     engine = _engine_with_corrected_ride()
+    entry_id = _entry_key(engine, plate)
     expected = [c for c in engine.crossings if c.entry_id == entry_id]
 
     laps = engine._laps_for(entry_id)
@@ -276,7 +287,7 @@ def test_laps_for_returns_correct_laps_without_iterating_crossings() -> None:
     expected = (engine._crossings[0], engine._crossings[1])
     engine._crossings = _ExplodingCrossings(engine._crossings)
 
-    laps = engine._laps_for("12")
+    laps = engine._laps_for(_entry_key(engine, "12"))
 
     assert laps == expected
 
@@ -289,10 +300,13 @@ def test_laps_index_replay_of_corrected_ride_matches_live_index() -> None:
     live = _engine_with_corrected_ride()
 
     replayed, _ = _make_engine(config=_config(min_lap_s=1))
+    restore_entry_keys(replayed, live)
     for event in live.events:
         replayed.apply(event)
 
-    assert replayed._laps_for("12") == live._laps_for("12")
-    assert replayed._laps_for("34") == live._laps_for("34")
+    key_12 = _entry_key(live, "12")
+    key_34 = _entry_key(live, "34")
+    assert replayed._laps_for(key_12) == live._laps_for(key_12)
+    assert replayed._laps_for(key_34) == live._laps_for(key_34)
     assert replayed.snapshot() == live.snapshot()
     assert replayed.on_course == live.on_course

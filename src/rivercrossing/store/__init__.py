@@ -191,6 +191,7 @@ import secrets
 import sqlite3
 import tempfile
 import time
+import uuid
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
 from enum import Enum
@@ -505,7 +506,9 @@ def _audit_when(epoch: int) -> str:
     return datetime.fromtimestamp(epoch).strftime("%H:%M:%S")  # noqa: DTZ006
 
 
-def _audit_entry(action: str, payload: Mapping[str, object]) -> str:
+def _audit_entry(
+    action: str, payload: Mapping[str, object], plates_by_key: Mapping[str, str]
+) -> str:
     """Return one stored audit row's Entry cell (E7.3.1).
 
     A ``dnf`` row renders the display the engine recorded with the
@@ -517,7 +520,10 @@ def _audit_entry(action: str, payload: Mapping[str, object]) -> str:
     engine wrote it naming every entry and the card it drew), because
     that payload's ``draws`` row list is not one entry id and the cell
     would otherwise stay blank. Every other action projects the
-    payload's ``entry_id``, falling back to ``plate``, then (for a
+    payload's ``entry_id`` -- the entry's stable key (E3.1.2's
+    pooled-live-move seam), rendered as the plate *plates_by_key* maps
+    it to, never the uuid, and as itself when the map does not know it
+    -- falling back to ``plate``, then (for a
     roster plate change, whose payload carries neither)
     ``old_plate``, ``new_plate`` and ``display_name``, then ``""``.
     """
@@ -529,9 +535,11 @@ def _audit_entry(action: str, payload: Mapping[str, object]) -> str:
         summary = payload.get("summary")
         if summary:
             return str(summary)
+    entry_id = payload.get("entry_id")
+    if entry_id:
+        return plates_by_key.get(str(entry_id), str(entry_id))
     return str(
-        payload.get("entry_id")
-        or payload.get("plate")
+        payload.get("plate")
         or payload.get("old_plate")
         or payload.get("new_plate")
         or payload.get("display_name")
@@ -898,7 +906,10 @@ class Store:
         The one reading both :meth:`roster_for` and :meth:`load_engine`
         use: the ride row's shape columns build the shell, then every
         entry (creation order) and its riders (``sort_order``, id tie-
-        break for a stable order) reconstruct the field. ``has_data``
+        break for a stable order) reconstruct the field. Each entry's
+        ``key`` comes back from its own row, so a replayed event's
+        stable-identity lookup still resolves (E3.1.2's
+        pooled-live-move seam). ``has_data``
         is derived, never stored (module docstring's E5.4.1
         resolution): an entry that owns a crossing or card row has
         recorded data.
@@ -922,7 +933,7 @@ class Store:
         )
         entries: list[Entry] = []
         for entry_row in self._conn.execute(
-            "SELECT id, plate, display_name, type, status, notes, logo_card"
+            "SELECT id, plate, key, display_name, type, status, notes, logo_card"
             " FROM entry WHERE ride_id = ? ORDER BY id",
             (ride_id,),
         ).fetchall():
@@ -955,6 +966,7 @@ class Store:
                 status=EntryStatus(entry_row["status"]),
                 notes=entry_row["notes"] or "",
                 logo_card=entry_row["logo_card"],
+                key=entry_row["key"],
             )
             entry.has_data = has_data
             entries.append(entry)
@@ -965,15 +977,18 @@ class Store:
         """Persist one ride's roster, replacing any previously saved.
 
         E5.4.1's roster persistence into spec §2's entry/rider tables:
-        every entry (plate, display_name, type, team_size, status,
+        every entry (plate, key, display_name, type, team_size, status,
         notes, logo_card -- NULL only when the entry carries no logo)
         and every rider (first_name, last_name, plate, sex,
         sort_order) is written in one transaction, after removing any
         previously saved rows -- a save is a snapshot of the live
         roster, never an append (the replace semantics the rider
-        editor's DRAFT edits need). ``has_data`` is deliberately not
-        stored (derived at load time from recorded rows), and
-        ``dnf_at``/``emergency_contact``/``waiver_signed``/
+        editor's DRAFT edits need). ``key`` is written verbatim: it is
+        the engine's own identity for the entry (E3.1.2's
+        pooled-live-move seam), and re-minting one on save would orphan
+        every crossing already filed under it. ``has_data`` is
+        deliberately not stored (derived at load time from recorded
+        rows), and ``dnf_at``/``emergency_contact``/``waiver_signed``/
         ``ccn_reg_id`` stay NULL -- the in-memory Roster model carries
         no such fields (module docstring's E5.4.1 resolutions).
 
@@ -996,12 +1011,13 @@ class Store:
             for entry in roster.entries:
                 cursor = self._conn.execute(
                     "INSERT INTO entry"
-                    " (ride_id, plate, display_name, type, team_size, status, dnf_at, notes,"
+                    " (ride_id, plate, key, display_name, type, team_size, status, dnf_at, notes,"
                     " logo_card)"
-                    " VALUES (?, ?, ?, ?, ?, ?, NULL, ?, ?)",
+                    " VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?, ?)",
                     (
                         ride_id,
                         entry.plate,
+                        entry.key,
                         entry.display_name,
                         entry.type.value,
                         len(entry.riders),
@@ -1451,10 +1467,11 @@ class Store:
         ride recorded, projected to the display
         :class:`~rivercrossing.ui.presenters.data_source.AuditRow`
         shape the viewer's list draws -- ``entry`` = the display a
-        ``dnf`` row carried with its mark, else the payload's
-        ``entry_id``, falling back to ``plate``, then (for a roster
-        plate change, whose payload carries neither) ``old_plate``,
-        ``new_plate`` and ``display_name``, then ``""``
+        ``dnf`` row carried with its mark, else the plate the payload's
+        stable entry key maps to (the entry's uuid is never shown),
+        falling back to ``entry_id`` itself, then ``plate``, then (for a
+        roster plate change, whose payload carries neither)
+        ``old_plate``, ``new_plate`` and ``display_name``, then ``""``
         (:func:`_audit_entry`), ``reason`` = the payload's ``reason``,
         and ``when`` rendered from the stored ``at`` epoch as local
         ``HH:MM:SS`` (spec §13: stored UTC, displayed local). Newest
@@ -1475,6 +1492,7 @@ class Store:
         row = self._conn.execute("SELECT id FROM ride WHERE id = ?", (ride_id,)).fetchone()
         if row is None:
             raise RideNotFoundError(f"no ride with id {ride_id}")
+        plates_by_key = {entry.key: entry.plate for entry in self._load_roster(ride_id).entries}
         stored = self._conn.execute(
             "SELECT at, action, payload_json FROM audit WHERE ride_id = ? ORDER BY id DESC",
             (ride_id,),
@@ -1486,7 +1504,7 @@ class Store:
                 AuditRow(
                     when=_audit_when(audit_row["at"]),
                     action=audit_row["action"],
-                    entry=_audit_entry(audit_row["action"], payload),
+                    entry=_audit_entry(audit_row["action"], payload, plates_by_key),
                     reason=str(payload.get("reason") or ""),
                 )
             )
@@ -1564,8 +1582,12 @@ class Store:
         Copies in creation order -- entries by insert id, each entry's
         riders by ``sort_order`` then id -- so the copy's roster reads
         exactly as the source's did. Every rider lands on the entry row
-        this method just inserted, never on the source's. Runs inside
-        the caller's transaction: a failure rolls the whole copy back.
+        this method just inserted, never on the source's. Each copied
+        entry gets a **fresh** ``key``: the copy is a new ride whose
+        crossings are its own, so it must never share the source's
+        entry identities (the fresh-``rng_seed`` rule one level down).
+        Runs inside the caller's transaction: a failure rolls the whole
+        copy back.
 
         Args:
             new_id: The ride the rows are copied onto.
@@ -1578,12 +1600,15 @@ class Store:
         ).fetchall():
             entry_cursor = self._conn.execute(
                 "INSERT INTO entry"
-                " (ride_id, plate, display_name, type, team_size, status, dnf_at, notes,"
+                " (ride_id, plate, key, display_name, type, team_size, status, dnf_at, notes,"
                 " logo_card)"
-                " VALUES (?, ?, ?, ?, ?, ?, NULL, ?, ?)",
+                " VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?, ?)",
                 (
                     new_id,
                     source_entry["plate"],
+                    # The copy's entries are new identities: a fresh key
+                    # per entry, never the source's (the rng_seed rule).
+                    uuid.uuid4().hex,
                     source_entry["display_name"],
                     source_entry["type"],
                     source_entry["team_size"],

@@ -42,7 +42,7 @@ import pytest
 from hypothesis import given
 from hypothesis import strategies as st
 
-from conftest import _roster_with_entries, gorba_config
+from conftest import _roster_with_entries, entry_key, gorba_config
 from rivercrossing.cards import Card, Shoe
 from rivercrossing.hands import SelfTestCheck, SelfTestReport
 from rivercrossing.ride import (
@@ -516,7 +516,9 @@ def test_engine_data_source_feed_rows_given_credited_short_lap_flags_without_hol
 
     assert (feed[0].flagged, feed[0].held) == (True, False)
     assert feed[0].card == engine.card_for(engine.crossings[-1]).code()
-    assert tuple(card.code() for card in engine.credited_cards("12")) == (feed[0].card,)
+    assert tuple(
+        card.code() for card in engine.credited_cards(entry_key(engine._roster, "12"))
+    ) == (feed[0].card,)
 
 
 def test_engine_data_source_feed_rows_given_lap_exactly_at_min_lap_flags_nothing() -> None:
@@ -677,14 +679,15 @@ def test_engine_data_source_standings_omitted_order_uses_the_default_constant() 
 
 
 def _seed_credited_hand(engine: RideEngine, plate: str, cards: list[Card]) -> None:
-    """Overwrite *plate*'s credited hand with *cards*, no rider tag.
+    """Overwrite *plate*'s entry hand with *cards*, no rider tag.
 
     The private-access seed the hand-tie tests share: the engine's
     credited hand holds ``(card, rider_plate)`` pairs (the tag a
     per-rider DNF forfeits on), and a card whose crossing never named a
-    rider carries ``None`` -- never forfeited by anyone.
+    rider carries ``None`` -- never forfeited by anyone. The hand is
+    keyed by the entry's stable key, so the plate resolves first.
     """
-    engine._hand[plate] = [(card, None) for card in cards]
+    engine._hand[entry_key(engine._roster, plate)] = [(card, None) for card in cards]
 
 
 def _engine_with_a_hand_tie() -> RideEngine:
@@ -2466,9 +2469,9 @@ def test_on_plate_entered_given_a_credited_short_lap_lists_it_in_the_flagged_row
     presenter.on_plate_entered("12")
 
     assert [(row.plate, row.held) for row in view.last_flagged] == [("12", False)]
-    assert tuple(card.code() for card in engine.credited_cards("12")) == (
-        view.last_flagged[0].card,
-    )
+    assert tuple(
+        card.code() for card in engine.credited_cards(entry_key(engine._roster, "12"))
+    ) == (view.last_flagged[0].card,)
 
 
 def test_tick_given_an_instant_recorded_twice_lists_both_rows_in_the_review_tab() -> None:
@@ -3016,7 +3019,7 @@ def test_engine_data_source_feed_rows_given_edited_crossing_marks_only_that_row(
     _record(engine, clock, "12", lap_time_s=100)
     engine.finish()
     engine.reopen()
-    engine.edit_crossing("12", 1, _dt(10, 31), "mis-keyed time")
+    engine.edit_crossing(entry_key(engine._roster, "12"), 1, _dt(10, 31), "mis-keyed time")
     source = EngineDataSource(engine, engine._roster)
 
     feed = source.feed_rows()
@@ -3087,7 +3090,7 @@ def test_engine_data_source_feed_rows_given_voided_crossing_hides_it_and_marks_n
     _record(engine, clock, "12", lap_time_s=100)
     engine.finish()
     engine.reopen()
-    engine.void_crossing("12", 1, "double-entry")
+    engine.void_crossing(entry_key(engine._roster, "12"), 1, "double-entry")
     source = EngineDataSource(engine, engine._roster)
 
     feed = source.feed_rows()
@@ -3099,7 +3102,7 @@ def test_engine_data_source_feed_rows_given_correction_while_running_marks_the_r
     """Corrections are legal in RUNNING too; the marker follows."""
     engine, clock = _running_engine()
     _record(engine, clock, "12", lap_time_s=100)
-    engine.edit_crossing("12", 1, _dt(10, 31), "mis-keyed time")
+    engine.edit_crossing(entry_key(engine._roster, "12"), 1, _dt(10, 31), "mis-keyed time")
     source = EngineDataSource(engine, engine._roster)
 
     feed = source.feed_rows()

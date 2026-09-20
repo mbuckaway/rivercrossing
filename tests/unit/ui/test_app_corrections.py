@@ -25,7 +25,7 @@ import pytest
 import wx
 from xrc_fixtures import pin_no_authored_window
 
-from conftest import gorba_config
+from conftest import entry_key, gorba_config
 from rivercrossing.cards import Shoe
 from rivercrossing.ride import Crossing, RideEngine
 from rivercrossing.roster import EntryMode, PlateModel, Rider, Roster
@@ -611,15 +611,15 @@ def test_held_card_facts_given_a_lap_past_the_recorded_times_renders_a_zero_time
     """A stale crossing renders a zero duration and no card."""
     engine = _running_engine(hold_short_laps=True)
     engine.record_crossing("12", at=_dt(10, 0, 5))
-    stale = Crossing(entry_id="12", seq=99, crossed_at=_dt(10, 0, 5))
+    stale = Crossing(entry_id=entry_key(engine._roster, "12"), seq=99, crossed_at=_dt(10, 0, 5))
 
     facts = app_module._held_card_facts(engine, stale, engine._roster)
 
     assert facts == f"Rider 12 · plate 12 · Lap 99 · {format_duration(0.0)} · no card"
 
 
-def test_held_card_facts_given_an_unresolvable_entry_falls_back_to_the_entry_id() -> None:
-    """An unresolvable entry falls back to the crossing's entry id."""
+def test_held_card_facts_given_an_unresolvable_entry_falls_back_to_the_typed_plate() -> None:
+    """An unresolvable entry falls back to the typed plate."""
     engine = _running_engine(hold_short_laps=True)
     engine.record_crossing("12", at=_dt(10, 0, 5))
     crossing = engine.crossings[-1]
@@ -652,7 +652,7 @@ def test_review_held_crossing_given_a_confirmed_card_releases_it(
     assert message.startswith("Rider 12 · plate 12 · Lap 1 · ")
     assert message.endswith("\n\nConfirm the card into the entry's hand, or void it.")
     assert engine.held_crossings() == ()
-    assert engine.credited_cards("12") == (engine.card_for(crossing),)
+    assert engine.credited_cards(entry_key(engine._roster, "12")) == (engine.card_for(crossing),)
     assert notices == ["Card confirmed for plate 12"]
 
 
@@ -672,7 +672,7 @@ def test_review_held_crossing_given_a_denied_choice_voids_the_card(
     _parent, title, _message = calls[0][0]
     assert title == "Review Held Card"
     assert engine.held_crossings() == ()
-    assert engine.credited_cards("12") == ()
+    assert engine.credited_cards(entry_key(engine._roster, "12")) == ()
     assert notices == ["Card voided for plate 12"]
 
 
@@ -690,7 +690,7 @@ def test_review_held_crossing_given_a_cancelled_choice_keeps_the_card_held(
     app_module._review_held_crossing(context, engine, crossing)
 
     assert [held.crossing for held in engine.held_crossings()] == [crossing]
-    assert engine.credited_cards("12") == ()
+    assert engine.credited_cards(entry_key(engine._roster, "12")) == ()
     assert notices == []
 
 
@@ -717,7 +717,7 @@ def test_return_to_held_confirm_given_a_confirmed_prompt_returns_the_card(
     assert message.startswith("Rider 12 · plate 12 · Lap 1 · ")
     assert message.endswith("\n\nReturn this card to held for review?")
     assert [held.crossing for held in engine.held_crossings()] == [crossing]
-    assert engine.credited_cards("12") == ()
+    assert engine.credited_cards(entry_key(engine._roster, "12")) == ()
     assert notices == ["Card returned to held for plate 12"]
 
 
@@ -735,7 +735,7 @@ def test_return_to_held_confirm_given_a_cancelled_prompt_leaves_the_card_credite
     app_module._return_to_held_confirm(context, engine, crossing)
 
     assert engine.held_crossings() == ()
-    assert engine.credited_cards("12") == (engine.card_for(crossing),)
+    assert engine.credited_cards(entry_key(engine._roster, "12")) == (engine.card_for(crossing),)
     assert notices == []
 
 

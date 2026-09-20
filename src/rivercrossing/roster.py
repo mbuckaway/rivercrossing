@@ -61,6 +61,7 @@ relay ride, both plate-less, must never compare equal to each other.
 """
 
 import random
+import uuid
 from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import TYPE_CHECKING, cast
@@ -244,6 +245,18 @@ class Entry:
     ``logo_card`` is Phase 4's team logo: a natural card code, set
     only through :meth:`Roster.set_team_logo_card`. A team carries no
     logo image (retired in Phase 3 -- a team's logo is its card).
+
+    ``key`` is the entry's **stable identity** (E3.1.2's
+    pooled-live-move seam): a surrogate no operator ever sees, minted
+    once per entry and never edited, where ``plate`` is mutable -- a
+    pooled team re-derives its own from its lowest-numbered rider
+    (S1) and a mid-ride move re-derives both teams' plates. The ride
+    engine files its crossings and credited hands under ``key``
+    (``ride.py``), so a re-plating leaves the recorded laps exactly
+    where they were; ``plate`` stays the display and resolution
+    value. The field sits last, with its ``default_factory``, so the
+    declared field order (and every positional construction) is
+    unchanged, and its uuid4 draw needs no caller.
     """
 
     plate: str
@@ -254,6 +267,7 @@ class Entry:
     notes: str = ""
     has_data: bool = False
     logo_card: str | None = None
+    key: str = field(default_factory=lambda: uuid.uuid4().hex)
 
     @property
     def team_size(self) -> int:
@@ -699,6 +713,23 @@ class Roster:
                 for rider in entry.riders:
                     if rider.plate == plate:
                         return entry
+        return None
+
+    def entry_by_key(self, key: str) -> Entry | None:
+        """Return the entry *key* names, or None if unknown.
+
+        The stable-identity lookup, ``resolve_plate``'s counterpart:
+        the ride engine files crossings and credited hands under
+        :attr:`Entry.key` (E3.1.2's pooled-live-move seam), so
+        replaying an event resolves its entry by the key the payload
+        carries -- a lookup no re-plating can invalidate, where the
+        plate the operator typed at the time is exactly what a move
+        re-derives. An unknown key is the None case, never an error:
+        replay's own ``_require_entry_by_key`` is what refuses.
+        """
+        for entry in self._entries:
+            if entry.key == key:
+                return entry
         return None
 
     def validate_for_start(self) -> list[StartViolation]:

@@ -20,8 +20,13 @@ return after release. :data:`SCHEMA_VERSION` is 1;
 :func:`ensure_schema` creates this schema on an empty file and refuses
 any other stamped version.
 
-That flatten folded four changes back into the CREATE:
+That flatten folded five changes back into the CREATE:
 
+- ``entry.key`` -- the entry's stable identity (E3.1.2's
+  pooled-live-move seam), a surrogate the ride engine files crossings
+  and credited hands under where a derived plate is mutable -- is a
+  real column, NOT NULL, right after the ``plate`` it is the stable
+  counterpart of.
 - ``ride.hold_short_laps`` -- the short-lap card policy -- is a real
   column (NOT NULL, DEFAULT 1 = hold short-lap cards for review), in
   the same position ``_INSERT_RIDE_SQL`` lists it.
@@ -159,6 +164,7 @@ SCHEMA_STATEMENTS: tuple[str, ...] = (
         id           INTEGER PRIMARY KEY,
         ride_id      INTEGER NOT NULL REFERENCES ride(id),
         plate        TEXT    NOT NULL,
+        key          TEXT    NOT NULL,
         display_name TEXT    NOT NULL,
         type         TEXT    NOT NULL CHECK (type IN ('solo', 'team')),
         team_size    INTEGER NOT NULL,

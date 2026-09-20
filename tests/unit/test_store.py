@@ -36,6 +36,7 @@ import pytest
 from platformdirs import user_data_dir
 
 import rivercrossing.store as store_module
+from conftest import entry_key
 from rivercrossing.cards import Card, Shoe, ShoeEmpty
 from rivercrossing.ride import (
     DEFAULT_DECK_COUNT,
@@ -209,8 +210,8 @@ def test_store_open_applies_spec_pragmas_to_every_connection(tmp_path: Path) -> 
         with pytest.raises(sqlite3.IntegrityError, match=re.escape("FOREIGN KEY")):
             store._conn.execute(
                 "INSERT INTO entry"
-                " (ride_id, plate, display_name, type, team_size, status)"
-                " VALUES (999, 'P1', 'ghost', 'solo', 1, 'active')"
+                " (ride_id, plate, key, display_name, type, team_size, status)"
+                " VALUES (999, 'P1', '2f7a', 'ghost', 'solo', 1, 'active')"
             )
     finally:
         store.close()
@@ -765,6 +766,18 @@ def _replay_roster() -> Roster:
     return roster
 
 
+def _replay_roster_and_key() -> tuple[Roster, str]:
+    """Build the replay roster and its sole entry's key (arrange).
+
+    A persisted payload names its entry by the stable key the entry
+    table carries (E3.1.2's pooled-live-move seam), so a hand-written
+    ``record_crossing``/``deal_manual`` row has to carry the roster's
+    own key for replay to resolve it.
+    """
+    roster = _replay_roster()
+    return roster, entry_key(roster, "12")
+
+
 def test_store_append_persists_audit_row_with_event_timestamp(tmp_path: Path) -> None:
     """Appending writes one audit row; at uses the event time."""
     db_path = tmp_path / "rides.db"
@@ -981,6 +994,7 @@ def test_store_load_engine_replays_start_and_crossing_into_running_engine(
     tmp_path: Path,
 ) -> None:
     """Loading rebuilds a RUNNING engine with crossings and events."""
+    roster, key = _replay_roster_and_key()
     db_path = tmp_path / "rides.db"
     store = Store.open(db_path)
     try:
@@ -990,7 +1004,7 @@ def test_store_load_engine_replays_start_and_crossing_into_running_engine(
             action="record_crossing",
             payload={
                 "plate": "12",
-                "entry_id": "12",
+                "entry_id": key,
                 "lap": 1,
                 "crossed_at": "2026-09-20T10:02:00",
             },
@@ -998,13 +1012,13 @@ def test_store_load_engine_replays_start_and_crossing_into_running_engine(
         store.append(ride_id, start_event)
         store.append(ride_id, crossing_event)
 
-        engine = store.load_engine(ride_id, _replay_roster())
+        engine = store.load_engine(ride_id, roster)
     finally:
         store.close()
 
     assert engine.state is RideStatus.RUNNING
     assert len(engine.crossings) == 1
-    assert engine.crossings[0].entry_id == "12"
+    assert engine.crossings[0].entry_id == key
     assert engine.crossings[0].crossed_at == datetime(2026, 9, 20, 10, 2)  # noqa: DTZ001
     # Replay re-derives each event's own reason from the roster, so the
     # persisted payloads' actions survive the round trip (scope 6d).
@@ -1054,13 +1068,14 @@ def test_store_load_engine_replays_in_append_order_not_at_order(tmp_path: Path) 
         store.append(
             ride_id, Event(action="start", payload={"actual_start": "2026-09-20T10:00:00"})
         )
+        roster, key = _replay_roster_and_key()
         store.append(
             ride_id,
             Event(
                 action="record_crossing",
                 payload={
                     "plate": "12",
-                    "entry_id": "12",
+                    "entry_id": key,
                     "lap": 1,
                     "crossed_at": "2026-09-20T10:02:00",
                 },
@@ -1077,12 +1092,12 @@ def test_store_load_engine_replays_in_append_order_not_at_order(tmp_path: Path) 
             ),
         )
 
-        engine = store.load_engine(ride_id, _replay_roster())
+        engine = store.load_engine(ride_id, roster)
     finally:
         store.close()
 
     assert [e.action for e in engine.events] == ["start", "record_crossing", "set_start_time"]
-    assert engine.lap_times("12") == (420.0,)
+    assert engine.lap_times(key) == (420.0,)
 
 
 def test_store_load_engine_reconstructs_ride_config_from_stored_columns(
@@ -1144,15 +1159,16 @@ def test_store_load_engine_builds_shoe_from_the_stored_rng_seed(tmp_path: Path) 
         store.append(
             ride_id, Event(action="start", payload={"actual_start": "2026-09-20T10:00:00"})
         )
+        roster, key = _replay_roster_and_key()
         store.append(
             ride_id,
             Event(
                 action="deal_manual",
-                payload={"plate": "12", "entry_id": "12", "card": "AS", "reason": "manual"},
+                payload={"plate": "12", "entry_id": key, "card": "AS", "reason": "manual"},
             ),
         )
 
-        engine = store.load_engine(ride_id, _replay_roster())
+        engine = store.load_engine(ride_id, roster)
     finally:
         store.close()
 
@@ -2061,8 +2077,9 @@ def test_store_delete_ride_removes_all_dependent_rows(tmp_path: Path) -> None:
         )
         with store._conn:
             entry_id = store._conn.execute(
-                "INSERT INTO entry (ride_id, plate, display_name, type, team_size, status)"
-                " VALUES (?, '12', 'Alice', 'solo', 1, 'active')",
+                "INSERT INTO entry"
+                " (ride_id, plate, key, display_name, type, team_size, status)"
+                " VALUES (?, '12', '2f7a', 'Alice', 'solo', 1, 'active')",
                 (ride_id,),
             ).lastrowid
             rider_id = store._conn.execute(
@@ -2462,6 +2479,44 @@ def test_store_save_roster_entry_notes_round_trip(tmp_path: Path) -> None:
     assert [entry.notes for entry in rebuilt.entries] == ["", "Captain's team"]
 
 
+def test_store_save_roster_round_trips_each_entry_key(tmp_path: Path) -> None:
+    """Each entry's stable key survives save_roster -> roster_for.
+
+    The engine files crossings and credited hands under ``Entry.key``
+    (E3.1.2's pooled-live-move seam), so a reloaded ride's replay can
+    only resolve them if the key came back from the entry table
+    unchanged.
+    """
+    db_path = tmp_path / "rides.db"
+    roster = _pooled_roster()
+    ride_id = _save_roster_ride(
+        db_path,
+        roster,
+        entry_mode=EntryMode.MIXED,
+        plate_model=PlateModel.RIDER_POOLED,
+    )
+
+    rebuilt = _round_trip_roster(db_path, ride_id)
+
+    assert [entry.key for entry in rebuilt.entries] == [entry.key for entry in roster.entries]
+
+
+def test_store_save_roster_writes_a_distinct_key_per_entry_row(tmp_path: Path) -> None:
+    """No two persisted entries share a key."""
+    db_path = tmp_path / "rides.db"
+    ride_id = _save_roster_ride(
+        db_path,
+        _pooled_roster(),
+        entry_mode=EntryMode.MIXED,
+        plate_model=PlateModel.RIDER_POOLED,
+    )
+
+    rebuilt = _round_trip_roster(db_path, ride_id)
+
+    keys = [entry.key for entry in rebuilt.entries]
+    assert len(set(keys)) == len(keys)
+
+
 def test_store_save_roster_replaces_the_previous_roster(tmp_path: Path) -> None:
     """Saving twice keeps one entry set -- the second, not a union."""
     db_path = tmp_path / "rides.db"
@@ -2525,10 +2580,12 @@ def test_store_load_engine_builds_roster_from_db_and_replays_events(
     """load_engine with no caller roster rebuilds it from the DB.
 
     E5.1.2's equivalence, closed: the engine replays the persisted
-    start + crossing and resolves the recorded plate "12" through the
-    reconstructed roster -- with an empty roster the crossing would be
-    refused (unknown_plate) and never recorded, so this genuinely
-    proves the roster came back from the entry/rider tables.
+    start + crossing, resolving the event's ``entry_id`` -- the stable
+    key ``save_roster`` wrote into the entry table -- through the
+    reconstructed roster. With an empty roster the replay would be
+    refused (unknown entry key) and the crossing never recorded, so
+    this genuinely proves the roster, keys included, came back from the
+    entry/rider tables.
     """
     db_path = tmp_path / "rides.db"
     ride_id = _save_roster_ride(
@@ -2540,6 +2597,7 @@ def test_store_load_engine_builds_roster_from_db_and_replays_events(
     )
     store = Store.open(db_path)
     try:
+        key = entry_key(store.roster_for(ride_id), "12")
         store.append(
             ride_id,
             Event(action="start", payload={"actual_start": "2026-09-20T10:00:00"}),
@@ -2550,7 +2608,7 @@ def test_store_load_engine_builds_roster_from_db_and_replays_events(
                 action="record_crossing",
                 payload={
                     "plate": "12",
-                    "entry_id": "12",
+                    "entry_id": key,
                     "lap": 1,
                     "crossed_at": "2026-09-20T10:02:00",
                 },
@@ -2562,8 +2620,8 @@ def test_store_load_engine_builds_roster_from_db_and_replays_events(
         store.close()
 
     assert engine.state is RideStatus.RUNNING
-    assert [crossing.entry_id for crossing in engine.crossings] == ["12"]
-    assert engine.lap_times("12") == (120.0,)
+    assert [crossing.entry_id for crossing in engine.crossings] == [key]
+    assert engine.lap_times(key) == (120.0,)
 
 
 def test_store_load_engine_replays_short_lap_holds_when_policy_is_stored_true(
@@ -2586,6 +2644,7 @@ def test_store_load_engine_replays_short_lap_holds_when_policy_is_stored_true(
     )
     store = Store.open(db_path)
     try:
+        key = entry_key(store.roster_for(ride_id), "12")
         store.append(
             ride_id,
             Event(action="start", payload={"actual_start": "2026-09-20T10:00:00"}),
@@ -2596,7 +2655,7 @@ def test_store_load_engine_replays_short_lap_holds_when_policy_is_stored_true(
                 action="record_crossing",
                 payload={
                     "plate": "12",
-                    "entry_id": "12",
+                    "entry_id": key,
                     "lap": 1,
                     "crossed_at": "2026-09-20T10:00:30",
                 },
@@ -2607,7 +2666,7 @@ def test_store_load_engine_replays_short_lap_holds_when_policy_is_stored_true(
             ride_id,
             Event(
                 action="confirm_held",
-                payload={"entry_id": "12", "seq": 1, "card": card.code()},
+                payload={"entry_id": key, "seq": 1, "card": card.code()},
             ),
         )
 
@@ -2641,7 +2700,7 @@ def _source_ride_with_timing_data(path: Path, roster: Roster) -> int:
                 action="record_crossing",
                 payload={
                     "plate": "12",
-                    "entry_id": "12",
+                    "entry_id": entry_key(roster, "12"),
                     "lap": 1,
                     "crossed_at": "2026-09-20T10:02:00",
                 },
@@ -2742,7 +2801,8 @@ def test_store_duplicate_ride_accepts_an_explicit_copy_name(
 def test_store_duplicate_ride_keeps_the_source_untouched(tmp_path: Path) -> None:
     """Duplicating never mutates the source ride or its timing data."""
     db_path = tmp_path / "rides.db"
-    source_id = _source_ride_with_timing_data(db_path, _pooled_roster())
+    roster = _pooled_roster()
+    source_id = _source_ride_with_timing_data(db_path, roster)
     store = Store.open(db_path)
     try:
         store.duplicate_ride(source_id)
@@ -2751,7 +2811,7 @@ def test_store_duplicate_ride_keeps_the_source_untouched(tmp_path: Path) -> None
         store.close()
 
     assert source.state is RideStatus.RUNNING
-    assert [crossing.entry_id for crossing in source.crossings] == ["12"]
+    assert [crossing.entry_id for crossing in source.crossings] == [entry_key(roster, "12")]
 
 
 def test_store_duplicate_ride_copies_the_hold_short_laps_policy(tmp_path: Path) -> None:
@@ -2791,6 +2851,31 @@ def test_store_duplicate_ride_copies_first_and_last_name_columns(tmp_path: Path)
             (copy_id,),
         ).fetchall()
     assert [tuple(row) for row in copied] == [("Alice", ""), ("A.", "Roy"), ("K.", "Singh")]
+
+
+def test_store_duplicate_ride_gives_every_copied_entry_a_fresh_key(
+    tmp_path: Path,
+) -> None:
+    """R-15: a copy's entries are new identities, never the source's.
+
+    The catalog is the copy's own, and its entries carry their own
+    stable keys -- the same fresh-``rng_seed`` rule one level down. A
+    shared key would file the copy's crossings under the source's
+    entry.
+    """
+    db_path = tmp_path / "rides.db"
+    source = _pooled_roster()
+    source_id = _source_ride_with_timing_data(db_path, source)
+    store = Store.open(db_path)
+    try:
+        copy_id = store.duplicate_ride(source_id)
+        copied = store.roster_for(copy_id)
+    finally:
+        store.close()
+
+    copied_keys = [entry.key for entry in copied.entries]
+    assert len(set(copied_keys)) == len(copied_keys)
+    assert set(copied_keys).isdisjoint({entry.key for entry in source.entries})
 
 
 def test_store_duplicate_ride_copies_the_entry_logo_card(tmp_path: Path) -> None:
