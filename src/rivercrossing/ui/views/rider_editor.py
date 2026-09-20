@@ -36,6 +36,17 @@ activation to that flow, and implements ``RidersView.confirm`` (the
 delete confirm, :func:`~rivercrossing.ui.std_dialogs.show_confirm`)
 for ``RidersPresenter.on_delete``.
 
+E3.1.2 threads the ride's live engine down the Edit path:
+:class:`RiderEditor` takes ``engine=`` (``None`` with no store-backed
+ride open) and hands it to ``run_edit_rider_flow``, so
+:class:`AddRiderDialog`'s ``EditRiderPresenter`` can route a live team
+change through ``RideEngine.move_rider``/``extract_rider_to_solo``.
+That dialog implements ``AddRiderView.confirm`` -- the move's own
+confirm, the same native
+:func:`~rivercrossing.ui.std_dialogs.show_confirm` -- for exactly that
+gate. The Add flow passes no engine: creating a rider is never a
+move.
+
 xrc-windows.md section C's code-side footnote puts ``riders_list``'s
 rows, its Team column's solo-only visibility, ``team_choice``'s
 content and ``delete_btn``'s has-data gate in code -- ``riders.xrc``'s
@@ -118,6 +129,7 @@ from rivercrossing.ui.views._support import (
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
 
+    from rivercrossing.ride import RideEngine
     from rivercrossing.roster import Entry, Rider, Roster
     from rivercrossing.ui.presenters.data_source import RiderRow
     from rivercrossing.ui.presenters.riders import CsvPreview
@@ -355,7 +367,9 @@ class RiderEditor(DialogFindMixin):  # _find: ui.views._support
     whatever it is told, per module-skeletons.md's MVP split.
     """
 
-    def __init__(self, dialog: wx.Dialog, *, roster: Roster) -> None:
+    def __init__(
+        self, dialog: wx.Dialog, *, roster: Roster, engine: RideEngine | None = None
+    ) -> None:
         """Decorate an already-loaded ``rider_editor_dlg`` window.
 
         Args:
@@ -365,8 +379,13 @@ class RiderEditor(DialogFindMixin):  # _find: ui.views._support
                 Roster` this editor reads and writes directly --
                 unlike every other view in this package, never a
                 ``DataSource`` projection of one.
+            engine: The ride's live engine, or ``None`` when there is
+                none (a route opened with no store-backed ride). The
+                Edit dialog gets it, so a live team change can go
+                through the engine's pooled move (E3.1.2).
         """
         self.dialog = dialog
+        self.engine = engine
 
         self.riders_list = self._find(ids.RIDERS_LIST, wx.dataview.DataViewCtrl)
         # The operator's current header sort, re-applied whenever the
@@ -505,7 +524,10 @@ class RiderEditor(DialogFindMixin):  # _find: ui.views._support
         if record is None:
             return
         entry, rider = record
-        if run_edit_rider_flow(self.dialog, self.presenter.roster, editing=(entry, rider)):
+        committed = run_edit_rider_flow(
+            self.dialog, self.presenter.roster, editing=(entry, rider), engine=self.engine
+        )
+        if committed:
             self.presenter.on_edit_committed(rider)
 
     def _on_delete(self, event: Any) -> None:  # noqa: ANN401 -- wx ships no stubs
@@ -730,12 +752,13 @@ class AddRiderDialog(DialogFindMixin):  # _find: ui.views._support
     refreshes the editor's own presenter.
     """
 
-    def __init__(
+    def __init__(  # noqa: PLR0913 -- (dialog, roster) + editing and the engine
         self,
         dialog: wx.Dialog,
         *,
         roster: Roster,
         editing: tuple[Entry, Rider] | None = None,
+        engine: RideEngine | None = None,
     ) -> None:
         """Decorate an already-loaded ``add_rider_dlg`` window.
 
@@ -748,6 +771,10 @@ class AddRiderDialog(DialogFindMixin):  # _find: ui.views._support
                 -- only the title and the presenter differ -- because
                 ``riders.xrc`` carries one ``add_rider_dlg`` whose
                 primary button already reads "Save".
+            engine: The ride's live engine, or ``None``. Only the Edit
+                mode is given it: a live team change routes through
+                the engine's pooled move, behind :meth:`confirm`
+                (E3.1.2). Add never consults it.
         """
         self.dialog = dialog
 
@@ -771,7 +798,9 @@ class AddRiderDialog(DialogFindMixin):  # _find: ui.views._support
         else:
             entry, rider = editing
             self.dialog.SetTitle(_EDIT_TITLE)
-            self.presenter = EditRiderPresenter(self, roster, entry=entry, rider=rider)
+            self.presenter = EditRiderPresenter(
+                self, roster, entry=entry, rider=rider, engine=engine
+            )
 
         self._bind_events()
         self._apply_min_size()
@@ -859,6 +888,25 @@ class AddRiderDialog(DialogFindMixin):  # _find: ui.views._support
     def set_plate_enabled(self, *, enabled: bool) -> None:
         """Toggle ``plate_input``'s editability (spec S3:46, B2)."""
         self.plate_input.Enable(enabled)
+
+    def confirm(  # noqa: PLR0913 -- mirrors AddRiderView.confirm's own signature
+        self,
+        title: str,
+        message: str,
+        *,
+        ok_label: str,
+        cancel_label: str,
+    ) -> bool:
+        """Ask the live-move confirm; return its verdict (E3.1.2).
+
+        This dialog's own window parents the native dialog
+        (:func:`~rivercrossing.ui.std_dialogs.show_confirm`, whose
+        Cancel default keeps Enter off a re-attributing move); the
+        presenter only ever reads the verdict, the same wiring
+        ``RiderEditor.confirm`` uses for the delete.
+        """
+        result = std_dialogs.show_confirm(self.dialog, title, message, ok_label, cancel_label)
+        return result == int(wx.ID_OK)
 
     def show_form(  # noqa: PLR0913 -- the passive view fills the five form fields verbatim
         self,
@@ -1236,8 +1284,12 @@ def run_add_rider_flow(parent: wx.Window, roster: Roster) -> bool:
     return _run_rider_form_flow(parent, roster, editing=None)
 
 
-def run_edit_rider_flow(
-    parent: wx.Window, roster: Roster, *, editing: tuple[Entry, Rider]
+def run_edit_rider_flow(  # noqa: PLR0913 -- (parent, roster) + the record and the engine
+    parent: wx.Window,
+    roster: Roster,
+    *,
+    editing: tuple[Entry, Rider],
+    engine: RideEngine | None = None,
 ) -> bool:
     """Open the same dialog in Edit Rider… mode; commit on Save (B2).
 
@@ -1245,8 +1297,10 @@ def run_edit_rider_flow(
     ``riders_list`` row activation) calls this with the selected
     record. The dialog pairs with its own
     :class:`EditRiderPresenter` instance, which preloads *editing* and
-    writes it back through the shared update mutators; a committed edit
-    is reported to the caller through
+    writes it back through the shared update mutators -- or, for a
+    live team change *engine* owns, through the engine's pooled move
+    behind a confirm (E3.1.2). A committed edit is reported to the
+    caller through
     :meth:`~rivercrossing.ui.presenters.riders.RidersPresenter.
     on_edit_committed`.
 
@@ -1255,27 +1309,34 @@ def run_edit_rider_flow(
             ends (module banner comment above).
         roster: The roster the dialog writes into.
         editing: The ``(entry, rider)`` record to preload and edit.
+        engine: The ride's live engine, or ``None`` when there is
+            none; the engine's own roster is *roster*.
 
     Returns:
         Whether the edit actually committed.
     """
-    return _run_rider_form_flow(parent, roster, editing=editing)
+    return _run_rider_form_flow(parent, roster, editing=editing, engine=engine)
 
 
-def _run_rider_form_flow(
-    parent: wx.Window, roster: Roster, *, editing: tuple[Entry, Rider] | None
+def _run_rider_form_flow(  # noqa: PLR0913 -- (parent, roster) + the record and the engine
+    parent: wx.Window,
+    roster: Roster,
+    *,
+    editing: tuple[Entry, Rider] | None,
+    engine: RideEngine | None = None,
 ) -> bool:
     """Load ``add_rider_dlg``, decorate it per mode and run it.
 
     The one body :func:`run_add_rider_flow` and
     :func:`run_edit_rider_flow` share: only ``editing`` (and so the
-    title and the presenter class) differs between them.
+    title, the presenter class and whether *engine* is consulted)
+    differs between them.
     """
     window = load_dialog(wx.xrc.XmlResource.Get(), ids.ADD_RIDER_DLG)
     if window is None:
         return False
     try:
-        AddRiderDialog(window, roster=roster, editing=editing)
+        AddRiderDialog(window, roster=roster, editing=editing, engine=engine)
         default_button = dialogs.default_button_for(ids.ADD_RIDER_DLG)
         if default_button is not None:
             dialogs.set_default_button(window, default_button)

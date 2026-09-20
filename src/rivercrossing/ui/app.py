@@ -1645,13 +1645,20 @@ def _decorate_rider_editor(context: _RouteContext, window: Any) -> Any:  # noqa:
     E5.4.2: the roster is the store's when a store-backed ride is open
     (E5.4.1's library Open replaced ``context.roster``), and the empty
     bootstrap roster otherwise -- the editor shows a correct empty
-    state until a real ride is opened. W7 returns the built view:
-    :func:`_open_target` persists this editor's changes once its modal
-    ends (the only route that needs the view after decoration).
+    state until a real ride is opened. E3.1.2 threads the live
+    console's engine (when there is one) so the Edit dialog can route a
+    live team change through the engine's pooled move. W7 returns the
+    built view: :func:`_open_target` persists this editor's changes
+    once its modal ends (the only route that needs the view after
+    decoration).
     """
     from rivercrossing.ui.views.rider_editor import RiderEditor  # noqa: PLC0415 -- deferred
 
-    return RiderEditor(window, roster=context.roster)
+    return RiderEditor(
+        window,
+        roster=context.roster,
+        engine=context.presenter.engine if context.presenter is not None else None,
+    )
 
 
 # wx ships no stubs; the built view is returned
@@ -3228,6 +3235,14 @@ def _persist_rider_editor_changes(context: _RouteContext, view: Any) -> None:  #
     through :func:`_persist_roster_audit`, so the Audit Trail dialog
     shows it on the next open.
 
+    E3.1.2 adds the console refresh on a saved roster, mirroring
+    :func:`_persist_simulator_changes`: a committed team change on a
+    live ride goes through the engine's own pooled move, so the
+    crossing feed, counters, standings and Needs Review list all
+    recalculate from data the roster alone never touches -- no
+    ride-state change fires for the editor's modal, so a live console
+    would otherwise keep its pre-edit render until the next tick.
+
     Args:
         context: The route context whose store/roster to act on.
         view: The closed ``RiderEditor`` (or a presenter-shaped
@@ -3246,6 +3261,10 @@ def _persist_rider_editor_changes(context: _RouteContext, view: Any) -> None:  #
         context.frame.SetStatusText(f"Could not save riders: {exc}")
         return
     _persist_roster_audit(context, store, context.active_ride_id, context.roster)
+    presenter = context.presenter
+    if presenter is not None:
+        _apply_menu_state(context, presenter.engine.state)
+        presenter.refresh_state()
 
 
 def _persist_team_editor_changes(context: _RouteContext, view: Any) -> None:  # noqa: ANN401
@@ -3389,7 +3408,9 @@ def _open_rider_editor_for(context: _RouteContext, plate: str) -> None:
     path's two gaps against the menu route: it now applies the
     recorded dialog defaults (``_apply_dialog_defaults`` -- the menu
     route always had them) and persists the roster when the editor
-    closes with changes (:func:`_persist_rider_editor_changes`). The
+    closes with changes (:func:`_persist_rider_editor_changes`). E3.1.2
+    threads the live console's engine here too, so an edit opened from
+    the console's own Riders tab can make a pooled live move. The
     dialog path mirrors :func:`_open_target`'s own: zoom applied
     before decoration, shown through ``dialogs.run_dialog``,
     destroyed in a ``finally`` (Fault A: a decoration raise must not
@@ -3416,7 +3437,11 @@ def _open_rider_editor_for(context: _RouteContext, plate: str) -> None:
     view = None
     try:
         zoom.apply_to(window)
-        view = RiderEditor(window, roster=context.roster)
+        view = RiderEditor(
+            window,
+            roster=context.roster,
+            engine=context.presenter.engine if context.presenter is not None else None,
+        )
         _apply_dialog_defaults(window, commands.route_for_id("mi_rider_editor"))
         view.select_rider_by_plate(plate)
         dialogs.run_dialog(window, opener=context.frame)

@@ -29,6 +29,18 @@ primitives. The delete confirm (``RidersView.confirm``), the
 presenter's own row-index guard, the ``selected`` read the view opens
 the Edit dialog from, and ``on_edit_committed``'s re-render are pinned
 here too.
+
+E3.1.2 threads the ride's live engine into ``EditRiderPresenter``: a
+team change on a ride the engine may move a rider through (a stopped
+RUNNING, or REOPENED) is confirmed
+(``AddRiderView.confirm``) and then driven through
+``RideEngine.move_rider`` / ``extract_rider_to_solo``, while DRAFT,
+FINISHED, an unchanged team and an engine-less editor keep the
+roster-only write-back. ``RecordingMoveEngine`` is a hand-written
+spy over that engine seam, recording each call's exact arguments
+(same pattern, same reason: no I/O boundary here, T-10), and each of
+the engine path's two pure formatters carries a Hypothesis invariant
+test (T-7).
 """
 
 from __future__ import annotations
@@ -42,7 +54,7 @@ from hypothesis import given
 from hypothesis import strategies as st
 
 from rivercrossing import csvio
-from rivercrossing.ride import RideStatus
+from rivercrossing.ride import Event, IllegalStateError, RideStatus
 from rivercrossing.roster import (
     EntryMode,
     EntryType,
@@ -56,6 +68,7 @@ from rivercrossing.ui.presenters.data_source import RiderRow
 from rivercrossing.ui.presenters.riders import (
     SOLO_TEAM_CHOICE,
     AddRiderPresenter,
+    AddRiderView,
     CsvConflict,
     CsvPreview,
     EditRiderPresenter,
@@ -63,6 +76,8 @@ from rivercrossing.ui.presenters.riders import (
     RidersPresenter,
     RidersView,
     _apply_team_change,
+    _move_message,
+    _move_reason,
     _pair_rows,
     _rider_pairs,
     _team_choices,
@@ -352,11 +367,16 @@ class RecordingAddRiderView:
     (1.0.12 B2): the same window, one protocol. ``show_form`` fills
     all five fields -- the edit mode preloads the record's names and
     sex, the add mode passes the names blank and the sex unset.
+
+    The move confirm (E3.1.2) is canned ``True`` unless a test flips
+    :attr:`confirm_result`, so every refusal test still reaches the
+    engine or roster's own gate.
     """
 
     def __init__(self) -> None:
-        """Start with an empty call log."""
+        """Start with an empty call log and an accepted confirm."""
         self.calls: list[tuple[str, tuple[object, ...]]] = []
+        self.confirm_result = True
 
     def show_team_choices(self, names: list[str]) -> None:
         """Record the rendered team_choice content."""
@@ -382,9 +402,57 @@ class RecordingAddRiderView:
         """Record the prefilled fields, sex included (Phase 3)."""
         self.calls.append(("show_form", (plate, first_name, last_name, team, sex)))
 
+    def confirm(  # noqa: PLR0913 -- test spy mirrors the view's confirm contract
+        self,
+        title: str,
+        message: str,
+        *,
+        ok_label: str,
+        cancel_label: str,
+    ) -> bool:
+        """Record the move confirm and return its canned verdict."""
+        self.calls.append(("confirm", (title, message, ok_label, cancel_label)))
+        return self.confirm_result
+
     def show_validation(self, message: str) -> None:
         """Record a refused-operation message."""
         self.calls.append(("show_validation", (message,)))
+
+
+class RecordingMoveEngine:
+    """A stand-in for the engine's two pooled move primitives (E3.1.2).
+
+    ``EditRiderPresenter``'s own tests are about *routing*: which
+    primitive it calls, with which exact arguments, and only after
+    which confirm. This double records each call and returns a canned
+    event, and it never touches the roster -- the engine's own data
+    re-attribution (laps, cards, voids) is ``test_ride_move.py``'s
+    subject, and a live in-memory engine is not an I/O boundary to
+    mock (T-10). ``state``/``stopped`` pick the Stop/Reopen gate cell;
+    :attr:`error` stages the refusal the presenter must surface.
+    """
+
+    def __init__(self, *, state: RideStatus, stopped: bool = False) -> None:
+        """Start on *state* (and *stopped*), with an empty call log."""
+        self.state = state
+        self.stopped = stopped
+        self.calls: list[tuple[str, tuple[str, ...], dict[str, str]]] = []
+        self.error: Exception | None = None
+
+    def move_rider(self, rider_plate: str, *, to_team: str, reason: str) -> Event:
+        """Record the team-to-team move (or raise the staged error)."""
+        return self._record("move_rider", rider_plate, to_team=to_team, reason=reason)
+
+    def extract_rider_to_solo(self, rider_plate: str, *, reason: str) -> Event:
+        """Record the extraction (or raise the staged error)."""
+        return self._record("extract_rider_to_solo", rider_plate, reason=reason)
+
+    def _record(self, action: str, rider_plate: str, **payload: str) -> Event:
+        """Log one call's exact arguments, then return or raise."""
+        self.calls.append((action, (rider_plate,), payload))
+        if self.error is not None:
+            raise self.error
+        return Event(action=action, payload={"rider_plate": rider_plate, **payload})
 
 
 def test_add_rider_presenter_init_given_a_mixed_roster_renders_the_choices_and_form() -> None:
@@ -660,13 +728,24 @@ def test_add_rider_presenter_submit_given_a_started_pooled_ride_joins_the_existi
 # the Add dialog's create path.
 
 
-def _edit_presenter(
-    roster: Roster, *, entry_index: int = 0, rider_index: int = 0
+def _edit_presenter(  # noqa: PLR0913 -- roster + the record's two indexes + the engine
+    roster: Roster,
+    *,
+    entry_index: int = 0,
+    rider_index: int = 0,
+    engine: RecordingMoveEngine | None = None,
 ) -> tuple[EditRiderPresenter, RecordingAddRiderView]:
-    """Return an edit-dialog presenter over *roster*'s record."""
+    """Return an edit-dialog presenter over *roster*'s record.
+
+    *engine* is ``None`` for the engine-less opens (every pre-E3.1.2
+    caller); a test passing one stages the live console's own wiring,
+    where the edit dialog gets the ride's engine.
+    """
     entry = roster.entries[entry_index]
     view = RecordingAddRiderView()
-    presenter = EditRiderPresenter(view, roster, entry=entry, rider=entry.riders[rider_index])
+    presenter = EditRiderPresenter(
+        view, roster, entry=entry, rider=entry.riders[rider_index], engine=engine
+    )
     view.calls.clear()
     return presenter, view
 
@@ -2523,3 +2602,298 @@ def test_on_export_csv_writes_the_rosters_own_header(tmp_path: Path) -> None:
         path.read_text(encoding="utf-8").splitlines()[0]
         == "FIRSTNAME,LASTNAME,TYPE,TEAMNAME,PLATE,NOTES,SEX"
     )
+
+
+# ------------------------------ pooled live team change (E3.1.2, R-17)
+#
+# The Edit Rider… dialog is the operator's one team editor, so its own
+# team change is where a *live* pooled move is reached. On a ride the
+# engine may move a rider through (RUNNING+stopped, or REOPENED) the
+# change routes through ``RideEngine.move_rider`` /
+# ``extract_rider_to_solo`` behind a confirm, because the move
+# re-attributes the rider's laps and cards -- the standings and the
+# Needs Review list recalculate, which no roster edit alone signals. A
+# live RUNNING ride refuses first ("Stop the ride first", R-35); every
+# other ride (DRAFT, FINISHED, or an engine-less editor) keeps the
+# roster-only write-back exactly as it was.
+
+_MOVE_REASON_TEAM = "Rider Editor: moved rider to Moss Ridge"
+_MOVE_REASON_SOLO = "Rider Editor: moved rider to solo"
+_MOVE_CONSEQUENCE = (
+    "Their laps and cards will be re-credited; standings and the review list will recalculate."
+)
+_MOVE_CONFIRM_TEAM = (
+    "Move rider?",
+    ('Move "A. Roy" from Trail Blazers to Moss Ridge? ' + _MOVE_CONSEQUENCE),
+    "Move",
+    "Cancel",
+)
+_MOVE_CONFIRM_SOLO = (
+    "Move rider?",
+    ('Move "A. Roy" from Trail Blazers to solo? ' + _MOVE_CONSEQUENCE),
+    "Move",
+    "Cancel",
+)
+
+
+def _live_two_team_roster(status: RideStatus) -> Roster:
+    """Return the two-team pooled roster a live move edits."""
+    roster = _two_team_roster()
+    roster.status = status
+    return roster
+
+
+def _move_form(
+    *, team: str = "Moss Ridge", first_name: str = "A.", last_name: str = "Roy"
+) -> RiderFormValues:
+    """Return the "A. Roy 77 → *team*" edit these tests submit."""
+    return RiderFormValues(
+        plate="77", first_name=first_name, last_name=last_name, team=team, sex=None
+    )
+
+
+def test_add_rider_view_protocol_carries_the_move_confirm_seam() -> None:
+    """The edit dialog's own view asks the move confirm (E3.1.2)."""
+    assert "confirm" in AddRiderView.__dict__
+
+
+def test_edit_rider_presenter_submit_given_a_stopped_running_ride_moves_the_rider() -> None:
+    """The stopped-RUNNING cell drives ``move_rider`` (R-17, R-35)."""
+    roster = _live_two_team_roster(RideStatus.RUNNING)
+    engine = RecordingMoveEngine(state=RideStatus.RUNNING, stopped=True)
+    presenter, _view = _edit_presenter(roster, engine=engine)
+
+    committed = presenter.on_submit(_move_form())
+
+    assert committed is True
+    assert engine.calls == [
+        ("move_rider", ("77",), {"to_team": "Moss Ridge", "reason": _MOVE_REASON_TEAM})
+    ]
+
+
+def test_edit_rider_presenter_submit_given_a_stopped_running_ride_asks_a_confirm_first() -> None:
+    """The move is confirmed before the engine is asked (E3.1.2)."""
+    roster = _live_two_team_roster(RideStatus.RUNNING)
+    engine = RecordingMoveEngine(state=RideStatus.RUNNING, stopped=True)
+    presenter, view = _edit_presenter(roster, engine=engine)
+
+    presenter.on_submit(_move_form())
+
+    assert view.calls == [("confirm", _MOVE_CONFIRM_TEAM)]
+
+
+def test_edit_rider_presenter_submit_given_a_stopped_running_ride_extracts_to_solo() -> None:
+    """The solo sentinel drives ``extract_rider_to_solo`` (R-17)."""
+    roster = _live_two_team_roster(RideStatus.RUNNING)
+    engine = RecordingMoveEngine(state=RideStatus.RUNNING, stopped=True)
+    presenter, view = _edit_presenter(roster, engine=engine)
+
+    committed = presenter.on_submit(_move_form(team=SOLO_TEAM_CHOICE))
+
+    assert committed is True
+    assert engine.calls == [("extract_rider_to_solo", ("77",), {"reason": _MOVE_REASON_SOLO})]
+    assert view.calls == [("confirm", _MOVE_CONFIRM_SOLO)]
+
+
+def test_edit_rider_presenter_submit_given_a_declined_confirm_performs_no_move() -> None:
+    """Cancel changes nothing: no engine call, no roster write."""
+    roster = _live_two_team_roster(RideStatus.RUNNING)
+    engine = RecordingMoveEngine(state=RideStatus.RUNNING, stopped=True)
+    presenter, view = _edit_presenter(roster, engine=engine)
+    view.confirm_result = False
+
+    committed = presenter.on_submit(_move_form())
+
+    assert committed is False
+    assert view.calls == [("confirm", _MOVE_CONFIRM_TEAM)]
+    assert engine.calls == []
+    assert [r.full_name for r in roster.entries[0].riders] == ["A. Roy", "K. Singh"]
+
+
+def test_edit_rider_presenter_submit_given_a_live_running_ride_refuses_to_move() -> None:
+    """R-35: an unstopped ride is refused, unasked and untouched."""
+    roster = _live_two_team_roster(RideStatus.RUNNING)
+    engine = RecordingMoveEngine(state=RideStatus.RUNNING)
+    presenter, view = _edit_presenter(roster, engine=engine)
+
+    committed = presenter.on_submit(_move_form())
+
+    assert committed is False
+    assert view.calls == [("show_validation", ("Stop the ride first",))]
+    assert engine.calls == []
+
+
+def test_edit_rider_presenter_submit_given_a_reopened_ride_routes_through_the_engine() -> None:
+    """A REOPENED ride is the corrections cell the gate leaves open."""
+    roster = _live_two_team_roster(RideStatus.REOPENED)
+    engine = RecordingMoveEngine(state=RideStatus.REOPENED)
+    presenter, _view = _edit_presenter(roster, engine=engine)
+
+    committed = presenter.on_submit(_move_form())
+
+    assert committed is True
+    assert engine.calls == [
+        ("move_rider", ("77",), {"to_team": "Moss Ridge", "reason": _MOVE_REASON_TEAM})
+    ]
+
+
+def test_edit_rider_presenter_submit_given_a_draft_ride_keeps_the_roster_path() -> None:
+    """A DRAFT ride's team change stays the roster's own move (B2)."""
+    roster = _live_two_team_roster(RideStatus.DRAFT)
+    engine = RecordingMoveEngine(state=RideStatus.DRAFT)
+    presenter, view = _edit_presenter(roster, engine=engine)
+
+    committed = presenter.on_submit(_move_form())
+
+    trail, moss = roster.entries
+    assert committed is True
+    assert ([r.full_name for r in trail.riders], [r.full_name for r in moss.riders]) == (
+        ["K. Singh"],
+        ["Bo Lindqvist", "Cy Nguyen", "A. Roy"],
+    )
+    assert (engine.calls, view.calls) == ([], [])
+
+
+def test_edit_rider_presenter_submit_given_no_engine_keeps_the_roster_path() -> None:
+    """T-3: no engine at all is today's DRAFT edit, unchanged."""
+    roster = _live_two_team_roster(RideStatus.DRAFT)
+    presenter, view = _edit_presenter(roster)
+
+    committed = presenter.on_submit(_move_form())
+
+    assert committed is True
+    assert [r.full_name for r in roster.entries[1].riders] == [
+        "Bo Lindqvist",
+        "Cy Nguyen",
+        "A. Roy",
+    ]
+    assert view.calls == []
+
+
+def test_edit_rider_presenter_submit_given_a_finished_ride_keeps_the_roster_path() -> None:
+    """FINISHED never reaches the engine: the roster refuses."""
+    roster = _live_two_team_roster(RideStatus.FINISHED)
+    engine = RecordingMoveEngine(state=RideStatus.FINISHED)
+    presenter, view = _edit_presenter(roster, engine=engine)
+
+    committed = presenter.on_submit(_move_form())
+
+    assert committed is False
+    assert view.calls == [
+        (
+            "show_validation",
+            ("rider moves are locked for a rider_pooled ride once finished",),
+        )
+    ]
+    assert engine.calls == []
+
+
+def test_edit_rider_presenter_submit_given_the_records_own_team_never_calls_the_engine() -> None:
+    """T-3: an unchanged team is no move at all, engine or not."""
+    roster = _live_two_team_roster(RideStatus.RUNNING)
+    engine = RecordingMoveEngine(state=RideStatus.RUNNING, stopped=True)
+    presenter, view = _edit_presenter(roster, engine=engine)
+
+    committed = presenter.on_submit(_move_form(team="Trail Blazers", first_name="Alex"))
+
+    assert committed is True
+    assert (engine.calls, view.calls) == ([], [])
+    assert roster.entries[0].riders[0].first_name == "Alex"
+
+
+def test_edit_rider_presenter_submit_given_a_live_move_still_writes_the_other_fields() -> None:
+    """The plate and name write-back runs after the move (B2)."""
+    roster = _live_two_team_roster(RideStatus.RUNNING)
+    engine = RecordingMoveEngine(state=RideStatus.RUNNING, stopped=True)
+    presenter, _view = _edit_presenter(roster, engine=engine)
+
+    presenter.on_submit(_move_form(first_name="Alex"))
+
+    assert engine.calls == [
+        ("move_rider", ("77",), {"to_team": "Moss Ridge", "reason": _MOVE_REASON_TEAM})
+    ]
+    assert (roster.entries[0].riders[0].full_name, roster.entries[0].riders[0].plate) == (
+        "Alex Roy",
+        "77",
+    )
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        IllegalStateError("rider moves need a rider_pooled ride, not team_relay"),
+        TeamSizeError("team size must be at most 2, got 3"),
+        ValueError("reason must not be empty"),
+    ],
+    ids=["engine-gate", "roster-refusal", "value-error"],
+)
+def test_edit_rider_presenter_submit_given_a_refused_move_shows_it(
+    error: Exception,
+) -> None:
+    """T-5/T-12: every refusal surfaces, none escapes the handler."""
+    roster = _live_two_team_roster(RideStatus.RUNNING)
+    engine = RecordingMoveEngine(state=RideStatus.RUNNING, stopped=True)
+    engine.error = error
+    presenter, view = _edit_presenter(roster, engine=engine)
+
+    committed = presenter.on_submit(_move_form())
+
+    assert committed is False
+    assert view.calls == [("confirm", _MOVE_CONFIRM_TEAM), ("show_validation", (str(error),))]
+    assert engine.calls == [
+        ("move_rider", ("77",), {"to_team": "Moss Ridge", "reason": _MOVE_REASON_TEAM})
+    ]
+
+
+def test_edit_rider_presenter_init_given_an_engine_makes_no_move_call() -> None:
+    """Construction only preloads the record, engine or not (B2)."""
+    roster = _live_two_team_roster(RideStatus.RUNNING)
+    engine = RecordingMoveEngine(state=RideStatus.RUNNING, stopped=True)
+    entry = roster.entries[0]
+    view = RecordingAddRiderView()
+
+    EditRiderPresenter(view, roster, entry=entry, rider=entry.riders[0], engine=engine)
+
+    assert (engine.calls, view.calls) == (
+        [],
+        [
+            ("show_team_choices", (["solo", "Trail Blazers", "Moss Ridge"],)),
+            ("set_team_ui_visible", (True,)),
+            ("set_plate_enabled", (False,)),
+            ("show_form", ("77", "A.", "Roy", "Trail Blazers", None)),
+        ],
+    )
+
+
+# ---------------------- the move's two pure formatters (T-7)
+#
+# ``_move_reason`` (the audit text) and ``_move_message`` (the confirm's
+# question) are pure string builders over plain values, so their
+# invariants are pinned by property, not by example: the engine
+# refuses an empty reason and the operator must be told both ends of
+# the move whatever names they carry.
+
+_PRINTABLE = st.text(
+    min_size=1,
+    alphabet=st.characters(blacklist_categories=("Cs",)),
+)
+
+
+@given(chosen=_PRINTABLE)
+def test_move_reason_given_any_destination_is_never_empty(chosen: str) -> None:
+    """Property: the engine's non-empty-reason gate is always met."""
+    reason = _move_reason(chosen)
+
+    assert reason != ""
+    assert reason.endswith(chosen)
+
+
+@given(name=_PRINTABLE, chosen=_PRINTABLE)
+def test_move_message_given_any_names_names_both_ends(name: str, chosen: str) -> None:
+    """Property: the confirm always names both ends of the move."""
+    rider = Rider(first_name=name, last_name="")
+
+    message = _move_message(rider, _two_team_roster().entries[0], chosen)
+
+    assert rider.full_name in message
+    assert chosen in message

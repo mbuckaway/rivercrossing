@@ -24,6 +24,20 @@ the editor through :meth:`RidersPresenter.on_add_committed` /
 :meth:`RidersPresenter.on_edit_committed`, so the open editor never
 shows a stale roster.
 
+E3.1.2's pooled live move reaches the operator through this editor:
+:class:`EditRiderPresenter` takes the ride's optional ``engine``, and
+a *team* change on a ride the engine may move a rider through
+(RUNNING+stopped, or REOPENED) routes through
+:meth:`~rivercrossing.ride.RideEngine.move_rider` /
+:meth:`~rivercrossing.ride.RideEngine.extract_rider_to_solo` behind
+:meth:`AddRiderView.confirm` -- because such a move re-attributes the
+rider's laps, cards and voids, so the console's standings and Needs
+Review list recalculate from it. A live RUNNING ride (R-35's Stop
+guard unset) is refused with the engine's own "Stop the ride first"
+before anything is asked or changed, and every other ride -- DRAFT,
+FINISHED, or an editor opened with no live engine -- keeps the
+roster-only write-back exactly as it was.
+
 Add folds a new rider onto an existing team through
 :meth:`~rivercrossing.roster.Roster.add_rider_to_team` directly. The
 rider attaches to the chosen team in place, so the pooled
@@ -60,6 +74,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Protocol, cast, runtime_checkable
 
 from rivercrossing import csvio
+from rivercrossing.ride import RideEngineError, RideStatus
 from rivercrossing.roster import (
     EntryMode,
     EntryType,
@@ -79,6 +94,7 @@ if TYPE_CHECKING:
     from collections.abc import Sequence
     from pathlib import Path
 
+    from rivercrossing.ride import RideEngine
     from rivercrossing.roster import Entry, Roster
 
 __all__ = [
@@ -369,30 +385,28 @@ def _apply_team_change(  # noqa: PLR0913, PLR0917 -- (roster, entry, rider) + th
     return target
 
 
-def _apply_form_changes(  # noqa: PLR0913, PLR0917 -- (roster, entry, rider) + the form
-    roster: Roster, entry: Entry, rider: Rider, form: RiderFormValues
+def _apply_rider_fields(  # noqa: PLR0913, PLR0917 -- (roster, entry, rider) + the form
+    roster: Roster, entry: Entry, rider: Rider, form: RiderFormValues, *, team_changed: bool
 ) -> Entry:
-    """Apply *form* to *rider*'s record; return the rider's entry (B2).
+    """Write *form*'s plate and names onto *rider*'s entry (B2).
 
-    The one write-back the edit dialog runs, in the order a change
-    means: the chosen team first (a move changes which entry owns the
-    plate), then the plate -- skipped on a relay ride when the team
-    changed, since the plate belongs to the entry and carrying the
-    form's value over would rewrite the *destination* team's plate --
-    then the names. A ``RosterError`` from an earlier step leaves the
-    later ones untouched, so a refused edit never half-applies.
+    The team-independent half of the edit write-back, split out
+    (E3.1.2) because a live move has already changed the roster's
+    membership by the time it runs: the caller owns the team step --
+    the roster's own :func:`_apply_team_change` or the engine's pooled
+    move -- and hands the entry the rider is on *now*.
 
-    The plate step is the roster's own shared
-    :meth:`~rivercrossing.roster.Roster.change_plate` dispatch (the
-    same one the rider-issues fixes use), so the shape rule has one
-    home; a blank or whitespace-only *form.plate* reaches that
-    dispatch's non-empty guard (``change_*_plate``) and is refused
-    there -- W7's central fix for the relay-blank hole, so no blank
-    plate is ever stored through this editor.
+    *team_changed* skips the plate step on a relay ride, where the
+    plate belongs to the entry: carrying the form's value over would
+    rewrite the *destination* team's plate. The plate step is the
+    roster's own shared :meth:`~rivercrossing.roster.Roster.
+    change_plate` dispatch (the same one the rider-issues fixes use),
+    so the shape rule has one home; a blank or whitespace-only
+    *form.plate* reaches that dispatch's non-empty guard
+    (``change_*_plate``) and is refused there -- W7's central fix for
+    the relay-blank hole, so no blank plate is ever stored through
+    this editor.
     """
-    team_changed = _team_value(entry) != form.team
-    if team_changed:
-        entry = _apply_team_change(roster, entry, rider, form.team)
     if not (team_changed and roster.plate_model is PlateModel.TEAM_RELAY):
         roster.change_plate(entry, rider, plate=form.plate)
     _rename_rider(
@@ -406,6 +420,61 @@ def _apply_form_changes(  # noqa: PLR0913, PLR0917 -- (roster, entry, rider) + t
     return entry
 
 
+def _apply_form_changes(  # noqa: PLR0913, PLR0917 -- (roster, entry, rider) + the form
+    roster: Roster, entry: Entry, rider: Rider, form: RiderFormValues
+) -> Entry:
+    """Apply *form* to *rider*'s record; return the rider's entry (B2).
+
+    The roster-only write-back -- every DRAFT, solo-only and
+    engine-less edit, and a team change the engine's gate does not
+    own: the chosen team first (a move changes which entry owns the
+    plate), then the plate and the names
+    (:func:`_apply_rider_fields`). A ``RosterError`` from an earlier
+    step leaves the later ones untouched, so a refused edit never
+    half-applies.
+    """
+    team_changed = _team_value(entry) != form.team
+    if team_changed:
+        entry = _apply_team_change(roster, entry, rider, form.team)
+    return _apply_rider_fields(roster, entry, rider, form, team_changed=team_changed)
+
+
+def _owning_entry(roster: Roster, rider: Rider) -> Entry:
+    """Return the entry *rider* is on, now (E3.1.2).
+
+    The write-back after a live move reads its entry here rather than
+    from the dialog's own ``entry``: the engine's move has already
+    re-filed the rider onto the destination, and a team-to-solo move
+    has dissolved the entry the dialog opened on.
+    """
+    return next(entry for entry in roster.entries if rider in entry.riders)
+
+
+def _move_reason(chosen: str) -> str:
+    """Return the audit reason an editor-driven move records (R-17).
+
+    The engine refuses an empty reason and the Audit Trail shows this
+    text verbatim, so it names the destination the operator picked.
+    """
+    return f"Rider Editor: moved rider to {chosen}"
+
+
+def _move_message(rider: Rider, entry: Entry, chosen: str) -> str:
+    """Return the confirm's question for moving *rider* off *entry*.
+
+    It names both ends -- the team the rider is on (the literal "solo"
+    for a solo entry, :func:`_team_cell`) and the operator's own
+    choice, a team's display name or "solo" -- and the consequence:
+    the move re-attributes the rider's laps and cards, so the
+    standings and the Needs Review list recalculate.
+    """
+    return (
+        f'Move "{rider.full_name}" from {_team_cell(entry)} to {chosen}? '
+        "Their laps and cards will be re-credited; standings and the review list "
+        "will recalculate."
+    )
+
+
 @runtime_checkable
 class AddRiderView(Protocol):
     """View surface for add_rider_dlg, in either mode (W7, 1.0.12 B2).
@@ -414,11 +483,30 @@ class AddRiderView(Protocol):
     ``show_form`` carries all five fields (Add passes the names blank
     and the sex unset, Edit preloads the record's), and
     ``set_plate_enabled`` is the spec S3:46 start lock the editor's
-    own retired form used to own.
+    own retired form used to own. The Edit mode's ``confirm`` (E3.1.2)
+    is the move gate, mirroring ``RidersView.confirm``'s delete gate.
     """
 
     def show_team_choices(self, names: list[str]) -> None:
         """Replace team_choice's content with *names*, in order."""
+        ...
+
+    # (title, message) + 2 button labels, mirroring
+    # std_dialogs.show_confirm
+    def confirm(  # noqa: PLR0913
+        self,
+        title: str,
+        message: str,
+        *,
+        ok_label: str,
+        cancel_label: str,
+    ) -> bool:
+        """Ask whether to make a live team change; return the verdict.
+
+        The view owns the parent window and opens the native confirm
+        (``ui.std_dialogs.show_confirm``); the presenter reads only the
+        boolean verdict, so the flow stays headless-testable.
+        """
         ...
 
     def set_team_ui_visible(self, *, visible: bool) -> None:
@@ -553,15 +641,24 @@ class EditRiderPresenter:
     (blank name, duplicate plate, a team at max size, the ride having
     left DRAFT, ...) shows via :meth:`AddRiderView.show_validation`
     and reports ``False`` so the view leaves the dialog open.
+
+    E3.1.2 adds *engine*: with one, a team change on a ride the engine
+    may move a rider through goes through the engine's pooled move
+    behind a confirm (module docstring) instead of the roster-only
+    mutator, so the rider's laps and cards follow them and the console
+    recalculates. The engine drives this same roster -- the app builds
+    one per ride -- so the write-back after a move reads the new
+    membership straight off it.
     """
 
-    def __init__(  # noqa: PLR0913 -- (view, roster) + the record being edited
+    def __init__(  # noqa: PLR0913 -- (view, roster) + the record being edited + the engine
         self,
         view: AddRiderView,
         roster: Roster,
         *,
         entry: Entry,
         rider: Rider,
+        engine: RideEngine | None = None,
     ) -> None:
         """Store the collaborators and preload the record's fields.
 
@@ -570,11 +667,15 @@ class EditRiderPresenter:
             roster: The in-memory roster this presenter reads/writes.
             entry: The entry *rider* is on when the dialog opens.
             rider: The rider being edited.
+            engine: The ride's live engine, or ``None`` when there is
+                none (a headless caller, or an editor opened with no
+                store-backed ride). Only a team change consults it.
         """
         self.view = view
         self.roster = roster
         self.entry = entry
         self.rider = rider
+        self.engine = engine
         self.view.show_team_choices(_team_choices(self.roster))
         self.view.set_team_ui_visible(visible=self.roster.entry_mode is EntryMode.MIXED)
         # B2's plate lock: the same S3:46 rule the Add mode applies.
@@ -590,11 +691,13 @@ class EditRiderPresenter:
     def on_submit(self, form: RiderFormValues) -> bool:
         """Apply *form* to the record, or refuse with a message.
 
-        Both names are required, as in the Add mode. A roster refusal
-        (duplicate plate, a full destination team, the ride having left
-        DRAFT, ...) shows via :meth:`AddRiderView.show_validation` and
-        leaves the roster's live records unchanged, never raising past
-        this handler.
+        Both names are required, as in the Add mode. A team change the
+        live engine owns routes through it (:meth:`_commit_live_move`);
+        every other edit goes through the shared roster write-back. A
+        refusal (duplicate plate, a full destination team, the ride
+        having left DRAFT, the engine's own move gate, ...) shows via
+        :meth:`AddRiderView.show_validation` and leaves the roster's
+        live records unchanged, never raising past this handler.
 
         Returns:
             True only once the write-back actually applied.
@@ -602,12 +705,94 @@ class EditRiderPresenter:
         if not form.first_name.strip() or not form.last_name.strip():
             self.view.show_validation("First name and last name are required")
             return False
+        engine = self.engine
+        if engine is not None and self._is_live_move(engine, form):
+            return self._commit_live_move(engine, form)
         try:
             self.entry = _apply_form_changes(self.roster, self.entry, self.rider, form)
         except RosterError as exc:
             self.view.show_validation(str(exc))
             return False
         return True
+
+    def _is_live_move(self, engine: RideEngine, form: RiderFormValues) -> bool:
+        """Return whether *form*'s team change is the engine's to make.
+
+        Two conditions, both required: the form names a different team
+        than the rider is on (an unchanged team is no move at all),
+        and the ride is in one of the two cells
+        :meth:`~rivercrossing.ride.RideEngine._require_move_allowed`
+        leaves open -- RUNNING (the R-35 Stop guard decides whether
+        the clock is stopped, in :meth:`_commit_live_move`) or
+        REOPENED. DRAFT and FINISHED keep the roster-only write-back,
+        exactly as they did before the engine was threaded here.
+        """
+        return _team_value(self.entry) != form.team and engine.state in (
+            RideStatus.RUNNING,
+            RideStatus.REOPENED,
+        )
+
+    def _commit_live_move(self, engine: RideEngine, form: RiderFormValues) -> bool:
+        """Confirm, then move *rider* through *engine*.
+
+        A live RUNNING ride -- the engine's Stop guard unset -- is
+        refused up front with the engine's own instruction, before
+        anything is asked: the operator stops the clock before a
+        mid-ride re-shuffle (R-35). Otherwise the confirm names the
+        move and its consequence, and a declined confirm changes
+        nothing at all.
+
+        On acceptance the engine performs the move -- through
+        :meth:`~rivercrossing.ride.RideEngine.move_rider` for a team
+        destination, :meth:`~rivercrossing.ride.RideEngine.
+        extract_rider_to_solo` for "solo" -- and the form's remaining
+        fields are written back onto the entry the rider now sits on.
+        Any refusal the engine or the roster raises (a non-
+        ``rider_pooled`` ride, a full destination team, a duplicate
+        plate, a blank reason, ...) shows via
+        :meth:`AddRiderView.show_validation` and reports ``False``,
+        never escaping this handler: wx swallows an exception raised
+        inside an event handler (measured), which would leave the
+        dialog open with nothing happening.
+
+        Returns:
+            True only once the move and the write-back both applied.
+        """
+        if engine.state is RideStatus.RUNNING and not engine.stopped:
+            self.view.show_validation("Stop the ride first")
+            return False
+        if not self.view.confirm(
+            "Move rider?",
+            _move_message(self.rider, self.entry, form.team),
+            ok_label="Move",
+            cancel_label="Cancel",
+        ):
+            return False
+        try:
+            self._move_through_engine(engine, form.team)
+            self.entry = _apply_rider_fields(
+                self.roster,
+                _owning_entry(self.roster, self.rider),
+                self.rider,
+                form,
+                team_changed=True,
+            )
+        except (RideEngineError, RosterError, ValueError) as exc:
+            self.view.show_validation(str(exc))
+            return False
+        return True
+
+    def _move_through_engine(self, engine: RideEngine, chosen: str) -> None:
+        """Drive *engine*'s pooled move of *rider* to *chosen* (R-17).
+
+        The two destinations the editor offers: a team's display name,
+        or the solo sentinel the roster's own editor writes as "solo".
+        """
+        reason = _move_reason(chosen)
+        if chosen == SOLO_TEAM_CHOICE:
+            engine.extract_rider_to_solo(cast("str", self.rider.plate), reason=reason)
+            return
+        engine.move_rider(cast("str", self.rider.plate), to_team=chosen, reason=reason)
 
 
 class RidersPresenter:
