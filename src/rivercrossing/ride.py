@@ -58,7 +58,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from rivercrossing.cards import Shoe
-    from rivercrossing.roster import Entry, EntryMode, PlateModel, Roster
+    from rivercrossing.roster import Entry, EntryMode, PlateModel, Rider, Roster
 
 __all__ = [
     "DEFAULT_DECK_COUNT",
@@ -516,12 +516,17 @@ class StartBlockedError(RideEngineError):
 
 
 class UnknownPlateError(RideEngineError):
-    """``deal_manual()`` could not resolve *plate* to any entry.
+    """A caller-named plate, or a move's own target, names nothing.
 
-    A corrections command fails loudly, unlike ``record_crossing``'s
-    console path, which returns a refusal result so the entry field
-    can flash its cue; E7's manual-deal dialog surfaces this as the
-    error for a mistyped plate.
+    ``deal_manual()`` could not resolve *plate* to any entry; the
+    pooled live move could not resolve its rider plate to a rider (or,
+    for an extraction, to one on a pooled team) or its *to_team* to a
+    team. A corrections command fails loudly, unlike
+    ``record_crossing``'s console path, which returns a refusal result
+    so the entry field can flash its cue; E7's manual-deal dialog
+    surfaces this as the error for a mistyped plate. Replay's own
+    ``_require_entry_by_key`` raises it too, for a payload key this
+    roster no longer holds.
     """
 
 
@@ -549,6 +554,8 @@ REPLAY_ACTIONS: frozenset[str] = frozenset(
         "reassign",
         "dnf",
         "void_card",
+        "move_rider",
+        "extract_rider_to_solo",
         "stop",
         "finish",
         "reopen",
@@ -1123,6 +1130,59 @@ class RideEngine:
       and records (and deals) the real crossing at the miss's original
       instant, so the card is assigned at edit time, never at record
       time.
+
+    The pooled live move's own resolutions (E3.1.2, R-17):
+
+    - **The move gate.** ``move_rider``/``extract_rider_to_solo`` are
+      legal only while the ride is stopped RUNNING (R-35's Stop guard,
+      so the clock is locked before a re-shuffle) or REOPENED, and
+      only on a ``rider_pooled`` ride -- the same cell
+      ``roster.can_move_rider`` opens, read off the stored enum
+      ``.value`` because ``roster`` is never imported here. The live
+      RUNNING refusal is exactly "Stop the ride first" (the console's
+      own instruction); DRAFT and FINISHED name their state. The
+      engine carries these refusals as ``IllegalStateError`` -- the
+      roster's own ``LockedError`` can never be imported from below
+      it.
+    - **Keys, never entries, name the two sides.** The move's payload
+      records ``from_key``/``to_key`` (the entries' stable
+      :attr:`~rivercrossing.roster.Entry.key`) rather than plates:
+      a pooled move re-derives both teams' plates, and a solo source
+      is *dissolved* by the move, so a replayed payload must be able
+      to name an entry the rebuilt roster no longer holds. A
+      same-team move is refused outright: it can be neither a
+      membership change nor a re-attribution, and re-keying an entry
+      onto itself would collide its own lap seqs.
+    - **Replay never re-applies the roster.** ``apply`` re-runs only
+      ``_reattribute_rider`` for a replayed move: the replayed roster
+      is already final (``Store.load_engine`` rebuilds it from the
+      entry/rider tables, never from the event log), so the recorded
+      laps re-key onto the destination exactly as they did live.
+    - **Known gap: a solo-sourced move cannot be replayed.** The
+      ``record_crossing`` rows recorded before such a move carry the
+      *dissolved* solo entry's key, and ``apply`` resolves those by
+      key -- a key the reloaded roster no longer holds, because
+      ``Store.save_roster`` writes a snapshot of the live entries and
+      a dissolved entry is not among them. Reopening such a ride
+      raises ``UnknownPlateError`` from the replay seam. The same gap
+      already exists for the roster-level solo move Phase 2 opened;
+      closing it needs a decision above this module (persist a
+      retired entry row, or re-key the earlier rows), so it is
+      recorded here rather than invented.
+    - **A voided lap of the moved rider is re-interpreted, not
+      restored.** The pre-void held/credited disposition is not
+      stored, so the restored lap's short-lap disposition is
+      re-derived against its new predecessor (R-34) -- a short lap
+      re-enters the hold queue, every other lap credits. Card-level
+      voids (``void_card``/``void_held``) are untouched: they are
+      cards on still-live laps.
+    - **The source renumbers last, highest gap first.** The moved
+      rider's live laps leave in record order while the source's
+      remaining laps keep their seqs until every removal has landed;
+      ``_renumber_later`` then runs from the highest removed seq
+      down. Each call closes the one gap above the seq it names, so
+      descending is the only order that leaves the survivors
+      contiguous 1..N.
     """
 
     def __init__(  # noqa: PLR0913, PLR0917 -- frozen S4 API (config, shoe, clock, roster)
@@ -2548,6 +2608,276 @@ class RideEngine:
             )
         )
 
+    # --------------------------------- E3.1.2 pooled live rider moves
+
+    def move_rider(self, rider_plate: str, *, to_team: str, reason: str) -> Event:
+        """Move one pooled rider onto another team mid-ride (R-17).
+
+        The engine half of the pooled live move E3.1.2's lock matrix
+        keeps open: the roster changes the rider's membership, and this
+        method carries the rider's *data* across with them
+        (:meth:`_reattribute_rider`) -- their live laps, their held
+        card and their credited cards, re-keyed to the destination
+        entry. The source may be a pooled TEAM member or a whole SOLO
+        entry; a solo entry has exactly one rider, so a move out of one
+        dissolves it (``Roster.move_rider``), which is why the audit
+        event records the two *keys* rather than the two entries.
+
+        Legal only while the ride is stopped (RUNNING with R-35's Stop
+        guard set) or REOPENED, and only on a ``rider_pooled`` ride
+        (:meth:`_require_move_allowed`): the operator stops the clock
+        before a mid-ride re-shuffle, and a finished ride is corrected
+        through Reopen.
+
+        Args:
+            rider_plate: The moving rider's own plate (R-16).
+            to_team: The destination team's display name.
+            reason: Why the rider moved; carried in the audit payload.
+
+        Returns:
+            The appended ``move_rider`` audit event.
+
+        Raises:
+            ValueError: *reason* is empty or whitespace-only.
+            IllegalStateError: the ride is RUNNING and not stopped, is
+                DRAFT or FINISHED, its plate model is not
+                ``rider_pooled``, or *to_team* is the rider's own team.
+            UnknownPlateError: *rider_plate* names no rider in the
+                roster, or *to_team* names no team.
+        """
+        self._require_move_allowed(reason)
+        source, rider = self._find_rider(rider_plate)
+        destination = self._require_team(to_team)
+        if destination is source:
+            raise IllegalStateError(f"rider {rider_plate} is already on team {to_team}")
+        source_key = source.key
+        destination_key = destination.key
+        self._roster.move_rider(rider, to_entry=destination)
+        self._roster.mark_has_data(destination)
+        self._reattribute_rider(rider_plate, source_key, destination_key)
+        return self._append(
+            Event(
+                action="move_rider",
+                payload={
+                    "rider_plate": rider_plate,
+                    "from_key": source_key,
+                    "to_team": to_team,
+                    "to_key": destination_key,
+                    "reason": reason,
+                },
+            )
+        )
+
+    def extract_rider_to_solo(self, rider_plate: str, *, reason: str) -> Event:
+        """Move one pooled team member into their own solo entry (R-17).
+
+        The team-to-solo half of the pooled live move: the roster
+        extracts the member into a brand-new solo entry (its own plate
+        becomes the entry's) and this method carries the rider's data
+        onto that new entry's key. Gated exactly like
+        :meth:`move_rider` (:meth:`_require_move_allowed`): stopped
+        RUNNING or REOPENED, ``rider_pooled`` only.
+
+        Args:
+            rider_plate: The extracted rider's own plate (R-16).
+            reason: Why the rider left the team; carried in the audit
+                payload.
+
+        Returns:
+            The appended ``extract_rider_to_solo`` audit event.
+
+        Raises:
+            ValueError: *reason* is empty or whitespace-only.
+            IllegalStateError: the ride is RUNNING and not stopped, is
+                DRAFT or FINISHED, or its plate model is not
+                ``rider_pooled``.
+            UnknownPlateError: *rider_plate* names no rider, or names
+                a rider who is not on a pooled team.
+        """
+        self._require_move_allowed(reason)
+        source, rider = self._find_rider(rider_plate)
+        if source.type.value != "team":
+            raise UnknownPlateError(f"plate {rider_plate} is not a pooled team member")
+        source_key = source.key
+        solo = self._roster.extract_rider_to_solo(rider)
+        destination_key = solo.key
+        self._roster.mark_has_data(solo)
+        self._reattribute_rider(rider_plate, source_key, destination_key)
+        return self._append(
+            Event(
+                action="extract_rider_to_solo",
+                payload={
+                    "rider_plate": rider_plate,
+                    "from_key": source_key,
+                    "to_key": destination_key,
+                    "reason": reason,
+                },
+            )
+        )
+
+    def _require_move_allowed(self, reason: str) -> None:
+        """Refuse a rider move the ride's state or model forbids.
+
+        The one gate both move primitives share (E3.1.2, R-17): *reason*
+        must name something, the ride must be stopped RUNNING (R-35's
+        Stop guard -- the operator locks plate entry before a mid-ride
+        re-shuffle) or REOPENED, and the ride must be ``rider_pooled``.
+        A live RUNNING ride is refused with "Stop the ride first", the
+        console's own instruction; DRAFT and FINISHED name their state.
+        ``team_relay`` is refused outright: the plate *is* the team
+        there, so a move would re-key identity itself -- the same
+        carve-out ``roster.can_move_rider`` makes, read off the stored
+        ``.value`` because this module never imports ``roster`` at
+        runtime (module docstring).
+
+        Raises:
+            ValueError: *reason* is empty or whitespace-only.
+            IllegalStateError: the ride is RUNNING and not stopped, is
+                DRAFT or FINISHED, or its plate model is not
+                ``rider_pooled``.
+        """
+        _require_reason(reason)
+        if self._state is RideStatus.RUNNING and not self._stopped:
+            msg = "Stop the ride first"
+            raise IllegalStateError(msg)
+        if self._state not in (RideStatus.RUNNING, RideStatus.REOPENED):
+            raise IllegalStateError(f"cannot move a rider from {self._state}")
+        if self._config.plate_model.value != "rider_pooled":
+            raise IllegalStateError(
+                f"rider moves need a rider_pooled ride, not {self._config.plate_model.value}"
+            )
+
+    def _find_rider(self, rider_plate: str) -> tuple[Entry, Rider]:
+        """Return the ``(entry, rider)`` *rider_plate* names, or raise.
+
+        A rider lookup, never a plate resolution: a pooled team's own
+        plate is *derived* from its lowest-numbered member (S1), so
+        resolving *rider_plate* through the roster's plate index could
+        return the team itself -- and a move's subject must be the
+        member whose laps and cards travel. Duck-typed over
+        ``entries``/``riders`` like every other roster read here.
+
+        Raises:
+            UnknownPlateError: no rider carries *rider_plate*.
+        """
+        for entry in self._roster.entries:
+            for rider in entry.riders:
+                if rider.plate == rider_plate:
+                    return entry, rider
+        raise UnknownPlateError(f"unknown plate: {rider_plate}")
+
+    def _require_team(self, display_name: str) -> Entry:
+        """Return the TEAM entry named *display_name*, or raise.
+
+        The destination lookup :meth:`move_rider` needs and no plate
+        resolution can serve: the operator picks a team by the name the
+        entry list shows, and a pooled team's plate is exactly what a
+        mid-ride move re-derives, so only the name names the target
+        (E3.1.2's pooled-live-move seam).
+
+        Raises:
+            UnknownPlateError: *display_name* names no TEAM entry.
+        """
+        for entry in self._roster.entries:
+            if entry.type.value == "team" and entry.display_name == display_name:
+                return entry
+        raise UnknownPlateError(f"unknown team: {display_name}")
+
+    def _reattribute_rider(self, rider_plate: str, source_key: str, destination_key: str) -> None:
+        """Re-key *rider_plate*'s ride data from one entry to another.
+
+        The direction-agnostic core of every pooled move: the roster's
+        membership change belongs to the caller (:meth:`move_rider`,
+        :meth:`extract_rider_to_solo`, and their replay branches in
+        :meth:`apply`), while the moved rider's *data* -- credited
+        cards, live laps, restored voided laps -- follows them here. It
+        takes **keys**, never ``Entry`` objects, so a replay can pass a
+        ``from_key`` whose entry the live move dissolved: by the time
+        the event is re-applied that entry no longer exists to hand
+        over, and the recorded key is the only identity that survives.
+
+        Three passes, each selecting the moved rider's own data alone:
+
+        - **credited cards.** Every card the source hand tags with
+          *rider_plate* moves to the destination hand, tag and all (a
+          manual card's ``None`` tag and a teammate's tag stay put). The
+          tag is what a per-rider DNF forfeits on, so it must travel.
+        - **live laps.** In record order, each live crossing of
+          *rider_plate* moves to the destination as its next lap, its
+          dealt card (and its hold, when held) travelling with it --
+          never a fresh deal, and never a re-credit: a credited card
+          moved in the first pass and a voided one stays voided.
+        - **voided laps.** A ``void_crossing`` void *of this rider* is
+          reversed into the destination instead of staying void: the
+          card is un-voided and the voided lap re-appends, its
+          short-lap disposition (R-34) re-derived against its new
+          predecessor because the pre-void one was never stored. Only
+          the moved rider's own plate selects a void: a teammate's
+          voided lap is none of this move's business.
+        """
+        source_hand = self._hand.get(source_key, [])
+        staying = [(card, tag) for card, tag in source_hand if tag != rider_plate]
+        travelling = [(card, tag) for card, tag in source_hand if tag == rider_plate]
+        if travelling:
+            self._hand[source_key] = staying
+            self._hand.setdefault(destination_key, []).extend(travelling)
+
+        moved = [
+            crossing
+            for crossing in self._crossings
+            if crossing.entry_id == source_key and crossing.rider_plate == rider_plate
+        ]
+        removed_seqs: list[int] = []
+        for crossing in moved:
+            card = self._dealt.pop(crossing)
+            held = self._held.pop(crossing, None)
+            self._remove_crossing(crossing)
+            removed_seqs.append(crossing.seq)
+            replacement = Crossing(
+                entry_id=destination_key,
+                seq=len(self._laps_for(destination_key)) + 1,
+                crossed_at=crossing.crossed_at,
+                rider_plate=rider_plate,
+            )
+            self._insert_crossing(replacement)
+            self._dealt[replacement] = card
+            if held is not None:
+                self._held[replacement] = held
+        # The source renumbers last: _renumber_later re-keys each later
+        # crossing through _replace_crossing, which carries the card to
+        # the replacement -- and the crossing this loop still holds
+        # would then have no _dealt entry left to look up. Descending
+        # order is the only one that leaves the survivors contiguous
+        # 1..N: each call closes the single gap above the seq it names.
+        for seq in reversed(removed_seqs):
+            self._renumber_later(source_key, seq)
+
+        # Snapshot: the body takes every matching pair out of _voided.
+        for pair in list(self._voided):
+            crossing, card = pair
+            if crossing.rider_plate != rider_plate:
+                continue
+            self._voided.remove(pair)
+            self._unmark_voided(card)
+            replacement = Crossing(
+                entry_id=destination_key,
+                seq=len(self._laps_for(destination_key)) + 1,
+                crossed_at=crossing.crossed_at,
+                rider_plate=rider_plate,
+            )
+            self._insert_crossing(replacement)
+            self._dealt[replacement] = card
+            laps = self._laps_for(destination_key)
+            position = laps.index(replacement)
+            previous = (
+                laps[position - 1].crossed_at if position > 0 else self._require_actual_start()
+            )
+            lap_time = (replacement.crossed_at - previous).total_seconds()
+            if self._config.hold_short_laps and lap_time < self._config.min_lap_s:
+                self._held[replacement] = card
+            else:
+                self._credit(destination_key, card, rider_plate)
+
     def stop(self) -> Event:
         """Lock plate entry; the ride stays RUNNING (spec §3, R-35).
 
@@ -3192,11 +3522,11 @@ class RideEngine:
 
     # ------------------------------------- E5.1.2 replay seam: apply
 
-    # The replay dispatch is inherently one branch per action (20
-    # mutations + the unknown-action guard); the cyclomatic count is
-    # the event vocabulary's size, not a refactorable control-flow
-    # tangle.
-    def apply(self, event: Event) -> None:  # noqa: C901, PLR0912
+    # The replay dispatch is inherently one branch per action (22
+    # mutations + the unknown-action guard); the cyclomatic and
+    # statement counts are the event vocabulary's size, not a
+    # refactorable control-flow tangle.
+    def apply(self, event: Event) -> None:  # noqa: C901, PLR0912, PLR0915
         """Replay one previously-recorded event onto this engine.
 
         The store's replay seam: :class:`~rivercrossing.store.
@@ -3340,6 +3670,31 @@ class RideEngine:
                 Card.parse(str(event.payload["card"])),
                 reason=str(event.payload["reason"]),
             )
+        elif action == "move_rider":
+            # The roster is never re-mutated on replay: it is already
+            # final (it is rebuilt from the entry/rider tables, not
+            # from this log), so only the rider's data follows the
+            # from/to keys the move recorded -- the one identity a
+            # dissolved source entry cannot be re-derived from. The
+            # payload's ``to_team``/``reason`` are operator copy, never
+            # state.
+            self._reattribute_rider(
+                str(event.payload["rider_plate"]),
+                str(event.payload["from_key"]),
+                str(event.payload["to_key"]),
+            )
+            self._append(event)
+        elif action == "extract_rider_to_solo":
+            # Same seam as ``move_rider``: the extracted rider's solo
+            # entry is already in the replayed roster, so the event
+            # restores the data under the recorded destination key and
+            # re-appends its own row.
+            self._reattribute_rider(
+                str(event.payload["rider_plate"]),
+                str(event.payload["from_key"]),
+                str(event.payload["to_key"]),
+            )
+            self._append(event)
         elif action == "stop":
             self.stop()
         elif action == "finish":
