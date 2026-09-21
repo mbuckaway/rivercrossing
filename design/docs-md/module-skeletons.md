@@ -198,7 +198,11 @@ class RideEngine:             # pure; wall-clock injected for tests
     undo_last() -> Event · edit_crossing(entry_id, seq, crossed_at, reason)
     void_crossing(entry_id, seq, reason) · reassign_crossing(seq, new_plate, reason)
     deal_manual(plate, reason) · void_card(entry_id, card, reason) · mark_dnf(plate, reason)
-    # rider moves are not the engine's: Roster.move_rider(rider, *, to_entry); pooled only (R-17)
+    move_rider(rider_plate: str, *, to_team: str, reason: str) -> Event   # team->team, solo->team
+    extract_rider_to_solo(rider_plate: str, *, reason: str) -> Event      # team->solo
+        # pooled rider moves: the Roster owns membership (move_rider(rider, *, to_entry);
+        # extract_rider_to_solo -- a solo source allowed); these two engine methods own the
+        # re-attribution (plate, crossings, cards; voided laps reset), Stop/Reopen-gated (R-17)
     stop() -> Event · finish(*, self_test_failed_checks=()) -> Event · reopen() -> Event
         # REOPENED = corrections only; finish() also performs and records R-14's
         # high-card draw (one tiebreak_draw event) and writes any overridden
@@ -230,8 +234,9 @@ rivercrossing.roster — in-memory roster & lock matrix (§1–§2 · R-11/12/15
 
 ```
 class EntryMode(StrEnum): SOLO MIXED · class PlateModel(StrEnum): RIDER_POOLED TEAM_RELAY
-@dataclass Entry(plate, display_name, type, riders, status, notes, has_data, logo_card)
-                 # identity, not value; has_data is the delete guard (R-15)
+@dataclass Entry(plate, display_name, type, riders, status, notes, has_data, logo_card, key)
+                 # identity, not value; key = stable UUID the engine files crossings/hands under
+                 # (not the mutable derived plate); has_data is the delete guard (R-15)
 @dataclass Rider(first_name, last_name="", plate: str | None = None,
                  sex: str | None = None, sort_order=0)
 class Roster:                 # one ride's entries/riders; status set by the E4 engine
@@ -242,6 +247,8 @@ class Roster:                 # one ride's entries/riders; status set by the E4 
     next_free_plate() -> str                       # highest numeric + 1
     validate_for_start() -> list[StartViolation]   # R-12's floor, checked at start
     entries · audit_log · status · take_audit_log()  # audit events persist via the E5 store
+    entry_by_key(key) -> Entry | None              # stable-key lookup; searches retired too
+    retired_entries · load_retired_entries()       # dissolved data-bearing entries, kept for replay
 can_edit_structure(status) · can_delete_entry(status, has_data)
 can_move_rider(status, plate_model) · can_add_entry() · can_fix_name()
 team_name_key(name) -> str                     # fuzzy team key; the CSV preview and rider_issues share it
