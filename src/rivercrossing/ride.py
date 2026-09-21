@@ -1169,6 +1169,20 @@ class RideEngine:
       a replayed ``mark_has_data`` on the retired entry is a known
       entry, not a foreign one. An entry dissolved with no recorded
       data is still discarded outright: nothing names its key.
+    - **A moved crossing's ``seq`` is record order, not time order.**
+      ``_reattribute_rider`` gives each moved crossing the destination's
+      next ``seq`` in record/void order, while ``_laps`` stays sorted by
+      ``crossed_at``; so after a move a destination's ``seq N`` is not
+      its Nth chronological lap. Laps, times and standings read the
+      time-sorted index and are unaffected, but corrections address a
+      crossing by ``(entry_id, seq)``, so a UI that pairs time-sorted
+      rows with seq labels can mis-target.
+    - **``void_card``'s ``entry_id`` is a plate live and a key on
+      replay.** The live command resolves its argument through
+      ``_require_entry`` (plate -> entry), while the persisted payload
+      and the replay branch resolve by key; the resulting state is the
+      same, but a caller must not assume the parameter is one or the
+      other across the boundary.
     - **A voided lap of the moved rider is re-interpreted, not
       restored.** The pre-void held/credited disposition is not
       stored, so the restored lap's short-lap disposition is
