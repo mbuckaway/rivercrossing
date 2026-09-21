@@ -1039,14 +1039,18 @@ class RidersPresenter:
         """Commit the last previewed import (E3.4, R-21).
 
         A no-op returning ``False`` if nothing was ever previewed.
-        A refusal (the roster changed since preview, so conflicts
-        are present after all) shows via
-        :meth:`RidersView.show_validation` and returns ``False``,
-        never raising past this handler -- mirroring
-        :meth:`on_add_committed`/:meth:`on_delete`'s own
-        refusal shape. Returns ``True`` once the commit actually
-        applied, so :class:`~rivercrossing.ui.views.rider_editor.
-        CsvPreviewDialog` knows whether to end its own modal loop.
+        A refusal shows via :meth:`RidersView.show_validation` and
+        returns ``False``, never raising past this handler -- mirroring
+        :meth:`on_add_committed`/:meth:`on_delete`'s own refusal shape.
+        Two refusals reach here: the roster changed since preview so
+        conflicts are present after all
+        (:class:`~rivercrossing.csvio.ImportConflictsPresentError`), and
+        a stale preview whose reshape the roster's own lock matrix now
+        refuses (:class:`~rivercrossing.roster.RosterError` -- a pooled
+        move committed after the ride started, say). Returns ``True``
+        once the commit actually applied, so
+        :class:`~rivercrossing.ui.views.rider_editor.CsvPreviewDialog`
+        knows whether to end its own modal loop.
 
         Never re-renders ``riders_list``/``team_choice`` on success:
         this method's only real caller, ``CsvPreviewDialog``, never
@@ -1062,7 +1066,7 @@ class RidersPresenter:
             return False
         try:
             csvio.commit(self._csv_preview)
-        except csvio.ImportConflictsPresentError as exc:
+        except (csvio.ImportConflictsPresentError, RosterError) as exc:
             self.view.show_validation(str(exc))
             return False
         return True

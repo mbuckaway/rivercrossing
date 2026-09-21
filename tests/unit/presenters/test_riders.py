@@ -2586,6 +2586,130 @@ def test_on_confirm_csv_import_given_conflicts_present_leaves_the_roster_unchang
     assert roster.entries == ()
 
 
+# ---------------- a started ride refuses a pooled CSV reshape (R-17)
+#
+# Regression: a rider's recorded crossings stay keyed to the entry they
+# were recorded under, so a CSV re-import that moved membership alone
+# would strand them on the source entry. Every pooled membership
+# reshape is therefore DRAFT-only on this surface -- the Rider Editor
+# is the live, Stop/Reopen-gated move surface (csvio module docstring)
+# -- and a stale preview the roster itself now refuses is shown, not
+# raised.
+
+
+def _roster_names(roster: Roster) -> list[tuple[str, list[str]]]:
+    """Return each entry's display name and rider names, in order."""
+    return [
+        (entry.display_name, [rider.full_name for rider in entry.riders])
+        for entry in roster.entries
+    ]
+
+
+def _wolves_and_falcons(status: RideStatus) -> Roster:
+    """Return the pooled Wolves/Falcons roster, in *status*."""
+    roster = Roster(entry_mode=EntryMode.MIXED)
+    roster.create_team_entry(
+        display_name="Wolves",
+        riders=[
+            Rider(first_name="Bo", last_name="Lindqvist", plate="2"),
+            Rider(first_name="Cy", last_name="Nguyen", plate="3"),
+            Rider(first_name="Zed", last_name="Roy", plate="4"),
+        ],
+    )
+    roster.create_team_entry(
+        display_name="Falcons",
+        riders=[
+            Rider(first_name="Do", last_name="Singh", plate="5"),
+            Rider(first_name="El", last_name="Roy", plate="6"),
+        ],
+    )
+    roster.status = status
+    return roster
+
+
+def _write_midride_move_csv(directory: Path) -> Path:
+    """Write the re-import moving Bo(2) from Wolves to Falcons."""
+    return _write_pooled_csv(
+        directory,
+        "Bo,Lindqvist,team,Falcons,2,\nCy,Nguyen,team,Wolves,3,\nZed,Roy,team,Wolves,4,\n"
+        "Do,Singh,team,Falcons,5,\nEl,Roy,team,Falcons,6,\n",
+    )
+
+
+@pytest.mark.parametrize("status", [RideStatus.RUNNING, RideStatus.REOPENED])
+def test_on_pick_csv_import_given_a_started_ride_team_change_disables_import(
+    tmp_path: Path, status: RideStatus
+) -> None:
+    """The mid-ride re-import reports the conflict; Import is off."""
+    view = RecordingRidersView()
+    presenter = RidersPresenter(view, _wolves_and_falcons(status), load=False)
+
+    presenter.on_pick_csv_import(_write_midride_move_csv(tmp_path))
+
+    assert (
+        "show_csv_preview",
+        (
+            CsvPreview(
+                summary="riders.csv → 5 riders · 2 teams · 1 conflicts",
+                conflicts=(
+                    CsvConflict(
+                        row=2,
+                        problem=f"a team membership change requires DRAFT (ride is {status})",
+                    ),
+                ),
+            ),
+        ),
+    ) in view.calls
+    assert ("set_import_enabled", (False,)) in view.calls
+
+
+@pytest.mark.parametrize("status", [RideStatus.RUNNING, RideStatus.REOPENED])
+def test_on_confirm_csv_import_given_a_started_ride_team_change_keeps_the_roster(
+    tmp_path: Path, status: RideStatus
+) -> None:
+    """A refused commit leaves every rider on their own entry."""
+    roster = _wolves_and_falcons(status)
+    presenter = RidersPresenter(RecordingRidersView(), roster, load=False)
+    presenter.on_pick_csv_import(_write_midride_move_csv(tmp_path))
+    before = _roster_names(roster)
+
+    result = presenter.on_confirm_csv_import()
+
+    assert result is False
+    assert _roster_names(roster) == before
+
+
+def test_on_confirm_csv_import_given_a_roster_refusal_shows_validation_not_crash(
+    tmp_path: Path,
+) -> None:
+    """A roster refusal surfaces through show_validation (E3.4).
+
+    The stale-preview case: this import previewed clean while the ride
+    was DRAFT, the ride moved on before the operator confirmed, and by
+    then the roster's own lock matrix refuses the move -- a
+    ``RosterError`` (``LockedError``), never an
+    ``ImportConflictsPresentError``. wx swallows an exception that
+    escapes the presenter's caller (the measured note), so the handler
+    must catch both and show it.
+    """
+    roster = _wolves_and_falcons(RideStatus.DRAFT)
+    view = RecordingRidersView()
+    presenter = RidersPresenter(view, roster, load=False)
+    presenter.on_pick_csv_import(_write_midride_move_csv(tmp_path))
+    view.calls.clear()
+    roster.status = RideStatus.FINISHED
+
+    result = presenter.on_confirm_csv_import()
+
+    assert result is False
+    assert view.calls == [
+        (
+            "show_validation",
+            ("rider moves are locked for a rider_pooled ride once finished",),
+        )
+    ]
+
+
 # -------------------------------------------------------- on_export_csv
 
 
