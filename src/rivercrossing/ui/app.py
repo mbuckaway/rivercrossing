@@ -2344,6 +2344,7 @@ def _write_export(  # noqa: PLR0913, PLR0917
             path,
             logo_path=config.logo_path,
             self_test_unverified=self_test_unverified,
+            all_cards=opts.all_cards,
         )
     elif target == "export_poster_html":
         # The poster page is the PDF poster's HTML sibling: the same
