@@ -20,6 +20,14 @@ sections ("Teams" top 3 then "Solo riders" top 3, plate-less team
 cards), a solo event's top five at full sizing -- hand prose (D1, not
 ALL-CAPS), and a credit-line footer with no page count.
 
+The all-cards-drawn ``All N cards, in draw order: …`` sub-row reaches
+every podium card on both documents -- the report's own card and all
+three of the poster's, at the card's own scale -- so the published
+surfaces show the entry's whole deal, not just the best five. The
+poster's two card sizings are pinned by a worst-case fit test each:
+12-15 card hands plus the organizer logo (and, for solo, the self-test
+note) must still end above the footer gap on the single Letter page.
+
 Determinism (R-62, D14) is the load-bearing claim: identical inputs
 plus the pinned aware-UTC creation stamp produce byte-identical
 files, and the committed goldens at
@@ -54,7 +62,7 @@ from pdfexport_fixtures import (
 from pypdf import PdfReader
 
 from rivercrossing import pdfexport
-from rivercrossing.cards import Card, Rank, Suit
+from rivercrossing.cards import Card, Rank, Shoe, Suit
 from rivercrossing.hands import best_hand
 from rivercrossing.htmlexport import SELF_TEST_NOTE, ExportOptions, ResultRow, build_payload
 from rivercrossing.standings import EntryResult, Placed
@@ -209,6 +217,69 @@ def _ranked_solo(count: int) -> tuple[Placed, ...]:
         )
         for index in range(count)
     )
+
+
+# A wide hand's own seed: the whole-hand lines the poster fit tests draw
+# must be real 12-15 card hands, not the shared five-card stub.
+_WIDE_SEED = 20260921
+
+
+# (plate, name, kind, cards, shoe): the wide-hand entry's own inputs
+def _wide_entry(  # noqa: PLR0913
+    plate: str, name: str, *, kind: str, cards: int, shoe: Shoe
+) -> EntryResult:
+    """Build one entry whose ENTIRE hand is *cards* cards long.
+
+    Real hands run 9-12 cards, so the drawn whole-hand line is at its
+    longest here: the fit tests pin the poster's compact geometry
+    against the widest hand a seated shoe can deal plus the logo.
+    """
+    dealt = tuple(shoe.deal()[0] for _ in range(cards))
+    return EntryResult(
+        entry_id=plate,
+        plate=plate,
+        name=name,
+        kind=kind,
+        laps=10,
+        total_time=float(10 * 1800 + 60),
+        best_lap=1800.0,
+        cards=dealt,
+        hand=best_hand(dealt),
+        dnf=False,
+    )
+
+
+def _wide_solo(count: int, cards: int) -> tuple[Placed, ...]:
+    """Rank *count* solo riders, each drawing a *cards*-long hand."""
+    shoe = Shoe(decks=8, jokers_per_deck=2, seed=_WIDE_SEED)
+    return tuple(
+        Placed(
+            place=index + 1,
+            result=_wide_entry(
+                str(500 + index), f"Solo {index + 1}", kind="solo", cards=cards, shoe=shoe
+            ),
+            tie_note=None,
+            draw_required=False,
+        )
+        for index in range(count)
+    )
+
+
+def _wide_field(cards: int) -> tuple[Placed, ...]:
+    """Rank three teams then three solo riders, each drawing *cards*."""
+    shoe = Shoe(decks=8, jokers_per_deck=2, seed=_WIDE_SEED)
+    teams = [
+        Placed(
+            place=index + 1,
+            result=_wide_entry(
+                str(600 + index), f"Team {index + 1}", kind="team", cards=cards, shoe=shoe
+            ),
+            tie_note=None,
+            draw_required=False,
+        )
+        for index in range(3)
+    ]
+    return (*teams, *_wide_solo(3, cards))
 
 
 # (tmp_path, placed, opts, letter, created_at): the render() seam inputs
@@ -500,6 +571,33 @@ def test_render_all_cards_on_includes_draw_order_rows(tmp_path: Path) -> None:
     text = _text(_render(tmp_path, _placed_mixed(), opts))
 
     assert "All 5 cards, in draw order:" in text
+
+
+def test_render_podium_card_shows_the_whole_hand_when_all_cards_is_on(tmp_path: Path) -> None:
+    """The podium card carries the report's own whole-hand line.
+
+    The muted "All N cards, in draw order: …" sub-row the full field
+    draws, on the report's most visible surface: every card the entry
+    drew, in draw order, indented to the card's name column.
+    """
+    opts = ExportOptions(all_cards=True, full_field=False, laps_board=False, time_board=False)
+
+    text = _section(
+        _text(_render(tmp_path, _ranked_solo(3), opts)), "Best hands — top 3", "Top ten"
+    )
+
+    assert "All 5 cards, in draw order: 9♠ 9♦ 9♣ K♥ 2♠" in text
+
+
+def test_render_podium_card_omits_the_whole_hand_when_all_cards_is_off(tmp_path: Path) -> None:
+    """T-3 negative: all_cards=False leaves the podium card bare."""
+    opts = ExportOptions(all_cards=False, full_field=False, laps_board=False, time_board=False)
+
+    text = _section(
+        _text(_render(tmp_path, _ranked_solo(3), opts)), "Best hands — top 3", "Top ten"
+    )
+
+    assert "in draw order" not in text
 
 
 # -------------------------------------------------------------- content
@@ -985,6 +1083,55 @@ def test_podium_poster_given_the_note_the_full_field_still_fits_one_page() -> No
     assert poster.get_y() <= poster.h - pdfexport._FOOTER_GAP_IN
 
 
+@pytest.mark.parametrize("cards", [12, 15])
+def test_podium_poster_given_wide_hands_and_a_logo_still_fits_one_letter_page(
+    tmp_path: Path, cards: int
+) -> None:
+    """Worst case: the widest hands AND the organizer logo, one page.
+
+    The whole-hand lines grow every poster card, so the compact
+    geometry is pinned against the longest hand the real ride deals
+    (12 cards) and a deliberately wider one (15) with the logo's own
+    0.42in of header drawn: six cards and two headings must still end
+    above the footer gap on the single Letter page.
+    """
+    poster = pdfexport._PosterPDF(
+        build_ride(),
+        letter=True,
+        created_at=FIXED_CREATED,
+        logo_path=_logo_png(tmp_path),
+    )
+
+    poster.build(_wide_field(cards))
+
+    assert poster.page_no() == 1
+    assert poster.get_y() <= poster.h - pdfexport._FOOTER_GAP_IN
+
+
+@pytest.mark.parametrize("note", [False, True])
+def test_podium_poster_solo_event_given_wide_hands_a_logo_and_a_note_fits_one_page(
+    tmp_path: Path, *, note: bool
+) -> None:
+    """The solo top-five keeps its one page in its own worst case too.
+
+    Five FULL-size cards, the widest hands, the organizer logo and
+    (note seam on) the self-test caption, all at once: the full sizing
+    is pinned against every header the poster can carry.
+    """
+    poster = pdfexport._PosterPDF(
+        build_ride(),
+        letter=True,
+        created_at=FIXED_CREATED,
+        logo_path=_logo_png(tmp_path),
+        self_test_unverified=note,
+    )
+
+    poster.build(_wide_solo(5, 15))
+
+    assert poster.page_no() == 1
+    assert poster.get_y() <= poster.h - pdfexport._FOOTER_GAP_IN
+
+
 def test_podium_poster_solo_event_shows_the_top_five_solos(tmp_path: Path) -> None:
     """A solo poster lists five solos, one page."""
     out = _poster(tmp_path, _ranked_solo(7))
@@ -1004,6 +1151,38 @@ def test_podium_poster_omits_the_fourth_place_of_each_kind(tmp_path: Path) -> No
     assert "Solo 4" not in text
     assert "#603" not in text
     assert "#503" not in text
+
+
+def test_podium_poster_shows_every_drawn_card_in_draw_order(tmp_path: Path) -> None:
+    """Each poster card carries the report's whole-hand line.
+
+    The same muted DejaVu glyph line the full-field report draws, on
+    all three of the [5d] poster's cards: every drawn card in draw
+    order, not just the best five the large faces show.
+    """
+    text = _text(_poster(tmp_path, _placed_three()))
+
+    assert text.count("All 5 cards, in draw order: 9♠ 9♦ 9♣ K♥ 2♠") == 3
+
+
+def test_podium_poster_drawn_line_names_the_entire_hand_not_the_best_five(
+    tmp_path: Path,
+) -> None:
+    """The line counts the whole hand, not the best five it displays."""
+    text = _text(_poster(tmp_path, _wide_field(15)))
+
+    assert "All 15 cards, in draw order:" in text
+
+
+def test_podium_poster_omits_the_whole_hand_when_all_cards_is_off(tmp_path: Path) -> None:
+    """T-3 negative: all_cards=False leaves the poster cards bare."""
+    out = tmp_path / "poster.pdf"
+
+    pdfexport.podium_poster(
+        build_ride(), _placed_three(), out, created_at=FIXED_CREATED, all_cards=False
+    )
+
+    assert "in draw order" not in _text(out)
 
 
 def test_podium_poster_shows_hand_prose_not_all_caps(tmp_path: Path) -> None:
@@ -1350,6 +1529,24 @@ def test_pair_text_given_the_ten_pair_renders_the_10_rank_glyph() -> None:
     """The payload pair route spells the ten "10", matching "10d"."""
     assert pdfexport._pair_text(("10", "d")) == "10♦"
     assert pdfexport._pair_text(("JK", "j")) == "★ JOKER"
+
+
+# Natural pairs only: the joker's "★ JOKER" glyph carries a space, so
+# a token count would not match the card count for a joker hand.
+_NATURAL_PAIR = st.tuples(
+    st.sampled_from(["2", "3", "4", "5", "6", "7", "8", "9", "10", "J", "Q", "K", "A"]),
+    st.sampled_from(["s", "h", "d", "c"]),
+)
+
+
+@given(pairs=st.lists(_NATURAL_PAIR, max_size=24))
+def test_drawn_text_count_matches_the_glyphs_it_lists(pairs: list[tuple[str, str]]) -> None:
+    """Property: the line's count is exactly the hand it spells out."""
+    text = pdfexport._drawn_text(tuple(pairs))
+    head, _, run = text.partition(": ")
+
+    assert head == f"All {len(pairs)} cards, in draw order"
+    assert len(run.split()) == len(pairs)
 
 
 def test_rank_letter_given_the_ten_is_the_10_spelling() -> None:

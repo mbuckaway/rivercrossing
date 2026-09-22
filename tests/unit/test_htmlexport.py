@@ -671,6 +671,19 @@ _CARD_DRAW_BADGE = (
 )
 
 
+def _whole_hand_line(count: int, *, tone: str) -> str:
+    """Return the podium card's whole-hand line markup.
+
+    The full-field report's ``drawn_row`` prints the entry's entire
+    hand in draw order; the podium card now carries the same muted
+    ``text-xs`` line, toned per card (the dark first-place card takes
+    ``text-paper/70``, the plain ones ``text-ink/55``). The value is
+    the line's opening markup up to the chips span, the part the tests
+    pin.
+    """
+    return f'<div class="mt-2 text-xs {tone}">All {count} cards, in draw order: '
+
+
 def test_render_public_carries_a_drawn_card_on_the_results_row() -> None:
     """R-14: the payload records the drawn card as a rank/suit pair."""
     html = render(_StubRide(), _drawn_placed(), ExportOptions())
@@ -741,6 +754,104 @@ def test_render_public_given_no_draw_renders_no_badge_on_the_podium() -> None:
     html = render(_StubRide(), _placed_pair(), ExportOptions())
 
     assert "draw <span" not in _section_after(html, ">Best hands — top 3</h2>")
+
+
+# -------------------- the podium card's whole hand (drawn_row's design)
+
+
+def test_render_public_renders_the_whole_hand_line_in_the_podium_section() -> None:
+    """render(): the podium section carries the muted whole-hand line.
+
+    Same content the full-field report's ``drawn_row`` prints -- the
+    entry's whole hand, in draw order, and nothing else about it.
+    """
+    html = render(_StubRide(), _placed_pair(), ExportOptions())
+
+    assert "All 5 cards, in draw order:" in _section_after(html, ">Best hands — top 3</h2>")
+
+
+def test_render_public_renders_the_podium_whole_hand_chips_in_draw_order() -> None:
+    """The chips are ``r.drawn`` itself, in draw order, never re-sorted.
+
+    ``_placed_pair``'s leader holds 9S 9D 9C KH 2S -- the same five
+    codes its best-5 came from, so the line must re-emit them in that
+    order with the shared chip faces (hearts/diamonds accent, the rest
+    plain), exactly as ``drawn_row`` does on the full-field page.
+    """
+    html = render(_StubRide(), _placed_pair(), ExportOptions())
+
+    assert (
+        '<div class="mt-2 text-xs text-paper/70">All 5 cards, in draw order: '
+        '<span class="inline-flex flex-wrap gap-1">'
+        '<span class="chip">9 ♠</span><span class="chip r">9 ♦</span>'
+        '<span class="chip">9 ♣</span><span class="chip r">K ♥</span>'
+        '<span class="chip">2 ♠</span></span></div>'
+    ) in html
+
+
+@pytest.mark.parametrize(
+    ("place", "tone"),
+    [(1, "text-paper/70"), (2, "text-ink/55"), (3, "text-ink/55"), (4, "text-ink/55")],
+)
+def test_render_public_tones_the_whole_hand_line_per_podium_card(place: int, tone: str) -> None:
+    """The dark first-place card takes paper, every plain card ink.
+
+    T-3 both ways: the ternary's True branch (place 1) and its False
+    branch (2, 3 and the T-4 max+1 boundary place 4, which the macro
+    still renders whatever place it is handed).
+    """
+    html = render(_StubRide(), _drawn_placed(place=place), ExportOptions())
+
+    assert _whole_hand_line(5, tone=tone) in _section_after(html, ">Best hands — top 3</h2>")
+
+
+@pytest.mark.parametrize(("codes", "count"), [("2S", 1), ("2S 3D", 2)])
+def test_render_public_prints_the_entries_own_hand_length(codes: str, count: int) -> None:
+    """T-4 boundary: the count is the hand length, not a fixed 5.
+
+    One card is the smallest non-empty hand a draw can leave and two
+    the next size up; neither is the shared five-card stub.
+    """
+    placed = (
+        Placed(
+            place=1,
+            result=_sample_entry("88", "Moss Ridge Riders", 11, codes=codes),
+            tie_note=None,
+            draw_required=False,
+        ),
+    )
+
+    html = render(_StubRide(), placed, ExportOptions())
+
+    assert _whole_hand_line(count, tone="text-paper/70") in html
+
+
+def test_render_public_given_zero_cards_prints_the_zero_count_line() -> None:
+    """T-4 boundary: a no-show entry's empty hand renders "All 0"."""
+    result = EntryResult(
+        entry_id="1",
+        plate="1",
+        name="No Show",
+        kind="solo",
+        laps=0,
+        total_time=0.0,
+        best_lap=0.0,
+        cards=(),
+        hand=best_hand(()),
+        dnf=False,
+    )
+    placed = (Placed(place=1, result=result, tie_note=None, draw_required=False),)
+
+    html = render(_StubRide(), placed, ExportOptions())
+
+    assert _whole_hand_line(0, tone="text-paper/70") in html
+
+
+def test_render_public_given_all_cards_off_omits_the_podium_whole_hand_line() -> None:
+    """T-3 negative: all_cards=False leaves the podium best-5 only."""
+    html = render(_StubRide(), _placed_pair(), ExportOptions(all_cards=False))
+
+    assert "All 5 cards, in draw order:" not in _section_after(html, ">Best hands — top 3</h2>")
 
 
 def test_render_public_renders_the_drawn_card_badge_in_the_team_full_field_row() -> None:
@@ -2203,6 +2314,73 @@ def test_render_poster_given_no_draw_renders_no_draw_badge() -> None:
     page = _poster_page(_poster_placed())
 
     assert "draw <span" not in page
+
+
+# ------------------- the poster card's whole hand (drawn_row's design)
+
+
+@pytest.mark.parametrize(
+    ("place", "tone"),
+    [(1, "text-paper/70"), (2, "text-ink/55")],
+)
+def test_render_poster_given_all_cards_on_prints_the_whole_hand_line(
+    place: int, tone: str
+) -> None:
+    """render_poster(): each card prints its whole hand, draw order.
+
+    The same muted ``text-xs`` line the results page's podium card now
+    carries, toned per card: paper on the dark first-place card, ink on
+    the plain ones. Rendered through the poster's own ``m.chips``.
+    """
+    page = _poster_page(_drawn_placed(place=place))
+
+    assert _whole_hand_line(5, tone=tone) in page
+
+
+@pytest.mark.parametrize(("codes", "count"), [("2S", 1), ("2S 3D", 2)])
+def test_render_poster_prints_the_entries_own_hand_length(codes: str, count: int) -> None:
+    """T-4 boundary: the poster's count is the hand length too."""
+    placed = (
+        Placed(
+            place=1,
+            result=_sample_entry("88", "Moss Ridge Riders", 11, codes=codes),
+            tie_note=None,
+            draw_required=False,
+        ),
+    )
+
+    page = _poster_page(placed)
+
+    assert _whole_hand_line(count, tone="text-paper/70") in page
+
+
+def test_render_poster_given_a_podium_card_prints_the_chips_in_draw_order() -> None:
+    """The chips are ``r.drawn``, in order, with the shared faces."""
+    page = _poster_page(
+        (
+            Placed(
+                place=1,
+                result=_sample_entry("88", "Moss Ridge Riders", 11, codes="9S 9D 9C KH 2S"),
+                tie_note=None,
+                draw_required=False,
+            ),
+        )
+    )
+
+    assert (
+        '<div class="mt-2 text-xs text-paper/70">All 5 cards, in draw order: '
+        '<span class="inline-flex flex-wrap gap-1">'
+        '<span class="chip">9 ♠</span><span class="chip r">9 ♦</span>'
+        '<span class="chip">9 ♣</span><span class="chip r">K ♥</span>'
+        '<span class="chip">2 ♠</span></span></div>'
+    ) in page
+
+
+def test_render_poster_given_all_cards_off_omits_the_whole_hand_line() -> None:
+    """T-3 negative: all_cards=False leaves the poster best-5 only."""
+    page = _poster_page(_poster_placed(), opts=ExportOptions(all_cards=False))
+
+    assert "cards, in draw order:" not in page
 
 
 def test_render_poster_given_an_unverified_ride_renders_the_self_test_note() -> None:
