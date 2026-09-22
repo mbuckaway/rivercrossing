@@ -49,7 +49,8 @@ rivercrossing/
 │   │   ├── schema.py           # latest DDL + PRAGMAs (WAL, foreign_keys); SCHEMA_VERSION
 │   │   │                       #   gate: create on empty, migrate older, refuse newer
 │   │   ├── migrations.py       # MIGRATIONS: source version -> the step to the next
-│   │   │                       #   (v1 -> v2 rebuilds entry); run_migrations(conn, from, to)
+│   │   │                       #   (v1 -> v2 rebuilds entry; v2 -> v3 rewrites legacy
+│   │   │                       #    audit entry_id -> key); run_migrations(conn, from, to)
 │   │   └── backup.py           # open + hourly + manual, keep 20 (R-54)
 │   ├── csvio.py                # §7 import/export, preview-then-commit
 │   ├── htmlexport.py           # §8 Jinja2 renderer (self-contained page; + poster page)
@@ -285,8 +286,8 @@ ensure_schema(conn) -> None  # create on an empty file · run MIGRATIONS on an o
 migrations.py: MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] ·
                run_migrations(conn, from_version, to_version) -> None
 (columns per Spec §2, incl. status enum with REOPENED, shoe seed, plate_model; SCHEMA_VERSION
- is 2 and every schema change ships the step that upgrades an older file — no settings table:
- E8.1.1 keeps settings in a JSON config file)
+ is 3 and every schema change ships the step that upgrades an older file — v3 is a data-only
+ audit-identity rewrite, no DDL — no settings table: E8.1.1 keeps settings in a JSON config file)
 ```
 
 rivercrossing.csvio / htmlexport / pdfexport (§7/§8/§8b · R-21/61/62/63)
