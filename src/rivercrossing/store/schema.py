@@ -11,7 +11,7 @@ not list one, and E8.1.1 stores per-user settings in a JSON config
 file (``rivercrossing.ui.presenters.settings``), not this database --
 the schema stays untouched.
 
-**Versioned and migrated in place.** :data:`SCHEMA_VERSION` is 2 and
+**Versioned and migrated in place.** :data:`SCHEMA_VERSION` is 3 and
 the DDL below is the *latest* shape, not a frozen baseline. The
 product-owner policy (spec §2): every schema change bumps
 :data:`SCHEMA_VERSION` and ships the step that upgrades an older file,
@@ -22,9 +22,13 @@ older one, does nothing on a current one, and refuses a file stamped
 
 Version 1 was the released flattened baseline, and the changes under
 **Version 1** below were folded into its CREATE while the project was
-unreleased. **Version 2** is this branch's pooled-live-move seam, and
-the v1 -> v2 migration rebuilds ``entry`` for it, because SQLite cannot
-drop a table-level ``UNIQUE``.
+unreleased. **Version 2** is the pooled-live-move seam, and the
+v1 -> v2 migration rebuilds ``entry`` for it, because SQLite cannot
+drop a table-level ``UNIQUE``. **Version 3** changes no DDL at all: it
+is a data-only step that rewrites the ``audit`` payloads a pre-v2
+build wrote -- the plated ``entry_id``/``old_entry_id``/``new_entry_id``
+the replay seam now resolves as keys -- which is why the DDL below is
+still v2's shape.
 
 **Version 2** adds, both in the table the migration rebuilds:
 
@@ -101,7 +105,7 @@ __all__ = [
 # an older one is upgraded in place by ``store.migrations``; a file
 # stamped with a newer one is refused by :func:`ensure_schema` rather
 # than read under a shape it was not written with.
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 
 class StoreError(RuntimeError):

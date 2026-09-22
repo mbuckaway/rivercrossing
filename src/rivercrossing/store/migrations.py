@@ -3,8 +3,9 @@
 
 One step per schema version: :data:`MIGRATIONS` maps the version a file
 is stamped with to the function that upgrades it to the next one, so
-``MIGRATIONS[1]`` takes a v1 file to v2. :func:`run_migrations` walks
-that chain in order and stamps the ledger;
+``MIGRATIONS[1]`` takes a v1 file to v2 and ``MIGRATIONS[2]`` takes a
+v2 file to v3. :func:`run_migrations` walks that chain in order and
+stamps the ledger;
 :func:`~rivercrossing.store.schema.ensure_schema` calls it whenever it
 opens a file older than the build, because the product-owner policy is
 that every schema change ships the step that upgrades older files
@@ -18,6 +19,7 @@ expects. The ``MIGRATIONS``-covers-every-older-version test in
 ``tests/unit/test_store.py`` is what keeps the two ends honest.
 """
 
+import json
 import sqlite3
 import uuid
 from typing import TYPE_CHECKING
@@ -156,8 +158,114 @@ def _migrate_v1_to_v2(conn: sqlite3.Connection) -> None:
         conn.execute("PRAGMA foreign_keys=ON")
 
 
+# The v2 ``entry`` columns the rewrite resolves against, the ``audit``
+# rows it rewrites, and the payload fields that name an entry -- spelled
+# as v1's own events spelled them: a crossing's subject, and a pooled
+# move's two sides.
+_V2_ENTRY_IDENTITY_SQL = "SELECT ride_id, plate, key, retired FROM entry"
+_V2_AUDIT_IDENTITY_SQL = "SELECT id, ride_id, payload_json FROM audit"
+_V2_AUDIT_IDENTITY_UPDATE_SQL = "UPDATE audit SET payload_json = ? WHERE id = ?"
+_ENTRY_IDENTITY_FIELDS: tuple[str, ...] = ("entry_id", "old_entry_id", "new_entry_id")
+
+
+def _audit_payload_object(payload_json: object) -> dict[str, object] | None:
+    """Return one stored payload as a mapping, or None when unusable.
+
+    A payload an older or hand-edited file holds in any other shape --
+    undecodable text, or JSON that is not an object -- is left exactly
+    as it is: ``Store.load_engine`` already reports it as the clean
+    :class:`~rivercrossing.store.StoreError` naming the row, and one
+    bad row must not strand the file. The parameter is typed loosely
+    because the column is only declared TEXT, so ``json.loads`` may
+    raise TypeError for a value that is not text -- declined here the
+    same way undecodable text is.
+    """
+    try:
+        payload = json.loads(payload_json)  # type: ignore[arg-type]
+    except json.JSONDecodeError, TypeError:
+        return None
+    return payload if isinstance(payload, dict) else None
+
+
+def _rewrite_entry_identities(  # noqa: PLR0913, PLR0917 -- the payload + its 3 lookups
+    payload: dict[str, object],
+    ride_id: int,
+    plate_to_key: dict[tuple[int, str], str],
+    keys: set[str],
+) -> bool:
+    """Rewrite *payload*'s plated entry identities in place.
+
+    Returns:
+        Whether anything changed, so the caller writes back only the
+        rows this step actually repaired.
+    """
+    changed = False
+    for field in _ENTRY_IDENTITY_FIELDS:
+        value = payload.get(field)
+        if not isinstance(value, str) or value in keys:
+            continue
+        key = plate_to_key.get((ride_id, value))
+        if key is None:
+            continue
+        payload[field] = key
+        changed = True
+    return changed
+
+
+def _migrate_v2_to_v3(conn: sqlite3.Connection) -> None:
+    """Rewrite legacy plated entry identities in ``audit`` as keys.
+
+    A data-only step: this is the one migration here that changes no
+    DDL. v2 rebuilt ``entry`` around the stable ``key``
+    (:func:`_migrate_v1_to_v2`) but left the ``audit`` payloads alone,
+    so every event a v1 build recorded still names its entry by the
+    plate the operator typed. The replay seam resolves an identity
+    strictly as a key, so such a ride refuses to reopen -- "unknown
+    entry key: 93", a plate -- until this step has run.
+
+    The plate -> key map is built from the LIVE rows alone, because the
+    plate a retired row kept may be the one the destination team of a
+    pooled move has since adopted: a legacy value only a retired row
+    could explain is left as stored rather than guessed at. A v1 file
+    has no retired rows at all, so every plate a legacy payload names
+    is one of these live rows, and a value that is already a key is
+    skipped -- which makes the step a no-op the second time it runs.
+
+    Args:
+        conn: An open connection to a file stamped version 2.
+
+    Raises:
+        sqlite3.Error: A read or write failed. The transaction is
+            rolled back, so the caller is left with the untouched v2
+            file.
+    """
+    plate_to_key: dict[tuple[int, str], str] = {}
+    keys: set[str] = set()
+    for ride_id, plate, key, retired in conn.execute(_V2_ENTRY_IDENTITY_SQL):
+        keys.add(key)
+        if not retired:
+            plate_to_key[(ride_id, plate)] = key
+    rows = conn.execute(_V2_AUDIT_IDENTITY_SQL).fetchall()
+
+    conn.execute("BEGIN")
+    try:
+        for row_id, row_ride_id, payload_json in rows:
+            payload = _audit_payload_object(payload_json)
+            if payload is None:
+                continue
+            if _rewrite_entry_identities(payload, row_ride_id, plate_to_key, keys):
+                conn.execute(_V2_AUDIT_IDENTITY_UPDATE_SQL, (json.dumps(payload), row_id))
+    except sqlite3.Error:
+        conn.rollback()
+        raise
+    conn.commit()
+
+
 # The chain: source version -> the step that upgrades it to source + 1.
-MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {1: _migrate_v1_to_v2}
+MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {
+    1: _migrate_v1_to_v2,
+    2: _migrate_v2_to_v3,
+}
 
 
 def run_migrations(conn: sqlite3.Connection, from_version: int, to_version: int) -> None:
