@@ -205,7 +205,7 @@ def test_store_open_stamps_the_ledger_at_the_current_schema_version(tmp_path: Pa
         version = conn.execute("SELECT version FROM schema_version WHERE id = 1").fetchone()[0]
         rows = conn.execute("SELECT COUNT(*) FROM schema_version").fetchone()[0]
 
-    assert SCHEMA_VERSION == 2
+    assert SCHEMA_VERSION == 3
     assert (version, rows) == (SCHEMA_VERSION, 1)
 
 
@@ -286,7 +286,7 @@ def test_store_open_given_an_empty_file_creates_the_full_current_schema(tmp_path
     assert "hold_short_laps" in columns
 
 
-@pytest.mark.parametrize("stored_version", [3, 99, 999])
+@pytest.mark.parametrize("stored_version", [4, 99, 999])
 def test_store_open_given_a_newer_version_raises_naming_it(
     tmp_path: Path, stored_version: int
 ) -> None:
@@ -587,7 +587,10 @@ _V1_ENTRY_ROWS: tuple[str, ...] = (
 
 # The child rows whose ``entry_id`` links the entry rebuild must keep
 # resolving: 4 riders, 3 crossings, 3 cards, one open app_session and
-# one audit row.
+# three audit rows -- the display-only ``start_ride`` a v1 build wrote,
+# plus the ``start``/``record_crossing`` pair the replay seam needs, the
+# crossing still naming Alice's entry by her plate ("12") the way v1
+# wrote it (the v2 -> v3 step's own seed).
 _V1_CHILD_ROWS: tuple[str, ...] = (
     """
     INSERT INTO rider (id, entry_id, first_name, last_name, plate, sort_order,
@@ -647,6 +650,16 @@ _V1_CHILD_ROWS: tuple[str, ...] = (
     INSERT INTO audit (id, ride_id, at, action, payload_json)
     VALUES (1, 1, 1789898400, 'start_ride', '{"source": "setup"}')
     """,
+    """
+    INSERT INTO audit (id, ride_id, at, action, payload_json)
+    VALUES (2, 1, 1789898400, 'start', '{"actual_start": "2026-09-20T10:00:00"}')
+    """,
+    """
+    INSERT INTO audit (id, ride_id, at, action, payload_json)
+    VALUES (3, 1, 1789898520, 'record_crossing',
+            '{"plate": "12", "entry_id": "12", "lap": 1,
+              "crossed_at": "2026-09-20T10:02:00", "reason": "Alice"}')
+    """,
 )
 
 _V1_SEED: tuple[str, ...] = (_V1_RIDE_ROW, *_V1_ENTRY_ROWS, *_V1_CHILD_ROWS)
@@ -691,14 +704,20 @@ def _write_v1_file(db_path: Path, seed: tuple[str, ...] = ()) -> None:
         conn.close()
 
 
-def _read(db_path: Path, sql: str) -> list[tuple[object, ...]]:
+def _read(db_path: Path, sql: str, params: tuple[object, ...] = ()) -> list[tuple[object, ...]]:
     """Run one read-only query against *db_path* (assertion aid).
 
     Reads through a second, independent connection: the point is what
     landed on disk, not what the facade keeps in memory.
     """
     with closing(sqlite3.connect(str(db_path))) as conn:
-        return [tuple(row) for row in conn.execute(sql)]
+        return [tuple(row) for row in conn.execute(sql, params)]
+
+
+def _audit_payload(db_path: Path, audit_id: int) -> dict[str, object]:
+    """Return one stored audit payload, decoded (assertion aid)."""
+    (raw,) = _read(db_path, "SELECT payload_json FROM audit WHERE id = ?", (audit_id,))[0]
+    return dict(json.loads(str(raw)))
 
 
 def test_store_open_migrates_a_v1_file_to_the_current_schema_version(tmp_path: Path) -> None:
@@ -708,7 +727,7 @@ def test_store_open_migrates_a_v1_file_to_the_current_schema_version(tmp_path: P
 
     Store.open(db_path).close()
 
-    assert _read(db_path, "SELECT version FROM schema_version WHERE id = 1") == [(2,)]
+    assert _read(db_path, "SELECT version FROM schema_version WHERE id = 1") == [(3,)]
 
 
 def test_store_open_v1_migration_rebuilds_entry_in_the_v2_shape(tmp_path: Path) -> None:
@@ -908,7 +927,7 @@ def test_store_open_v1_migration_given_no_entry_rows_migrates_cleanly(tmp_path: 
     assert (
         _read(db_path, "SELECT COUNT(*) FROM entry"),
         _read(db_path, "SELECT version FROM schema_version WHERE id = 1"),
-    ) == ([(0,)], [(2,)])
+    ) == ([(0,)], [(3,)])
 
 
 def test_store_open_v1_migration_given_one_entry_row_copies_it(tmp_path: Path) -> None:
@@ -965,7 +984,7 @@ def test_run_migrations_stamps_the_ledger_at_the_target_version(tmp_path: Path) 
     assert (
         _read(db_path, "SELECT version FROM schema_version WHERE id = 1"),
         _read(db_path, "SELECT COUNT(*) FROM entry WHERE key <> ''"),
-    ) == ([(2,)], [(3,)])
+    ) == ([(3,)], [(3,)])
 
 
 def test_run_migrations_from_the_target_version_changes_nothing(tmp_path: Path) -> None:
@@ -983,7 +1002,7 @@ def test_run_migrations_from_the_target_version_changes_nothing(tmp_path: Path) 
     assert (
         _read(db_path, "SELECT version FROM schema_version WHERE id = 1"),
         _read(db_path, "SELECT id, key FROM entry"),
-    ) == ([(2,)], before)
+    ) == ([(3,)], before)
 
 
 def test_run_migrations_given_a_version_below_the_first_migration_raises_key_error(
@@ -1011,6 +1030,421 @@ def test_run_migrations_given_a_version_below_the_first_migration_raises_key_err
 def test_migrations_cover_every_version_below_the_current_one() -> None:
     """Every version below SCHEMA_VERSION has a step."""
     assert sorted(MIGRATIONS) == list(range(1, SCHEMA_VERSION))
+
+
+# ------------------------------------------------ v2 -> v3 migration
+# Product-owner policy (spec §2) again. v2 rebuilt ``entry`` around
+# the stable ``key`` but left the ``audit`` payloads alone, so a file
+# the pooled-live-move branch wrote still names its entry by plate
+# where the replay seam resolves a key -- the "unknown entry key: 93"
+# a pre-branch ride refuses to open with. v3 changes no DDL: it
+# rewrites those payloads in place. These tests build a v2 file from
+# the CURRENT ``SCHEMA_STATEMENTS`` (v3 adds nothing to them) stamped
+# 2, and drive it through ``Store.open``, which runs that one step.
+
+# The stable keys a v2 file's entries carry -- the identity a legacy
+# payload has to be rewritten to. The third belongs to a second ride's
+# own entry at plate "12": plate numbers are unique per ride.
+_V2_ALICE_KEY = "0f1e2d3c4b5a49788796a5b4c3d2e1f0"
+_V2_DYNAMOS_KEY = "1a2b3c4d5e6f408192a3b4c5d6e7f809"
+_V2_RIDE2_KEY = "2b3c4d5e6f704192a3b4c5d6e7f8091a"
+
+# ``entry`` rows as (id, ride_id, plate, key, display_name, type,
+# team_size, retired).
+_V2_ALICE_ENTRY: tuple[object, ...] = (1, 1, "12", _V2_ALICE_KEY, "Alice", "solo", 1, 0)
+_V2_DYNAMOS_ENTRY: tuple[object, ...] = (2, 1, "45", _V2_DYNAMOS_KEY, "Dirt Dynamos", "team", 2, 0)
+_V2_RETIRED_ALICE_ENTRY: tuple[object, ...] = (1, 1, "12", _V2_ALICE_KEY, "Alice", "solo", 1, 1)
+_V2_RIDE2_ALICE_ENTRY: tuple[object, ...] = (3, 2, "12", _V2_RIDE2_KEY, "Alice", "solo", 1, 0)
+
+# ``audit`` rows as (id, ride_id, at, action, payload_json). The start
+# row is what the replay seam needs to reach RUNNING before a crossing,
+# and the crossing is the legacy shape under test: the plated identity
+# a pre-v2 build wrote beside the plate the operator typed. The last
+# row is the same shape on a second ride, whose entry "12" is another
+# ride's team entirely.
+_V2_START_EVENT: tuple[object, ...] = (
+    1,
+    1,
+    1789898400,
+    "start",
+    '{"actual_start": "2026-09-20T10:00:00"}',
+)
+_V2_LEGACY_CROSSING_EVENT: tuple[object, ...] = (
+    2,
+    1,
+    1789898520,
+    "record_crossing",
+    (
+        '{"plate": "12", "entry_id": "12", "lap": 1,'
+        ' "crossed_at": "2026-09-20T10:02:00", "reason": "Alice"}'
+    ),
+)
+_V2_SECOND_RIDE_CROSSING_EVENT: tuple[object, ...] = (
+    6,
+    2,
+    1789898520,
+    "record_crossing",
+    '{"plate": "12", "entry_id": "12", "lap": 1, "reason": "Alice"}',
+)
+
+# A payload naming a plate no live entry holds, a payload this branch
+# itself wrote (its identity is already a key), and a pooled move's own
+# row naming both the source and the destination.
+_V2_UNKNOWN_IDENTITY_EVENT: tuple[object, ...] = (
+    3,
+    1,
+    1789898580,
+    "dnf",
+    '{"entry_id": "99", "plate": "99", "rider": false, "reason": "no show"}',
+)
+_V2_ALREADY_KEYED_EVENT: tuple[object, ...] = (
+    4,
+    1,
+    1789898640,
+    "void_card",
+    json.dumps({"entry_id": _V2_ALICE_KEY, "card": "As", "reason": "duplicate"}),
+)
+# A hand-edited payload whose identity is a number, not text: left as
+# stored, like every other value this step cannot resolve.
+_V2_NON_STRING_IDENTITY_EVENT: tuple[object, ...] = (
+    5,
+    1,
+    1789898700,
+    "record_crossing",
+    '{"entry_id": 93, "plate": "93", "reason": "hand-edited"}',
+)
+_V2_REASSIGN_EVENT: tuple[object, ...] = (
+    2,
+    1,
+    1789898520,
+    "reassign",
+    '{"seq": 1, "old_entry_id": "12", "new_entry_id": "45", "new_plate": "45", "reason": "moved"}',
+)
+
+# The two payload shapes the rewrite must decline to touch rather than
+# abort the whole file on: text that is not JSON, and JSON that is not
+# an object. ``Store.load_engine`` already reports both cleanly.
+_V2_MALFORMED_EVENT: tuple[object, ...] = (4, 1, 1789898640, "record_crossing", "not json at all")
+_V2_NON_OBJECT_EVENT: tuple[object, ...] = (5, 1, 1789898700, "record_crossing", "[]")
+
+# A second ride in the same file, copied from the first: plate numbers
+# are unique per ride, so the same number names a different entry here.
+_V2_SECOND_RIDE_ROW = """
+    INSERT INTO ride
+    SELECT 2, 'GORBA EPIC 2026 (2)', event_date, venue, course_name, lap_km,
+           organizer, scorer, logo_png, planned_start, planned_duration_s,
+           actual_start, finished_at, status, entry_mode, max_team_size,
+           plate_model, min_lap_s, deck_count, jokers_per_deck, jokers_mode,
+           max_cards, tiebreak_order, rng_seed, created_at, updated_at,
+           hold_short_laps
+      FROM ride WHERE id = 1
+    """
+
+_V2_ENTRY_INSERT_SQL = (
+    "INSERT INTO entry (id, ride_id, plate, key, display_name, type, team_size,"
+    " status, dnf_at, notes, logo_card, retired)"
+    " VALUES (?, ?, ?, ?, ?, ?, ?, 'active', NULL, '', NULL, ?)"
+)
+
+_V2_AUDIT_INSERT_SQL = (
+    "INSERT INTO audit (id, ride_id, at, action, payload_json) VALUES (?, ?, ?, ?, ?)"
+)
+
+
+def _write_v2_file(  # noqa: PLR0913 -- a file's own parts: entries, audit, extra rides
+    db_path: Path,
+    *,
+    entries: tuple[tuple[object, ...], ...],
+    audit: tuple[tuple[object, ...], ...],
+    extra_rides: tuple[str, ...] = (),
+) -> None:
+    """Write a v2 database file (arrange).
+
+    The CURRENT ``SCHEMA_STATEMENTS`` -- v3 changes no DDL, so they are
+    the v2 shape exactly -- stamped 2, then the caller's ``entry`` and
+    ``audit`` rows: the file this branch left on disk before the audit
+    rewrite, whose payloads still name entries by plate. ``ride``'s DDL
+    is unchanged since v1, so the released v1 ride row seeds ride 1,
+    with *extra_rides* adding any others.
+    """
+    conn = sqlite3.connect(str(db_path))
+    try:
+        for statement in (*SCHEMA_STATEMENTS, SCHEMA_VERSION_DDL):
+            conn.execute(statement)
+        conn.execute("INSERT INTO schema_version (id, version) VALUES (1, 2)")
+        for statement in (_V1_RIDE_ROW, *extra_rides):
+            conn.execute(statement)
+        for entry in entries:
+            conn.execute(_V2_ENTRY_INSERT_SQL, entry)
+        for audit_row in audit:
+            conn.execute(_V2_AUDIT_INSERT_SQL, audit_row)
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def test_store_open_v1_migration_rewrites_a_legacy_audit_plate_to_its_key(
+    tmp_path: Path,
+) -> None:
+    """A v1 file's plated audit identities come back as keys.
+
+    The user-visible symptom is the ride that would not reopen:
+    ``load_engine`` resolved the payload's legacy plate as a key and
+    failed on "unknown entry key: 12".
+    """
+    db_path = tmp_path / "v1.db"
+    _write_v1_file(db_path, seed=_V1_SEED)
+
+    store = Store.open(db_path)
+    try:
+        engine = store.load_engine(1)
+    finally:
+        store.close()
+
+    (alice_key,) = _read(db_path, "SELECT key FROM entry WHERE ride_id = 1 AND plate = '12'")[0]
+
+    assert (_audit_payload(db_path, 3)["entry_id"], engine.state) == (
+        alice_key,
+        RideStatus.RUNNING,
+    )
+
+
+def test_store_open_v2_file_rewrites_a_legacy_audit_plate_to_its_key(tmp_path: Path) -> None:
+    """The pre-branch user's own state: a file stamped 2 runs v2 -> v3.
+
+    No chain step can precede it on such a file, and the ride has to
+    come back replayable -- which is the whole point of the step.
+    """
+    db_path = tmp_path / "v2.db"
+    _write_v2_file(
+        db_path,
+        entries=(_V2_ALICE_ENTRY,),
+        audit=(_V2_START_EVENT, _V2_LEGACY_CROSSING_EVENT),
+    )
+
+    store = Store.open(db_path)
+    try:
+        engine = store.load_engine(1)
+    finally:
+        store.close()
+
+    assert (
+        _audit_payload(db_path, 2)["entry_id"],
+        _read(db_path, "SELECT version FROM schema_version WHERE id = 1"),
+        engine.state,
+    ) == (_V2_ALICE_KEY, [(3,)], RideStatus.RUNNING)
+
+
+def test_store_open_v2_to_v3_rewrites_only_a_plated_entry_identity(tmp_path: Path) -> None:
+    """Only the identity fields change, and only from live plates.
+
+    The operator's typed ``plate`` and ``reason`` survive verbatim, and
+    a row needing no rewrite is not written back at all -- a value
+    already holding a key, naming nothing in this ride, or not text at
+    all is left exactly as it was stored.
+    """
+    db_path = tmp_path / "v2.db"
+    _write_v2_file(
+        db_path,
+        entries=(_V2_ALICE_ENTRY,),
+        audit=(
+            _V2_START_EVENT,
+            _V2_LEGACY_CROSSING_EVENT,
+            _V2_UNKNOWN_IDENTITY_EVENT,
+            _V2_ALREADY_KEYED_EVENT,
+            _V2_NON_STRING_IDENTITY_EVENT,
+        ),
+    )
+    untouched = _read(db_path, "SELECT id, payload_json FROM audit WHERE id > 2 ORDER BY id")
+
+    Store.open(db_path).close()
+
+    payload = _audit_payload(db_path, 2)
+
+    assert (
+        payload["entry_id"],
+        payload["plate"],
+        payload["reason"],
+        _read(db_path, "SELECT id, payload_json FROM audit WHERE id > 2 ORDER BY id"),
+    ) == (_V2_ALICE_KEY, "12", "Alice", untouched)
+
+
+def test_store_open_v2_to_v3_given_a_second_open_leaves_the_audit_untouched(
+    tmp_path: Path,
+) -> None:
+    """Re-opening rewrites nothing: the rewritten rows hold keys now."""
+    db_path = tmp_path / "v2.db"
+    _write_v2_file(
+        db_path,
+        entries=(_V2_ALICE_ENTRY,),
+        audit=(_V2_START_EVENT, _V2_LEGACY_CROSSING_EVENT),
+    )
+    Store.open(db_path).close()
+    rewritten = _read(db_path, "SELECT id, payload_json FROM audit ORDER BY id")
+
+    Store.open(db_path).close()
+
+    assert (
+        _audit_payload(db_path, 2)["entry_id"],
+        _read(db_path, "SELECT id, payload_json FROM audit ORDER BY id"),
+    ) == (_V2_ALICE_KEY, rewritten)
+
+
+def test_store_open_v2_to_v3_rewrites_both_identities_in_a_reassign_payload(
+    tmp_path: Path,
+) -> None:
+    """A pooled move's old and new entry ids are rewritten together.
+
+    ``new_plate`` is the operator's typed value, not an identity, so it
+    is left alone.
+    """
+    db_path = tmp_path / "v2.db"
+    _write_v2_file(
+        db_path,
+        entries=(_V2_ALICE_ENTRY, _V2_DYNAMOS_ENTRY),
+        audit=(_V2_START_EVENT, _V2_REASSIGN_EVENT),
+    )
+
+    Store.open(db_path).close()
+
+    payload = _audit_payload(db_path, 2)
+
+    assert (
+        payload["old_entry_id"],
+        payload["new_entry_id"],
+        payload["new_plate"],
+    ) == (_V2_ALICE_KEY, _V2_DYNAMOS_KEY, "45")
+
+
+def test_store_open_v2_to_v3_resolves_each_rides_plates_separately(tmp_path: Path) -> None:
+    """Plates are unique per ride, so a rewrite is scoped by ride.
+
+    Both rides number an entry "12", and each legacy payload has to
+    come back as its own ride's key -- never the other ride's.
+    """
+    db_path = tmp_path / "v2.db"
+    _write_v2_file(
+        db_path,
+        entries=(_V2_ALICE_ENTRY, _V2_RIDE2_ALICE_ENTRY),
+        audit=(_V2_LEGACY_CROSSING_EVENT, _V2_SECOND_RIDE_CROSSING_EVENT),
+        extra_rides=(_V2_SECOND_RIDE_ROW,),
+    )
+
+    Store.open(db_path).close()
+
+    assert (
+        _audit_payload(db_path, 2)["entry_id"],
+        _audit_payload(db_path, 6)["entry_id"],
+    ) == (_V2_ALICE_KEY, _V2_RIDE2_KEY)
+
+
+def test_store_open_v2_to_v3_skips_a_malformed_payload_without_aborting(tmp_path: Path) -> None:
+    """One unusable payload neither strands the file nor is corrupted.
+
+    Both shapes are skipped and left exactly as they were written, so
+    the clean ``StoreError`` replay reports them with still fires --
+    never a migration aborted halfway through the table.
+    """
+    db_path = tmp_path / "v2.db"
+    _write_v2_file(
+        db_path,
+        entries=(_V2_ALICE_ENTRY,),
+        audit=(
+            _V2_START_EVENT,
+            _V2_MALFORMED_EVENT,
+            _V2_LEGACY_CROSSING_EVENT,
+            _V2_NON_OBJECT_EVENT,
+        ),
+    )
+
+    store = Store.open(db_path)
+    try:
+        with pytest.raises(StoreError, match=re.escape("cannot replay audit row 4 for ride 1")):
+            store.load_engine(1)
+    finally:
+        store.close()
+
+    assert (
+        _read(db_path, "SELECT id, payload_json FROM audit WHERE id > 3 ORDER BY id"),
+        _audit_payload(db_path, 2)["entry_id"],
+    ) == ([(4, "not json at all"), (5, "[]")], _V2_ALICE_KEY)
+
+
+def test_store_open_v2_to_v3_leaves_the_entry_rows_untouched(tmp_path: Path) -> None:
+    """The step rewrites audit payloads alone: no entry row changes.
+
+    v3 adds no DDL, so a v3 file's ``entry`` rows are the ones it
+    opened with, and the ledger is stamped 3 once the chain finished.
+    """
+    db_path = tmp_path / "v2.db"
+    _write_v2_file(
+        db_path,
+        entries=(_V2_ALICE_ENTRY, _V2_DYNAMOS_ENTRY),
+        audit=(_V2_START_EVENT, _V2_LEGACY_CROSSING_EVENT),
+    )
+
+    Store.open(db_path).close()
+
+    assert (
+        _read(db_path, "SELECT id, plate, key, retired FROM entry ORDER BY id"),
+        _read(db_path, "SELECT version FROM schema_version WHERE id = 1"),
+    ) == (
+        [(1, "12", _V2_ALICE_KEY, 0), (2, "45", _V2_DYNAMOS_KEY, 0)],
+        [(3,)],
+    )
+
+
+def test_store_open_v2_to_v3_leaves_a_retired_entrys_plate_unresolved(tmp_path: Path) -> None:
+    """A retired row is no identity source: only live plates map.
+
+    The plate a retired row kept may be the one the destination team
+    has since adopted, so a legacy value only a retired row could
+    explain is left exactly as stored rather than guessed at -- while
+    the same payload's live identity is rewritten as usual.
+    """
+    db_path = tmp_path / "v2.db"
+    _write_v2_file(
+        db_path,
+        entries=(_V2_RETIRED_ALICE_ENTRY, _V2_DYNAMOS_ENTRY),
+        audit=(_V2_REASSIGN_EVENT,),
+    )
+
+    Store.open(db_path).close()
+
+    payload = _audit_payload(db_path, 2)
+
+    assert (payload["old_entry_id"], payload["new_entry_id"]) == ("12", _V2_DYNAMOS_KEY)
+
+
+def test_store_open_v2_to_v3_given_a_failed_rewrite_rolls_the_file_back(
+    tmp_path: Path,
+) -> None:
+    """A rewrite the step cannot land leaves the v2 file as it was.
+
+    The trigger stands in for any write error (a full disk, a locked
+    file): the step's own BEGIN/rollback must leave the ledger and the
+    payloads exactly as the file's owner saved them.
+    """
+    db_path = tmp_path / "v2.db"
+    _write_v2_file(
+        db_path,
+        entries=(_V2_ALICE_ENTRY,),
+        audit=(_V2_LEGACY_CROSSING_EVENT,),
+    )
+    with closing(sqlite3.connect(str(db_path))) as conn:
+        conn.execute(
+            "CREATE TRIGGER audit_payload_frozen BEFORE UPDATE ON audit"
+            " BEGIN SELECT RAISE(ABORT, 'audit payload frozen'); END"
+        )
+        conn.commit()
+
+    with pytest.raises(sqlite3.IntegrityError, match=re.escape("audit payload frozen")):
+        Store.open(db_path)
+
+    assert (
+        _read(db_path, "SELECT version FROM schema_version WHERE id = 1"),
+        _audit_payload(db_path, 2)["entry_id"],
+    ) == ([(2,)], "12")
 
 
 # --------------------------------------------------------- create_ride
