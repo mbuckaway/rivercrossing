@@ -159,6 +159,21 @@ def _laps_of(engine: RideEngine) -> list[list[Crossing]]:
     return [laps[seq] for seq in sorted(laps)]
 
 
+def _race(engine: RideEngine, roster: Roster) -> list[tuple[str, str | None, datetime]]:
+    """Return *engine*'s crossings by (plate, rider plate, instant).
+
+    A crossing carries its entry's stable ``key``, and two runs over
+    two hand-built rosters mint their own -- so the two races are
+    compared by the plate the operator knows, which is what "the same
+    seed replays the same race" is about.
+    """
+    plates_by_key = {entry.key: entry.plate for entry in roster.entries}
+    return [
+        (plates_by_key[crossing.entry_id], crossing.rider_plate, crossing.crossed_at)
+        for crossing in engine.crossings
+    ]
+
+
 def _waves_of(engine: RideEngine) -> list[tuple[datetime, datetime]]:
     """Return each lap's (first, last) crossing, oldest lap first."""
     return [
@@ -784,7 +799,7 @@ def test_run_simulation_pooled_team_laps_equal_solo_laps() -> None:
 
     presenter.run_simulation(laps=12, interval_minutes=45)
 
-    laps_by_entry = {result.entry_id: result.laps for result in engine.snapshot()}
+    laps_by_entry = {result.plate: result.laps for result in engine.snapshot()}
     assert laps_by_entry[team.plate] == laps_by_entry[solo.plate] == 12
 
 
@@ -817,7 +832,7 @@ def test_run_simulation_no_derived_lap_time_is_zero() -> None:
 
     presenter.run_simulation(laps=3, interval_minutes=45)
 
-    lap_times = [seconds for entry in roster.entries for seconds in engine.lap_times(entry.plate)]
+    lap_times = [seconds for entry in roster.entries for seconds in engine.lap_times(entry.key)]
     assert len(lap_times) == 18
     assert min(lap_times) == 45 * 60.0
 
@@ -938,17 +953,15 @@ def test_run_simulation_pooled_team_rotates_its_representative_each_lap() -> Non
 
 def test_run_simulation_same_seed_replays_the_same_race() -> None:
     """One seed reproduces the crossing order and every instant."""
-    first, first_engine, _first_roster = _draft()
-    second, second_engine, _second_roster = _draft()
+    first, first_engine, first_roster = _draft()
+    second, second_engine, second_roster = _draft()
     first.generate_riders(10, 2, 4, seed=_SEED)
     second.generate_riders(10, 2, 4, seed=_SEED)
 
     first.run_simulation(laps=2, interval_minutes=45)
     second.run_simulation(laps=2, interval_minutes=45)
 
-    first_race = [(c.entry_id, c.rider_plate, c.crossed_at) for c in first_engine.crossings]
-    second_race = [(c.entry_id, c.rider_plate, c.crossed_at) for c in second_engine.crossings]
-    assert first_race == second_race
+    assert _race(first_engine, first_roster) == _race(second_engine, second_roster)
 
 
 def test_run_simulation_leaves_the_ride_running_and_stopped() -> None:
@@ -970,7 +983,7 @@ def test_run_simulation_solo_lap_times_match_the_interval() -> None:
 
     presenter.run_simulation(laps=3, interval_minutes=1)
 
-    assert engine.lap_times(solo.plate) == (60.0, 60.0, 60.0)
+    assert engine.lap_times(solo.key) == (60.0, 60.0, 60.0)
 
 
 def test_run_simulation_reuses_one_entry_order_for_every_lap() -> None:
@@ -1058,7 +1071,7 @@ def test_run_simulation_relay_records_crossings_under_the_entry_plate() -> None:
 
     assert outcome == SimOutcome(cancelled=False, recorded=4, blocked=None)
     assert sorted(crossing.entry_id for crossing in engine.crossings) == sorted(
-        entry.plate for entry in roster.entries
+        entry.key for entry in roster.entries
     )
 
 
@@ -1071,7 +1084,7 @@ def test_run_simulation_relay_team_laps_equal_solo_laps() -> None:
 
     presenter.run_simulation(laps=3, interval_minutes=1)
 
-    laps_by_entry = {result.entry_id: result.laps for result in engine.snapshot()}
+    laps_by_entry = {result.plate: result.laps for result in engine.snapshot()}
     assert laps_by_entry[team.plate] == laps_by_entry[solo.plate] == 3
 
 
@@ -1120,7 +1133,7 @@ def test_run_simulation_given_a_short_lap_rider_records_its_laps_under_the_minim
 
     outcome = presenter.run_simulation(laps=3, interval_minutes=45, short_laps=1)
 
-    assert engine.lap_times(roster.entries[0].plate) == (1050.0, 1050.0, 1050.0)
+    assert engine.lap_times(roster.entries[0].key) == (1050.0, 1050.0, 1050.0)
     assert len(engine.held_crossings()) == 3
     assert outcome == SimOutcome(cancelled=False, recorded=3, blocked=None)
 
@@ -1133,7 +1146,7 @@ def test_run_simulation_given_a_short_lap_rider_and_always_deal_credits_its_card
     presenter.run_simulation(laps=3, interval_minutes=45, short_laps=1)
 
     assert engine.held_crossings() == ()
-    assert len(engine.credited_cards(roster.entries[0].plate)) == 3
+    assert len(engine.credited_cards(roster.entries[0].key)) == 3
 
 
 def test_run_simulation_given_short_lap_riders_shortens_the_orders_leading_entries() -> None:
@@ -1152,10 +1165,10 @@ def test_run_simulation_given_short_lap_riders_shortens_the_orders_leading_entri
     presenter.run_simulation(laps=2, interval_minutes=1, short_laps=2)
 
     flagged = {held.crossing.entry_id for held in engine.held_crossings()}
-    assert flagged == {roster.entries[position].plate for position in order[:2]}
-    assert all(engine.lap_times(plate) == (30.0, 30.0) for plate in flagged)
-    others = [entry.plate for entry in roster.entries if entry.plate not in flagged]
-    assert all(engine.lap_times(plate) == (60.0, 60.0) for plate in others)
+    assert flagged == {roster.entries[position].key for position in order[:2]}
+    assert all(engine.lap_times(key) == (30.0, 30.0) for key in flagged)
+    others = [entry.key for entry in roster.entries if entry.key not in flagged]
+    assert all(engine.lap_times(key) == (60.0, 60.0) for key in others)
 
 
 def test_run_simulation_without_short_lap_riders_flags_nothing() -> None:
@@ -1188,7 +1201,7 @@ def test_run_simulation_given_a_lapped_rider_skips_only_the_first_wave() -> None
 
     presenter.run_simulation(laps=3, interval_minutes=45, lapped=1)
 
-    instants = [c.crossed_at for c in engine.crossings if c.entry_id == behind.plate]
+    instants = [c.crossed_at for c in engine.crossings if c.entry_id == behind.key]
     assert instants == [
         _actual_start_of(engine) + timedelta(minutes=90),
         _actual_start_of(engine) + timedelta(minutes=135),
@@ -1234,7 +1247,7 @@ def test_run_simulation_given_a_stopped_team_rider_never_records_it_after_lap_fo
 
     presenter.run_simulation(laps=8, interval_minutes=1, team_stop=1)
 
-    laps_by_entry = {result.entry_id: result.laps for result in engine.snapshot()}
+    laps_by_entry = {result.plate: result.laps for result in engine.snapshot()}
     stopped = team.riders[0].plate
     after_four = {crossing.rider_plate for crossing in engine.crossings[4:]}
     assert laps_by_entry[team.plate] == 8
@@ -1280,22 +1293,20 @@ def test_run_simulation_given_a_relay_ride_keeps_team_stop_a_no_op() -> None:
 
     presenter.run_simulation(laps=8, interval_minutes=1, team_stop=1)
 
-    assert [crossing.entry_id for crossing in engine.crossings] == [roster.entries[0].plate] * 8
+    assert [crossing.entry_id for crossing in engine.crossings] == [roster.entries[0].key] * 8
 
 
 def test_run_simulation_given_every_behaviour_and_one_seed_replays_the_same_race() -> None:
     """T-7: one seed reproduces a run with all three behaviours."""
-    first, first_engine, _first_roster = _draft(min_lap_s=1080)
-    second, second_engine, _second_roster = _draft(min_lap_s=1080)
+    first, first_engine, first_roster = _draft(min_lap_s=1080)
+    second, second_engine, second_roster = _draft(min_lap_s=1080)
     first.generate_riders(10, 2, 4, seed=_SEED)
     second.generate_riders(10, 2, 4, seed=_SEED)
 
     first.run_simulation(laps=8, interval_minutes=45, short_laps=2, lapped=1, team_stop=2)
     second.run_simulation(laps=8, interval_minutes=45, short_laps=2, lapped=1, team_stop=2)
 
-    first_race = [(c.entry_id, c.rider_plate, c.crossed_at) for c in first_engine.crossings]
-    second_race = [(c.entry_id, c.rider_plate, c.crossed_at) for c in second_engine.crossings]
-    assert first_race == second_race
+    assert _race(first_engine, first_roster) == _race(second_engine, second_roster)
 
 
 def test_run_simulation_given_a_lapped_rider_skips_the_orders_leading_entry() -> None:
@@ -1306,7 +1317,7 @@ def test_run_simulation_given_a_lapped_rider_skips_the_orders_leading_entry() ->
 
     outcome = presenter.run_simulation(laps=3, interval_minutes=45, lapped=1)
 
-    laps_by_entry = {result.entry_id: result.laps for result in engine.snapshot()}
+    laps_by_entry = {result.plate: result.laps for result in engine.snapshot()}
     assert laps_by_entry[behind.plate] == 2
     assert outcome.recorded == 17
 

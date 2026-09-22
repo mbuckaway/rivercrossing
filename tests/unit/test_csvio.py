@@ -10,10 +10,13 @@ ignored, and every data row is one RIDER. ``preview`` reports every
 conflict found without writing anything -- to the filesystem or to the
 target roster -- and ``commit`` applies a conflict-free preview through
 the roster's own mutators, so every change is audit-logged and subject
-to the ride's lock matrix (DRAFT reshapes freely; once started, relay
-keeps its permanent composition lock while pooled keeps team-to-team
-moves and a brand-new plate joining an existing team open through
-RUNNING/REOPENED; only solo<->team *conversions* stay DRAFT-only).
+to the ride's lock matrix: DRAFT reshapes freely, while once started
+relay keeps its permanent composition lock and *every* pooled
+membership reshape -- team-to-team, team<->solo, a brand-new plate
+landing on an existing team -- waits for DRAFT. The Rider Editor is
+the live (Stop/Reopen-gated) move surface, because its move
+re-attributes the rider's crossings and cards; a CSV reshape would
+move membership alone.
 
 The unified contract under test:
 
@@ -94,7 +97,7 @@ FIXTURES = Path(__file__).resolve().parent / "fixtures" / "csv"
 _HEADER_PROBLEM = "missing or malformed header: no first or last name column"
 _MISSING_NAME_PROBLEM = "missing name"
 _STRUCTURAL_PROBLEM = "only new plates or name fixes are allowed"
-_MOVE_NOT_ALLOWED_PROBLEM = "team change requires DRAFT, RUNNING or REOPENED"
+_POOLED_MEMBERSHIP_LOCKED_PROBLEM = "a team membership change requires DRAFT"
 _TEAM_TO_SOLO_LOCKED_PROBLEM = "converting a team member to a solo entry requires DRAFT"
 _SOLO_TO_TEAM_LOCKED_PROBLEM = "converting a solo rider into a team member requires DRAFT"
 _NON_DIGIT_PLATE_PROBLEM = "plate '77A' must be a whole number"
@@ -1818,6 +1821,15 @@ def _seed_wolves_and_falcons(roster: Roster) -> None:
     )
 
 
+def _team_riders(roster: Roster) -> list[tuple[str, list[str]]]:
+    """Return each team's name and rider names, in roster order."""
+    return [
+        (entry.display_name, [rider.full_name for rider in entry.riders])
+        for entry in roster.entries
+        if entry.type is EntryType.TEAM
+    ]
+
+
 def _bo_moves_to_falcons_file(tmp_path: Path) -> Path:
     """Write the re-import file moving Bo(2) from Wolves to Falcons."""
     return _unified_file(
@@ -1894,29 +1906,44 @@ def test_commit_pooled_team_move_also_updates_the_targets_notes(tmp_path: Path) 
     assert (falcons.notes, report.moved_count, report.updated_count) == ("flat tire", 1, 1)
 
 
-def test_preview_pooled_moved_rider_while_running_is_not_a_conflict(
-    tmp_path: Path,
+@pytest.mark.parametrize("status", [RideStatus.RUNNING, RideStatus.REOPENED])
+def test_preview_pooled_moved_rider_after_the_start_is_a_conflict(
+    tmp_path: Path, status: RideStatus
 ) -> None:
-    """The same move previews clean once RUNNING (spec S7:171)."""
+    """A team-to-team pooled reshape waits for DRAFT.
+
+    Regression: the rider's recorded crossings stay keyed to the entry
+    they were recorded under, so a CSV re-import that moved membership
+    alone would strand them. The CSV surface reports the reshape as a
+    conflict instead -- which is what leaves Import disabled -- while
+    the Rider Editor's Stop/Reopen-gated move stays the live surface.
+    """
     roster = _pooled_roster()
     _seed_wolves_and_falcons(roster)
-    roster.status = RideStatus.RUNNING
+    roster.status = status
 
     result = preview(_bo_moves_to_falcons_file(tmp_path), roster)
 
-    assert result.conflicts == ()
+    assert result.conflicts == (
+        ImportConflict(row=3, problem=f"{_POOLED_MEMBERSHIP_LOCKED_PROBLEM} (ride is {status})"),
+    )
 
 
-def test_commit_pooled_moved_rider_while_running_succeeds(tmp_path: Path) -> None:
-    """commit() applies the RUNNING move exactly like a DRAFT one."""
+@pytest.mark.parametrize("status", [RideStatus.RUNNING, RideStatus.REOPENED])
+def test_commit_pooled_moved_rider_after_the_start_leaves_the_membership_alone(
+    tmp_path: Path, status: RideStatus
+) -> None:
+    """commit() refuses the started-ride move, unmutated (R-17)."""
     roster = _pooled_roster()
     _seed_wolves_and_falcons(roster)
-    roster.status = RideStatus.RUNNING
+    roster.status = status
     result = preview(_bo_moves_to_falcons_file(tmp_path), roster)
+    before = _team_riders(roster)
 
-    report = commit(result)
+    with pytest.raises(ImportConflictsPresentError, match=re.escape("1 conflict")):
+        commit(result)
 
-    assert report.moved_count == 1
+    assert _team_riders(roster) == before
 
 
 def test_preview_pooled_moved_rider_while_finished_is_a_conflict(tmp_path: Path) -> None:
@@ -1927,8 +1954,23 @@ def test_preview_pooled_moved_rider_while_finished_is_a_conflict(tmp_path: Path)
 
     result = preview(_bo_moves_to_falcons_file(tmp_path), roster)
 
-    assert len(result.conflicts) == 1
-    assert _MOVE_NOT_ALLOWED_PROBLEM in result.conflicts[0].problem
+    assert result.conflicts == (
+        ImportConflict(
+            row=3, problem=f"{_POOLED_MEMBERSHIP_LOCKED_PROBLEM} (ride is {RideStatus.FINISHED})"
+        ),
+    )
+
+
+@given(status=st.sampled_from(list(RideStatus)))
+@settings(max_examples=25, deadline=None)
+def test_pooled_move_problem_names_draft_and_the_status_always(status: RideStatus) -> None:
+    """Every status's refusal names DRAFT and that status (T-7).
+
+    The old text promised the reshape was allowed while RUNNING or
+    REOPENED; the DRAFT-only contract makes the tail identical for
+    every ride state, so no status can quietly re-open the door.
+    """
+    assert csvio._pooled_move_problem(status).endswith(f"requires DRAFT (ride is {status})")
 
 
 # ------------------------------------- pooled reshape via re-import
@@ -2085,31 +2127,42 @@ def test_preview_pooled_new_rider_joining_an_existing_team_is_not_a_conflict_in_
     assert result.conflicts == ()
 
 
-def test_preview_pooled_new_rider_joining_an_existing_team_while_running_is_not_a_conflict(
-    tmp_path: Path,
+@pytest.mark.parametrize("status", [RideStatus.RUNNING, RideStatus.REOPENED])
+def test_preview_pooled_new_rider_joining_an_existing_team_after_the_start_conflicts(
+    tmp_path: Path, status: RideStatus
 ) -> None:
-    """RUNNING keeps this open too (add_rider_to_team's carve-out)."""
+    """A brand-new plate on an existing team waits for DRAFT too.
+
+    Same reason as the team-to-team move: the reshape is membership
+    alone on this surface, so it is DRAFT-only rather than the Rider
+    Editor's live, Stop/Reopen-gated join.
+    """
     roster = _pooled_roster()
     _falcons_of_two(roster)
-    roster.status = RideStatus.RUNNING
+    roster.status = status
 
     result = preview(_fay_joins_falcons_file(tmp_path), roster)
 
-    assert result.conflicts == ()
+    assert result.conflicts == (
+        ImportConflict(row=4, problem=f"{_POOLED_MEMBERSHIP_LOCKED_PROBLEM} (ride is {status})"),
+    )
 
 
 def test_preview_pooled_new_rider_joining_an_existing_team_while_finished_conflicts(
     tmp_path: Path,
 ) -> None:
-    """FINISHED closes this door too (can_move_rider is False here)."""
+    """FINISHED closes this door too (every reshape is DRAFT-only)."""
     roster = _pooled_roster()
     _falcons_of_two(roster)
     roster.status = RideStatus.FINISHED
 
     result = preview(_fay_joins_falcons_file(tmp_path), roster)
 
-    assert len(result.conflicts) == 1
-    assert _MOVE_NOT_ALLOWED_PROBLEM in result.conflicts[0].problem
+    assert result.conflicts == (
+        ImportConflict(
+            row=4, problem=f"{_POOLED_MEMBERSHIP_LOCKED_PROBLEM} (ride is {RideStatus.FINISHED})"
+        ),
+    )
 
 
 def test_commit_pooled_new_rider_joining_an_existing_team_in_draft(
@@ -2129,18 +2182,21 @@ def test_commit_pooled_new_rider_joining_an_existing_team_in_draft(
     )
 
 
-def test_commit_pooled_new_rider_joining_an_existing_team_while_running(
-    tmp_path: Path,
+@pytest.mark.parametrize("status", [RideStatus.RUNNING, RideStatus.REOPENED])
+def test_commit_pooled_new_rider_joining_an_existing_team_after_the_start_refuses(
+    tmp_path: Path, status: RideStatus
 ) -> None:
-    """The same join applies while RUNNING too."""
+    """The started-ride join commits nothing; the roster stays put."""
     roster = _pooled_roster()
     _falcons_of_two(roster)
-    roster.status = RideStatus.RUNNING
+    roster.status = status
     result = preview(_fay_joins_falcons_file(tmp_path), roster)
+    before = _team_riders(roster)
 
-    report = commit(result)
+    with pytest.raises(ImportConflictsPresentError, match=re.escape("1 conflict")):
+        commit(result)
 
-    assert report.joined_count == 1
+    assert _team_riders(roster) == before
 
 
 def _alex_joins_falcons_file(tmp_path: Path) -> Path:
@@ -2171,7 +2227,7 @@ def test_preview_pooled_solo_rider_joining_an_existing_team_is_not_a_conflict_in
 def test_preview_pooled_solo_rider_joining_an_existing_team_while_running_conflicts(
     tmp_path: Path,
 ) -> None:
-    """RUNNING refuses the solo->team conversion (the carve-out)."""
+    """RUNNING refuses the solo->team conversion (DRAFT-only)."""
     roster = _pooled_roster()
     roster.create_solo_entry(first_name="Alex", last_name="", plate="1")
     _falcons_of_two(roster)

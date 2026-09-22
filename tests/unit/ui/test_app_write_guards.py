@@ -1038,8 +1038,8 @@ def test_open_rider_editor_for_close_with_changes_saves_the_roster(
     monkeypatch.setattr(
         rider_editor,
         "RiderEditor",
-        # the SUT calls roster=; the stub ignores it
-        lambda _window, *, roster: changed_view,  # noqa: ARG005
+        # the SUT calls roster= and engine=; the stub ignores both
+        lambda _window, *, roster, engine: changed_view,  # noqa: ARG005
     )
     monkeypatch.setattr(app_module.zoom, "apply_to", lambda _window: None)
     monkeypatch.setattr(app_module, "_apply_dialog_defaults", lambda _w, _route: None)
@@ -1066,8 +1066,8 @@ def test_open_rider_editor_for_close_without_changes_skips_the_save(
     monkeypatch.setattr(
         rider_editor,
         "RiderEditor",
-        # the SUT calls roster=; the stub ignores it
-        lambda _window, *, roster: _EditorViewStub(  # noqa: ARG005
+        # the SUT calls roster= and engine=; the stub ignores both
+        lambda _window, *, roster, engine: _EditorViewStub(  # noqa: ARG005
             roster_changed=False
         ),
     )
@@ -1559,6 +1559,91 @@ def test_persist_simulator_changes_without_a_presenter_leaves_the_menu_untouched
     assert menubar.enabled(ids.MI_FINISH_RIDE) is None
     assert menubar.enabled(ids.MI_STOP_RIDE) is None
     assert menubar.enabled(ids.MI_UNDO_CROSSING) is None
+
+
+# ------- the rider editor's close re-applies the live menu + console
+#
+# E3.1.2: a committed team change on a live ride goes through the
+# engine's own pooled move, which re-attributes the rider's laps and
+# cards -- a change no roster edit alone signals to the console. Rather
+# than a ride-state change, the editor's close-persist mirrors the
+# simulator's: it re-applies the menubar from the live engine and
+# refreshes the console, so the re-credited field is what the operator
+# sees the moment the modal is gone. The tests below stage the app's own
+# shape headless (real store, store-replayed engine, a real console
+# presenter) and drive the close-persist the route runs.
+
+
+class _LiveRide(NamedTuple):
+    """One staged open ride: the context, its store, ride id and bar."""
+
+    context: app_module._RouteContext
+    store: Store
+    ride_id: int
+    menubar: _FakeMenuBar
+
+
+@pytest.fixture
+def live_ride(tmp_path: Path) -> Iterator[_LiveRide]:
+    """Stage a store-backed DRAFT ride with a live console presenter.
+
+    The library Open's own wiring, headless: a ride row is created over
+    a real store and its console presenter is threaded over the
+    store-replayed engine, so the editor's close-persist has the live
+    engine the app's own console holds.
+    """
+    from conftest import gorba_config  # noqa: PLC0415 -- the shared live-config fixture
+
+    store = Store.open(tmp_path / "rides.db")
+    try:
+        ride_id = store.create_ride(gorba_config())
+        roster = store.roster_for(ride_id)
+        engine = store.load_engine(ride_id, roster)
+        menubar = _FakeMenuBar()
+        context = _context(store=store, frame=_MenuFrame(menubar))
+        context.roster = roster
+        context.active_ride_id = ride_id
+        context.presenter = ConsolePresenter(
+            _ConsoleViewStub(), engine=engine, source=EngineDataSource(engine, roster)
+        )
+        yield _LiveRide(context=context, store=store, ride_id=ride_id, menubar=menubar)
+    finally:
+        store.close()
+
+
+def test_persist_rider_editor_changes_given_a_live_engine_re_applies_the_menu(
+    live_ride: _LiveRide,
+) -> None:
+    """The editor's close re-applies §15 enablement from the engine."""
+    context, _store, _ride_id, menubar = live_ride
+
+    app_module._persist_rider_editor_changes(context, _EditorViewStub(roster_changed=True))
+
+    assert menubar.enabled(ids.MI_FINISH_RIDE) is False
+
+
+def test_persist_rider_editor_changes_given_a_live_engine_renders_the_console(
+    live_ride: _LiveRide,
+) -> None:
+    """The editor's close refreshes the console's own render too."""
+    context, _store, _ride_id, _menubar = live_ride
+    view = context.presenter.view  # type: ignore[union-attr] -- the fixture threads one
+
+    app_module._persist_rider_editor_changes(context, _EditorViewStub(roster_changed=True))
+
+    assert (view.last_state, view.entry_locked) == (RideStatus.DRAFT, True)
+
+
+def test_persist_rider_editor_changes_given_no_presenter_leaves_the_menu_untouched(
+    live_ride: _LiveRide,
+) -> None:
+    """T-3: no live engine means no menu re-apply, store save or not."""
+    context, _store, _ride_id, menubar = live_ride
+    context.presenter = None
+
+    app_module._persist_rider_editor_changes(context, _EditorViewStub(roster_changed=True))
+
+    assert menubar.enabled(ids.MI_FINISH_RIDE) is None
 
 
 # ------------- plan §8: roster plate changes reach the audit table

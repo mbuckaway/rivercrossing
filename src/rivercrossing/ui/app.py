@@ -1645,13 +1645,20 @@ def _decorate_rider_editor(context: _RouteContext, window: Any) -> Any:  # noqa:
     E5.4.2: the roster is the store's when a store-backed ride is open
     (E5.4.1's library Open replaced ``context.roster``), and the empty
     bootstrap roster otherwise -- the editor shows a correct empty
-    state until a real ride is opened. W7 returns the built view:
-    :func:`_open_target` persists this editor's changes once its modal
-    ends (the only route that needs the view after decoration).
+    state until a real ride is opened. E3.1.2 threads the live
+    console's engine (when there is one) so the Edit dialog can route a
+    live team change through the engine's pooled move. W7 returns the
+    built view: :func:`_open_target` persists this editor's changes
+    once its modal ends (the only route that needs the view after
+    decoration).
     """
     from rivercrossing.ui.views.rider_editor import RiderEditor  # noqa: PLC0415 -- deferred
 
-    return RiderEditor(window, roster=context.roster)
+    return RiderEditor(
+        window,
+        roster=context.roster,
+        engine=context.presenter.engine if context.presenter is not None else None,
+    )
 
 
 # wx ships no stubs; the built view is returned
@@ -2337,6 +2344,7 @@ def _write_export(  # noqa: PLR0913, PLR0917
             path,
             logo_path=config.logo_path,
             self_test_unverified=self_test_unverified,
+            all_cards=opts.all_cards,
         )
     elif target == "export_poster_html":
         # The poster page is the PDF poster's HTML sibling: the same
@@ -3228,6 +3236,14 @@ def _persist_rider_editor_changes(context: _RouteContext, view: Any) -> None:  #
     through :func:`_persist_roster_audit`, so the Audit Trail dialog
     shows it on the next open.
 
+    E3.1.2 adds the console refresh on a saved roster, mirroring
+    :func:`_persist_simulator_changes`: a committed team change on a
+    live ride goes through the engine's own pooled move, so the
+    crossing feed, counters, standings and Needs Review list all
+    recalculate from data the roster alone never touches -- no
+    ride-state change fires for the editor's modal, so a live console
+    would otherwise keep its pre-edit render until the next tick.
+
     Args:
         context: The route context whose store/roster to act on.
         view: The closed ``RiderEditor`` (or a presenter-shaped
@@ -3246,6 +3262,10 @@ def _persist_rider_editor_changes(context: _RouteContext, view: Any) -> None:  #
         context.frame.SetStatusText(f"Could not save riders: {exc}")
         return
     _persist_roster_audit(context, store, context.active_ride_id, context.roster)
+    presenter = context.presenter
+    if presenter is not None:
+        _apply_menu_state(context, presenter.engine.state)
+        presenter.refresh_state()
 
 
 def _persist_team_editor_changes(context: _RouteContext, view: Any) -> None:  # noqa: ANN401
@@ -3389,7 +3409,9 @@ def _open_rider_editor_for(context: _RouteContext, plate: str) -> None:
     path's two gaps against the menu route: it now applies the
     recorded dialog defaults (``_apply_dialog_defaults`` -- the menu
     route always had them) and persists the roster when the editor
-    closes with changes (:func:`_persist_rider_editor_changes`). The
+    closes with changes (:func:`_persist_rider_editor_changes`). E3.1.2
+    threads the live console's engine here too, so an edit opened from
+    the console's own Riders tab can make a pooled live move. The
     dialog path mirrors :func:`_open_target`'s own: zoom applied
     before decoration, shown through ``dialogs.run_dialog``,
     destroyed in a ``finally`` (Fault A: a decoration raise must not
@@ -3416,7 +3438,11 @@ def _open_rider_editor_for(context: _RouteContext, plate: str) -> None:
     view = None
     try:
         zoom.apply_to(window)
-        view = RiderEditor(window, roster=context.roster)
+        view = RiderEditor(
+            window,
+            roster=context.roster,
+            engine=context.presenter.engine if context.presenter is not None else None,
+        )
         _apply_dialog_defaults(window, commands.route_for_id("mi_rider_editor"))
         view.select_rider_by_plate(plate)
         dialogs.run_dialog(window, opener=context.frame)
@@ -3453,6 +3479,22 @@ _HELD_VOID_LABEL = "Void card"
 _HELD_CANCEL_LABEL = "Cancel"
 
 
+def _plate_label(crossing: Crossing, roster: Roster) -> str:
+    """Return the plate *crossing* renders as, never its stable key.
+
+    ``Crossing.entry_id`` is the entry's own
+    :attr:`~rivercrossing.roster.Entry.key` (E3.1.2's pooled-live-move
+    seam), so every display or status line renders the plate the
+    operator typed (J1), or the entry's own when the crossing carries
+    none. An entry that has left the roster leaves no plate to show, so
+    the cell reads blank rather than the uuid.
+    """
+    if crossing.rider_plate:
+        return crossing.rider_plate
+    entry = roster.entry_by_key(crossing.entry_id)
+    return entry.plate if entry is not None else ""
+
+
 def _held_card_facts(engine: RideEngine, crossing: Crossing, roster: Roster) -> str:
     """Return the summary line the held-card review confirms carry.
 
@@ -3460,16 +3502,20 @@ def _held_card_facts(engine: RideEngine, crossing: Crossing, roster: Roster) -> 
     question carries the entry, the plate, the lap, that lap's time and
     the card awaiting disposition. A crossing whose lap is past the
     entry's recorded times (a stale row) renders the zero duration; a
-    crossing the hold queue no longer carries renders ``no card``.
+    crossing the hold queue no longer carries renders ``no card``. The
+    entry is resolved by the crossing's stable key, and the line names
+    its display name and plate (``_plate_label``) -- never the uuid; an
+    entry that has left the roster falls back to the plate the operator
+    typed.
     """
-    entry = roster.resolve_plate(crossing.entry_id)
-    name = entry.display_name if entry is not None else crossing.entry_id
+    entry = roster.entry_by_key(crossing.entry_id)
+    name = entry.display_name if entry is not None else _plate_label(crossing, roster)
     times = engine.lap_times(crossing.entry_id)
     lap_time = times[crossing.seq - 1] if crossing.seq <= len(times) else 0.0
     card = engine.held_card_for(crossing)
     card_text = card.code() if card is not None else "no card"
     return (
-        f"{name} · plate {crossing.rider_plate or crossing.entry_id} · "
+        f"{name} · plate {_plate_label(crossing, roster)} · "
         f"Lap {crossing.seq} · {format_duration(lap_time)} · {card_text}"
     )
 
@@ -3489,7 +3535,7 @@ def _review_held_crossing(context: _RouteContext, engine: RideEngine, crossing: 
     from rivercrossing.ui import std_dialogs  # noqa: PLC0415 -- deferred, see module docstring
 
     facts = _held_card_facts(engine, crossing, context.roster)
-    plate = crossing.rider_plate or crossing.entry_id
+    plate = _plate_label(crossing, context.roster)
     choice = std_dialogs.show_three_choice(
         context.frame,
         _HELD_REVIEW_TITLE,
@@ -3524,7 +3570,7 @@ def _return_to_held_confirm(
     from rivercrossing.ui import std_dialogs  # noqa: PLC0415 -- deferred, see module docstring
 
     facts = _held_card_facts(engine, crossing, context.roster)
-    plate = crossing.rider_plate or crossing.entry_id
+    plate = _plate_label(crossing, context.roster)
     returned = std_dialogs.show_prompt(
         context.frame,
         "Return Card to Held",
@@ -3540,6 +3586,7 @@ def _return_to_held_confirm(
 def _flagged_crossing_for(  # noqa: PLR0913, PLR0917 -- the seam's own (plate, held) pair
     source: DataSource,
     engine: RideEngine,
+    roster: Roster,
     plate: str,
     held: bool,  # noqa: FBT001 -- the seam's flag travels positionally
 ) -> Crossing | None:
@@ -3552,9 +3599,10 @@ def _flagged_crossing_for(  # noqa: PLR0913, PLR0917 -- the seam's own (plate, h
     pair's own half of the engine -- the hold queue for a held row,
     every recorded crossing for a credited one (a duplicate is credited
     unless its own short lap held it, exactly like any other lap).
-    Both halves use the feed's own identity, ``crossing.rider_plate or
-    crossing.entry_id``. ``None`` is a stale row: nothing in the feed
-    matches the activated pair.
+    Both halves use the feed's own display plate,
+    :func:`_plate_label` -- the plate the operator typed, or the
+    entry's own -- never the crossing's stable key. ``None`` is a stale
+    row: nothing in the feed matches the activated pair.
     """
     row = next(
         (
@@ -3578,7 +3626,7 @@ def _flagged_crossing_for(  # noqa: PLR0913, PLR0917 -- the seam's own (plate, h
         (
             crossing
             for crossing in candidates
-            if (crossing.rider_plate or crossing.entry_id) == plate and crossing.seq == row.lap
+            if _plate_label(crossing, roster) == plate and crossing.seq == row.lap
         ),
         None,
     )
@@ -3608,7 +3656,9 @@ def _open_flagged_review_for(  # noqa: PLR0913, PLR0917
     if presenter is None:
         return
     engine = presenter.engine
-    crossing = _flagged_crossing_for(presenter.source, engine, plate, card_status == "held")
+    crossing = _flagged_crossing_for(
+        presenter.source, engine, context.roster, plate, card_status == "held"
+    )
     if crossing is None:
         context.frame.SetStatusText(f"Review — no crossing found for plate {plate}")
         return
@@ -3847,7 +3897,7 @@ def _edit_plate_crossing_for(context: _RouteContext, row: int) -> None:
     new_plate = run_plate_dialog(
         context.resource,
         opener=context.frame,
-        plate=target.rider_plate or target.entry_id,
+        plate=_plate_label(target, context.roster),
     )
     if new_plate is None:
         return
@@ -5380,9 +5430,10 @@ def main(db_path: Path | None = None) -> int:
         app.MainLoop()
     except SchemaVersionMismatchError as exc:
         # A version mismatch is an expected condition, not a crash: the
-        # database was written by a different build. Tell the operator
-        # the way out (rename or delete the file) and exit without
-        # re-raising, so the crash excepthook files no exception.
+        # database was written by a NEWER build (an older one is
+        # migrated in place on open). Tell the operator the way out
+        # (rename or delete the file) and exit without re-raising, so
+        # the crash excepthook files no exception.
         from rivercrossing.ui import std_dialogs  # noqa: PLC0415 -- deferred, see module docstring
 
         std_dialogs.show_error(None, "Database Mismatch", str(exc))

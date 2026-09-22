@@ -76,6 +76,8 @@ def _engine(plate: str = "12") -> RideEngine:
 
 def test_wire_store_append_persists_the_crossing_to_the_fake_store() -> None:
     """A recorded crossing appends exactly (ride_id, event)."""
+    from conftest import entry_key  # noqa: PLC0415 -- the shared key helper
+
     store = _FakeStore()
     engine = _engine()
     engine.start()
@@ -91,7 +93,7 @@ def test_wire_store_append_persists_the_crossing_to_the_fake_store() -> None:
                 action="record_crossing",
                 payload={
                     "plate": "12",
-                    "entry_id": "12",
+                    "entry_id": entry_key(engine._roster, "12"),
                     "lap": 1,
                     "crossed_at": "2026-09-20T10:01:00",
                     "reason": "Rider 12 · solo",

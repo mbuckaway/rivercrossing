@@ -16,7 +16,7 @@ import json
 from datetime import date, datetime
 from typing import TYPE_CHECKING
 
-from rivercrossing.ride import RideConfig
+from rivercrossing.ride import RideConfig, RideEngine
 from rivercrossing.roster import EntryMode, PlateModel, Rider, Roster
 
 if TYPE_CHECKING:
@@ -80,3 +80,32 @@ def _pooled_team_roster() -> Roster:
         riders=[Rider(first_name="Sarah", plate="45"), Rider(first_name="Priya", plate="9")],
     )
     return roster
+
+
+def entry_key(roster: Roster, plate: str) -> str:
+    """Return the stable key of the entry *plate* resolves to (arrange).
+
+    The engine files its crossings, laps and credited hands under
+    ``Entry.key`` -- the stable identity a re-plating cannot move
+    (E3.1.2's pooled-live-move seam) -- while these tests name entries
+    by the plate the operator types. This is the bridge between the
+    two, for the calls that take an entry id (``lap_times``,
+    ``credited_cards``) and the payloads that now carry one.
+    """
+    entry = roster.resolve_plate(plate)
+    assert entry is not None
+    return entry.key
+
+
+def restore_entry_keys(replay: RideEngine, source: RideEngine) -> None:
+    """Give *replay*'s roster *source*'s entry keys (arrange).
+
+    ``Store.load_engine`` rebuilds a roster from the persisted ``entry``
+    rows, so the replayed entries come back under the very keys the
+    recorded events were filed under. Two hand-built rosters mint their
+    own keys, so a replay-equivalence test that models the store has to
+    restore them explicitly -- exactly what
+    ``Store.save_roster``/``_load_roster`` round-trip.
+    """
+    for restored, live in zip(replay._roster.entries, source._roster.entries, strict=True):
+        restored.key = live.key

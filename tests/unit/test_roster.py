@@ -27,6 +27,17 @@ size-1 team is now allowed in DRAFT (the 2..max floor moves to
 check, not a construction invariant); moving a team's last rider
 elsewhere dissolves the now-empty entry; and plates become editable
 in DRAFT for a solo entry or a pooled rider (spec S3:46).
+
+The pooled-live-move phase extends R-17's carve-out to the roster's
+own membership primitives: ``move_rider`` accepts a SOLO source (one
+audited move, the emptied solo entry dissolving), and
+``extract_rider_to_solo`` is gated by
+:func:`~rivercrossing.roster.can_move_rider` like a move is, so a
+pooled team member may leave for solo while the ride is RUNNING or
+REOPENED. A dissolve that empties an entry carrying recorded data
+*retires* it instead of discarding it (``retired_entries``), so the
+key a replayed crossing row names stays resolvable after a reload;
+the suite pins both halves of that rule.
 """
 
 import re
@@ -896,6 +907,28 @@ def test_move_rider_into_a_size_one_team_grows_it_to_two() -> None:
     assert team_c.team_size == 2
 
 
+def test_move_rider_filling_a_destination_to_max_team_size_succeeds() -> None:
+    """T-4: a destination landing exactly on max is admitted."""
+    roster = Roster(entry_mode=EntryMode.MIXED, max_team_size=4)
+    alex = Rider(first_name="Alex", last_name="", plate="1")
+    roster.create_team_entry(
+        display_name="Team A",
+        riders=[alex, Rider(first_name="Bo", last_name="", plate="2")],
+    )
+    team_b = roster.create_team_entry(
+        display_name="Team B",
+        riders=[
+            Rider(first_name="Cy", last_name="", plate="3"),
+            Rider(first_name="Do", last_name="", plate="4"),
+            Rider(first_name="El", last_name="", plate="5"),
+        ],
+    )
+
+    roster.move_rider(alex, to_entry=team_b)
+
+    assert team_b.team_size == 4
+
+
 def test_move_rider_exceeding_destination_team_max_raises_invalid_move_error() -> None:
     """Moving a rider onto a team already at max_team_size raises."""
     roster = Roster(entry_mode=EntryMode.MIXED, max_team_size=4)
@@ -951,8 +984,13 @@ def test_move_rider_unknown_destination_entry_raises_entry_not_found_error() -> 
         roster.move_rider(alex, to_entry=foreign)
 
 
-def test_move_rider_out_of_a_solo_entry_raises_invalid_move_error() -> None:
-    """move_rider on a solo rider raises (solo is 1 rider)."""
+def test_move_rider_out_of_a_solo_entry_onto_a_team_moves_the_rider() -> None:
+    """A solo source is a legal move: its rider joins the team.
+
+    The rider carries their own plate onto the destination, which
+    recomputes its pooled plate from all its members (S1); the
+    emptied solo entry dissolves (spec S2).
+    """
     roster = Roster(entry_mode=EntryMode.MIXED)
     solo = roster.create_solo_entry(first_name="Alex", last_name="", plate="1")
     team_b = roster.create_team_entry(
@@ -963,12 +1001,77 @@ def test_move_rider_out_of_a_solo_entry_raises_invalid_move_error() -> None:
         ],
     )
 
-    with pytest.raises(InvalidMoveError, match=re.escape("team entries")):
-        roster.move_rider(solo.riders[0], to_entry=team_b)
+    roster.move_rider(solo.riders[0], to_entry=team_b)
+
+    assert [rider.plate for rider in team_b.riders] == ["3", "4", "1"]
+    assert (team_b.plate, solo in roster.entries) == ("1", False)
+
+
+def test_move_rider_out_of_a_solo_entry_audits_the_move_then_the_dissolve() -> None:
+    """Solo->team is one audited move, then a ``dissolve_entry``.
+
+    The dissolved entry is a SOLO one, so its audit action must not
+    claim a team dissolved.
+    """
+    roster = Roster(entry_mode=EntryMode.MIXED)
+    solo = roster.create_solo_entry(first_name="Alex", last_name="", plate="9")
+    team_b = roster.create_team_entry(
+        display_name="Team B",
+        riders=[
+            Rider(first_name="Cy", last_name="", plate="3"),
+            Rider(first_name="Do", last_name="", plate="4"),
+        ],
+    )
+
+    roster.move_rider(solo.riders[0], to_entry=team_b)
+
+    assert roster.audit_log[-2:] == (
+        AuditEvent(
+            action="move_rider",
+            payload={"rider_name": "Alex", "from_plate": "9", "to_plate": "3"},
+        ),
+        AuditEvent(action="dissolve_entry", payload={"plate": "9", "display_name": "Alex"}),
+    )
+
+
+def test_move_rider_out_of_a_solo_entry_on_a_running_pooled_ride_succeeds() -> None:
+    """A solo source rides the same R-17 carve-out as a team source."""
+    roster = Roster(entry_mode=EntryMode.MIXED, plate_model=PlateModel.RIDER_POOLED)
+    solo = roster.create_solo_entry(first_name="Alex", last_name="", plate="1")
+    team_b = roster.create_team_entry(
+        display_name="Team B",
+        riders=[
+            Rider(first_name="Cy", last_name="", plate="3"),
+            Rider(first_name="Do", last_name="", plate="4"),
+        ],
+    )
+    roster.status = RideStatus.RUNNING
+
+    roster.move_rider(solo.riders[0], to_entry=team_b)
+
+    assert [rider.plate for rider in team_b.riders] == ["3", "4", "1"]
+
+
+def test_move_rider_out_of_a_solo_entry_with_recorded_data_still_moves() -> None:
+    """The has-data guard is delete_entry's, not a move's (R-15)."""
+    roster = Roster(entry_mode=EntryMode.MIXED)
+    solo = roster.create_solo_entry(first_name="Alex", last_name="", plate="1")
+    team_b = roster.create_team_entry(
+        display_name="Team B",
+        riders=[
+            Rider(first_name="Cy", last_name="", plate="3"),
+            Rider(first_name="Do", last_name="", plate="4"),
+        ],
+    )
+    roster.mark_has_data(solo)
+
+    roster.move_rider(solo.riders[0], to_entry=team_b)
+
+    assert [rider.plate for rider in team_b.riders] == ["3", "4", "1"]
 
 
 def test_move_rider_into_a_solo_entry_raises_invalid_move_error() -> None:
-    """move_rider(to_entry=<solo>) raises (solo is 1 rider)."""
+    """move_rider onto a solo destination raises (solo is 1 rider)."""
     roster = Roster(entry_mode=EntryMode.MIXED)
     alex = Rider(first_name="Alex", last_name="", plate="1")
     roster.create_team_entry(
@@ -976,17 +1079,17 @@ def test_move_rider_into_a_solo_entry_raises_invalid_move_error() -> None:
     )
     solo = roster.create_solo_entry(first_name="Cy", last_name="", plate="3")
 
-    with pytest.raises(InvalidMoveError, match=re.escape("team entries")):
+    with pytest.raises(InvalidMoveError, match=re.escape("destination must be a team entry")):
         roster.move_rider(alex, to_entry=solo)
 
 
 def test_move_rider_between_two_solo_entries_raises_invalid_move_error() -> None:
-    """Both endpoints solo still raises the same error (R-17)."""
+    """A solo destination still raises, whatever the source type is."""
     roster = Roster(entry_mode=EntryMode.MIXED)
     solo_a = roster.create_solo_entry(first_name="Alex", last_name="", plate="1")
     solo_b = roster.create_solo_entry(first_name="Bo", last_name="", plate="2")
 
-    with pytest.raises(InvalidMoveError, match=re.escape("team entries")):
+    with pytest.raises(InvalidMoveError, match=re.escape("destination must be a team entry")):
         roster.move_rider(solo_a.riders[0], to_entry=solo_b)
 
 
@@ -2211,16 +2314,114 @@ def test_extract_rider_to_solo_dissolve_appends_a_dissolve_team_entry_audit_even
     )
 
 
-def test_extract_rider_to_solo_after_start_raises_locked_error() -> None:
-    """Conversions are DRAFT-only; R-17's carve-out is moves only."""
-    roster = Roster(entry_mode=EntryMode.MIXED)
+def test_extract_rider_to_solo_on_a_running_pooled_ride_creates_the_solo_entry() -> None:
+    """R-17's pooled carve-out covers team->solo too."""
+    roster = Roster(entry_mode=EntryMode.MIXED, plate_model=PlateModel.RIDER_POOLED)
+    alex = Rider(first_name="Alex", last_name="", plate="5")
+    team = roster.create_team_entry(
+        display_name="Team A",
+        riders=[
+            alex,
+            Rider(first_name="Bo", last_name="", plate="9"),
+            Rider(first_name="Cy", last_name="", plate="1"),
+        ],
+    )
+    roster.status = RideStatus.RUNNING
+
+    solo = roster.extract_rider_to_solo(alex)
+
+    assert (solo.type, solo.plate, solo.display_name, solo.riders) == (
+        EntryType.SOLO,
+        "5",
+        "Alex",
+        [alex],
+    )
+    assert team.plate == "1"
+
+
+def test_extract_rider_to_solo_on_a_reopened_pooled_ride_recomputes_the_source_team() -> None:
+    """REOPENED is the corrections door for a pooled conversion too."""
+    roster = Roster(entry_mode=EntryMode.MIXED, plate_model=PlateModel.RIDER_POOLED)
+    alex = Rider(first_name="Alex", last_name="", plate="5")
+    team = roster.create_team_entry(
+        display_name="Team A", riders=[alex, Rider(first_name="Bo", last_name="", plate="2")]
+    )
+    roster.status = RideStatus.REOPENED
+
+    roster.extract_rider_to_solo(alex)
+
+    assert team.plate == "2"
+
+
+def test_extract_rider_to_solo_on_a_running_pooled_ride_dissolves_the_source_team() -> None:
+    """A size-1 source still dissolves when the ride is RUNNING."""
+    roster = Roster(entry_mode=EntryMode.MIXED, plate_model=PlateModel.RIDER_POOLED)
+    alex = Rider(first_name="Alex", last_name="", plate="1")
+    team = roster.create_team_entry_of_one(display_name="Team A", rider=alex)
+    roster.status = RideStatus.RUNNING
+
+    roster.extract_rider_to_solo(alex)
+
+    assert team not in roster.entries
+
+
+def test_extract_rider_to_solo_on_a_running_relay_ride_raises_locked_error() -> None:
+    """Relay keeps the R-17 lock once the ride is RUNNING."""
+    roster = Roster(entry_mode=EntryMode.MIXED, plate_model=PlateModel.TEAM_RELAY)
+    alex = Rider(first_name="Alex", last_name="")
+    roster.create_team_entry(
+        display_name="Team A", riders=[alex, Rider(first_name="Bo", last_name="")], plate="1"
+    )
+    roster.status = RideStatus.RUNNING
+
+    with pytest.raises(
+        LockedError, match=re.escape("extracted to solo on a team_relay ride once running")
+    ):
+        roster.extract_rider_to_solo(alex)
+
+
+def test_extract_rider_to_solo_on_a_reopened_relay_ride_raises_locked_error() -> None:
+    """Relay's start lock outlasts even a REOPENED correction (R-17)."""
+    roster = Roster(entry_mode=EntryMode.MIXED, plate_model=PlateModel.TEAM_RELAY)
+    alex = Rider(first_name="Alex", last_name="")
+    roster.create_team_entry(
+        display_name="Team A", riders=[alex, Rider(first_name="Bo", last_name="")], plate="1"
+    )
+    roster.status = RideStatus.REOPENED
+
+    with pytest.raises(
+        LockedError, match=re.escape("extracted to solo on a team_relay ride once reopened")
+    ):
+        roster.extract_rider_to_solo(alex)
+
+
+def test_extract_rider_to_solo_on_a_finished_relay_ride_raises_locked_error() -> None:
+    """A relay's conversions close at the finish, like every move."""
+    roster = Roster(entry_mode=EntryMode.MIXED, plate_model=PlateModel.TEAM_RELAY)
+    alex = Rider(first_name="Alex", last_name="")
+    roster.create_team_entry(
+        display_name="Team A", riders=[alex, Rider(first_name="Bo", last_name="")], plate="1"
+    )
+    roster.status = RideStatus.FINISHED
+
+    with pytest.raises(
+        LockedError, match=re.escape("extracted to solo on a team_relay ride once finished")
+    ):
+        roster.extract_rider_to_solo(alex)
+
+
+def test_extract_rider_to_solo_on_a_finished_pooled_ride_raises_locked_error() -> None:
+    """FINISHED closes the pooled conversion door (R-17)."""
+    roster = Roster(entry_mode=EntryMode.MIXED, plate_model=PlateModel.RIDER_POOLED)
     alex = Rider(first_name="Alex", last_name="", plate="5")
     roster.create_team_entry(
         display_name="Team A", riders=[alex, Rider(first_name="Bo", last_name="", plate="9")]
     )
-    roster.status = RideStatus.RUNNING
+    roster.status = RideStatus.FINISHED
 
-    with pytest.raises(LockedError, match=re.escape("running")):
+    with pytest.raises(
+        LockedError, match=re.escape("extracted to solo on a rider_pooled ride once finished")
+    ):
         roster.extract_rider_to_solo(alex)
 
 
@@ -2507,6 +2708,246 @@ def test_resolve_plate_relay_unknown_plate_returns_none() -> None:
     )
 
     assert roster.resolve_plate("999") is None
+
+
+# ------------------------------------------------------- entry key
+# The stable entry identity the ride engine keys its crossings and
+# credited hands by (E3.1.2's pooled-live-move seam): a plate is
+# mutable -- a pooled team re-derives its own from its members, and a
+# mid-ride move re-derives it again -- so it can never be what a
+# crossing is filed under. ``key`` is a per-entry surrogate: unique
+# for the life of the entry, never shown, never edited.
+
+
+def test_entry_bare_construction_carries_a_hex_key() -> None:
+    """A hand-built Entry still gets a usable stable key."""
+    entry = Entry(plate="12", display_name="Alex", type=EntryType.SOLO)
+
+    assert re.fullmatch(r"[0-9a-f]{32}", entry.key)
+
+
+def test_create_solo_entry_assigns_distinct_keys() -> None:
+    """Each solo entry's key is its own, never a shared default."""
+    roster = Roster()
+    first = roster.create_solo_entry(first_name="Alex", last_name="", plate="1")
+    second = roster.create_solo_entry(first_name="Bo", last_name="", plate="2")
+
+    assert first.key != second.key
+    assert len(first.key) == 32
+
+
+def test_create_team_entry_assigns_distinct_keys() -> None:
+    """Each team entry's key is its own, never a shared default."""
+    roster = Roster(entry_mode=EntryMode.MIXED)
+    first = roster.create_team_entry(
+        display_name="Team A",
+        riders=[Rider(first_name="Alex", plate="1"), Rider(first_name="Bo", plate="2")],
+    )
+    second = roster.create_team_entry(
+        display_name="Team B",
+        riders=[Rider(first_name="Cy", plate="3"), Rider(first_name="Di", plate="4")],
+    )
+
+    assert first.key != second.key
+    assert len(second.key) == 32
+
+
+def test_create_empty_team_assigns_a_key() -> None:
+    """A riderless team carries a key like any other entry."""
+    roster = Roster(entry_mode=EntryMode.MIXED, plate_model=PlateModel.RIDER_POOLED)
+
+    entry = roster.create_empty_team(display_name="Later")
+
+    assert re.fullmatch(r"[0-9a-f]{32}", entry.key)
+
+
+def test_extract_rider_to_solo_assigns_a_key_different_from_the_source_team() -> None:
+    """The rider's new solo entry is a new identity, not the team's."""
+    roster = Roster(entry_mode=EntryMode.MIXED)
+    team = roster.create_team_entry(
+        display_name="Team A",
+        riders=[Rider(first_name="Alex", plate="1"), Rider(first_name="Bo", plate="2")],
+    )
+    rider = team.riders[0]
+
+    solo = roster.extract_rider_to_solo(rider)
+
+    assert solo.key != team.key
+    assert len(solo.key) == 32
+
+
+def test_entry_by_key_returns_the_entry_carrying_that_key() -> None:
+    """The key resolves to its own entry -- the engine's lookup."""
+    roster = Roster()
+    entry = roster.create_solo_entry(first_name="Alex", last_name="", plate="12")
+
+    assert roster.entry_by_key(entry.key) is entry
+
+
+def test_entry_by_key_unknown_key_returns_none() -> None:
+    """An unknown key resolves to None, not an error."""
+    roster = Roster()
+    roster.create_solo_entry(first_name="Alex", last_name="", plate="12")
+
+    assert roster.entry_by_key("0" * 32) is None
+
+
+def test_entry_by_key_empty_key_returns_none() -> None:
+    """A present-but-empty key resolves to None."""
+    roster = Roster()
+    roster.create_solo_entry(first_name="Alex", last_name="", plate="12")
+
+    assert roster.entry_by_key("") is None
+
+
+def test_entry_by_key_on_empty_roster_returns_none() -> None:
+    """No entries means no key resolution."""
+    roster = Roster()
+
+    assert roster.entry_by_key("0" * 32) is None
+
+
+def test_entry_by_key_picks_the_matching_entry_among_many() -> None:
+    """The lookup keys off ``key`` alone, not roster position."""
+    roster = Roster()
+    roster.create_solo_entry(first_name="Alex", last_name="", plate="1")
+    wanted = roster.create_solo_entry(first_name="Bo", last_name="", plate="2")
+    roster.create_solo_entry(first_name="Cy", last_name="", plate="3")
+
+    assert roster.entry_by_key(wanted.key) is wanted
+
+
+# --------------------------------------- retired entries (E3.1.2)
+# A dissolved entry that carries recorded data is *retired*, not
+# discarded: the ride engine files crossings under ``Entry.key`` and
+# replay resolves them by that key, so the key of an entry a move
+# dissolves must stay resolvable after a reload (the pooled-live-move
+# replay seam). An entry with no recorded data is still removed
+# outright -- nothing names it.
+
+
+def _dissolved_solo(*, has_data: bool) -> tuple[Roster, Entry]:
+    """Dissolve a solo "1" into Team B, with or without data (arrange).
+
+    The solo entry is emptied by :meth:`Roster.move_rider`, so it
+    reaches the dissolve either carrying recorded data (``has_data``)
+    or carrying none.
+    """
+    roster = Roster(entry_mode=EntryMode.MIXED)
+    solo = roster.create_solo_entry(first_name="Alex", last_name="", plate="1")
+    team_b = roster.create_team_entry(
+        display_name="Team B",
+        riders=[
+            Rider(first_name="Cy", last_name="", plate="3"),
+            Rider(first_name="Do", last_name="", plate="4"),
+        ],
+    )
+    if has_data:
+        roster.mark_has_data(solo)
+    roster.move_rider(solo.riders[0], to_entry=team_b)
+    return roster, solo
+
+
+def test_retired_entries_is_empty_on_a_fresh_roster() -> None:
+    """A roster that never dissolved an entry has nothing retired."""
+    roster = Roster()
+
+    assert roster.retired_entries == ()
+
+
+def test_move_rider_dissolving_a_has_data_solo_entry_retires_it() -> None:
+    """A dissolved entry carrying recorded data is retired, not lost."""
+    roster, solo = _dissolved_solo(has_data=True)
+
+    assert roster.retired_entries == (solo,)
+
+
+def test_move_rider_dissolving_a_has_data_solo_entry_drops_it_from_entries() -> None:
+    """Retiring is not a revive: the live entries no longer hold it."""
+    roster, solo = _dissolved_solo(has_data=True)
+
+    assert solo not in roster.entries
+
+
+def test_move_rider_dissolving_a_data_less_solo_entry_removes_it_outright() -> None:
+    """An entry with nothing recorded is still discarded outright."""
+    roster, solo = _dissolved_solo(has_data=False)
+
+    assert (roster.retired_entries, solo in roster.entries) == ((), False)
+
+
+def test_move_rider_dissolving_a_has_data_solo_entry_keeps_its_key_resolvable() -> None:
+    """entry_by_key finds the retired entry the move dissolved."""
+    roster, solo = _dissolved_solo(has_data=True)
+
+    assert roster.entry_by_key(solo.key) is solo
+
+
+def test_entry_by_key_unknown_key_still_returns_none_with_a_retired_entry() -> None:
+    """Searching retired entries leaves an unknown key unresolved."""
+    roster, _solo = _dissolved_solo(has_data=True)
+
+    assert roster.entry_by_key("0" * 32) is None
+
+
+def test_mark_has_data_accepts_a_retired_entry() -> None:
+    """Replay's mark_has_data on a retired entry must not raise."""
+    roster, solo = _dissolved_solo(has_data=True)
+    before = len(roster.audit_log)
+
+    roster.mark_has_data(solo)
+
+    assert (len(roster.audit_log), roster.audit_log[-1]) == (
+        before + 1,
+        AuditEvent(action="mark_has_data", payload={"plate": "1"}),
+    )
+
+
+def test_move_rider_dissolving_a_has_data_team_entry_logs_dissolve_team_entry() -> None:
+    """Retiring a TEAM entry keeps the dissolve_team_entry action."""
+    roster = Roster(entry_mode=EntryMode.MIXED)
+    alex = Rider(first_name="Alex", last_name="", plate="1")
+    team_a = roster.create_team_entry_of_one(display_name="Team A", rider=alex)
+    team_b = roster.create_team_entry(
+        display_name="Team B",
+        riders=[
+            Rider(first_name="Cy", last_name="", plate="3"),
+            Rider(first_name="Do", last_name="", plate="4"),
+        ],
+    )
+    roster.mark_has_data(team_a)
+
+    roster.move_rider(alex, to_entry=team_b)
+
+    assert roster.audit_log[-1] == AuditEvent(
+        action="dissolve_team_entry", payload={"plate": "1", "display_name": "Team A"}
+    )
+
+
+def test_load_retired_entries_restores_them_without_auditing() -> None:
+    """The store restore seam appends retired entries, silently."""
+    roster = Roster()
+    retired = Entry(plate="1", display_name="Alex", type=EntryType.SOLO)
+
+    roster.load_retired_entries([retired])
+
+    assert (roster.retired_entries, roster.entries, roster.audit_log) == ((retired,), (), ())
+
+
+@pytest.mark.parametrize(
+    ("count", "expected"), [(0, []), (1, ["0"]), (3, ["0", "1", "2"])], ids=["none", "one", "many"]
+)
+def test_load_retired_entries_restores_every_given_count(count: int, expected: list[str]) -> None:
+    """T-4 collections: none, one and many restore in order."""
+    entries = [
+        Entry(plate=str(number), display_name=f"Rider {number}", type=EntryType.SOLO)
+        for number in range(count)
+    ]
+    roster = Roster()
+
+    roster.load_retired_entries(entries)
+
+    assert [entry.plate for entry in roster.retired_entries] == expected
 
 
 # ======================================================== name split

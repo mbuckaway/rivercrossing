@@ -50,7 +50,7 @@ from hypothesis import given
 from hypothesis import strategies as st
 from xrc_fixtures import pin_no_authored_window
 
-from conftest import _pooled_team_roster, gorba_config
+from conftest import _pooled_team_roster, entry_key, gorba_config
 from rivercrossing.cards import Card, Shoe
 from rivercrossing.ride import Crossing, Event, PendingMiss, RideEngine, RideStatus
 from rivercrossing.roster import EntryMode, PlateModel, Rider, Roster
@@ -446,19 +446,23 @@ class _StubEngine:
 
 def test_build_fields_given_a_seq_past_the_recorded_laps_renders_zero_times() -> None:
     """T-4 boundary: a stale seq cannot index past lap_times."""
-    crossing = Crossing(entry_id="12", seq=3, crossed_at=_dt(10, 5), rider_plate="12")
+    roster = _solo_roster()
+    crossing = Crossing(
+        entry_id=entry_key(roster, "12"), seq=3, crossed_at=_dt(10, 5), rider_plate="12"
+    )
     engine = _StubEngine(lap_times=(100.0, 120.0), credited=("AS",))
 
-    fields = crossing_detail.build_fields(crossing, _solo_roster(), engine)
+    fields = crossing_detail.build_fields(crossing, roster, engine)
 
     assert (fields.lap_time, fields.total) == ("0:00", "0:00:00")
 
 
-def test_build_fields_given_an_unknown_entry_falls_back_to_the_entry_id() -> None:
-    """A crossing whose entry left the roster still renders its id.
+def test_build_fields_given_an_unknown_entry_falls_back_to_the_typed_plate() -> None:
+    """A crossing whose entry left the roster still renders its plate.
 
     T-3 negative of the solo branch: with no entry to type-check, the
-    Team field falls back to ``crossing.entry_id`` rather than "solo".
+    Team field falls back to the plate the operator typed rather than
+    "solo" -- never the crossing's internal stable key.
     """
     crossing = Crossing(entry_id="99", seq=1, crossed_at=_dt(10, 5), rider_plate="99")
     engine = _StubEngine(lap_times=(60.0,), credited=("AS",))
@@ -470,10 +474,11 @@ def test_build_fields_given_an_unknown_entry_falls_back_to_the_entry_id() -> Non
 
 def test_build_fields_given_no_rider_plate_falls_back_to_the_entry_plate() -> None:
     """A crossing with no typed plate shows the entry's own plate."""
-    crossing = Crossing(entry_id="12", seq=1, crossed_at=_dt(10, 5))
+    roster = _solo_roster()
+    crossing = Crossing(entry_id=entry_key(roster, "12"), seq=1, crossed_at=_dt(10, 5))
     engine = _StubEngine(lap_times=(60.0,), credited=("AS",))
 
-    fields = crossing_detail.build_fields(crossing, _solo_roster(), engine)
+    fields = crossing_detail.build_fields(crossing, roster, engine)
 
     assert (fields.rider, fields.plate) == ("Amy", "12")
 
@@ -1359,7 +1364,9 @@ def test_on_edit_time_given_a_crossing_opens_the_locked_edit_time_dialog(
     """T-4 nullable: the dialog opens on the plate the view shows."""
     roster = _solo_roster()
     engine = _running_engine(roster)
-    crossing = Crossing(entry_id="12", seq=1, crossed_at=_dt(10, 2), rider_plate=rider_plate)
+    crossing = Crossing(
+        entry_id=entry_key(roster, "12"), seq=1, crossed_at=_dt(10, 2), rider_plate=rider_plate
+    )
     view = _view(engine, roster=roster, crossing=crossing)
     calls = _stub_run_edit_crossing(monkeypatch, None)
 
@@ -1601,7 +1608,10 @@ def test_on_void_card_given_a_confirmed_void_passes_the_engines_own_dealt_object
     view._on_void_card(_RecordingEvent())
 
     assert engine.voided_card is card
-    assert (view.crossing_held_lbl.value, engine.credited_cards("12")) == ("Void", ())
+    assert (view.crossing_held_lbl.value, engine.credited_cards(entry_key(roster, "12"))) == (
+        "Void",
+        (),
+    )
 
 
 def test_on_void_card_given_a_held_duplicate_card_keeps_the_held_refusal(
@@ -1657,7 +1667,7 @@ def test_on_void_card_given_a_confirmed_void_rerenders_the_crossing_in_place(
             "entry": "12 · Amy",
         }
     ]
-    assert engine.credited_cards("12") == ()
+    assert engine.credited_cards(entry_key(roster, "12")) == ()
     assert engine.events[-1].action == "void_card"
     assert engine.events[-1].payload["reason"] == "wrong card"
     assert (view.dialog.modal_ids, event.skipped) == ([], True)
@@ -1691,7 +1701,7 @@ def test_on_void_card_given_a_pooled_team_crossing_names_the_typing_rider(
             "entry": "45 · Sarah",
         }
     ]
-    assert engine.credited_cards("9") == ()
+    assert engine.credited_cards(entry_key(engine._roster, "9")) == ()
 
 
 def test_on_void_card_given_a_cancelled_dialog_leaves_the_ride_alone(
@@ -1774,7 +1784,9 @@ def test_on_edit_given_a_confirmed_number_reassigns_and_rerenders_in_place(
 
     view._on_edit(event)
 
-    assert [(c.entry_id, c.rider_plate) for c in engine.crossings] == [("34", "34")]
+    assert [(c.entry_id, c.rider_plate) for c in engine.crossings] == [
+        (entry_key(roster, "34"), "34")
+    ]
     assert engine.events[-1].action == "reassign"
     assert engine.events[-1].payload["reason"] == crossing_detail.EDIT_REASON
     assert engine.events[-1].payload["new_plate"] == "34"
@@ -1794,9 +1806,12 @@ def test_on_edit_given_a_crossing_prefills_the_number_prompt(
     expected: str,
 ) -> None:
     """T-4 nullable: the prompt opens on the plate the dialog shows."""
-    crossing = Crossing(entry_id="12", seq=1, crossed_at=_dt(10, 2), rider_plate=rider_plate)
-    engine = _running_engine(_solo_roster())
-    view = _view(engine, roster=_solo_roster(), crossing=crossing)
+    roster = _solo_roster()
+    crossing = Crossing(
+        entry_id=entry_key(roster, "12"), seq=1, crossed_at=_dt(10, 2), rider_plate=rider_plate
+    )
+    engine = _running_engine(roster)
+    view = _view(engine, roster=roster, crossing=crossing)
     calls = _stub_plate_dialog(monkeypatch, None)
 
     view._on_edit(_RecordingEvent())
@@ -1906,10 +1921,10 @@ def test_on_edit_given_a_mid_ride_crossing_addresses_it_by_ride_wide_ordinal(
 
     view._on_edit(_RecordingEvent())
 
-    assert [c.entry_id for c in engine.crossings] == ["12", "12", "12"]
+    assert [c.entry_id for c in engine.crossings] == [entry_key(roster, "12")] * 3
     assert engine.events[-1].payload["seq"] == 2
-    assert engine.events[-1].payload["old_entry_id"] == "34"
-    assert (view.crossing.entry_id, view.crossing.seq) == ("12", 3)
+    assert engine.events[-1].payload["old_entry_id"] == entry_key(roster, "34")
+    assert (view.crossing.entry_id, view.crossing.seq) == (entry_key(roster, "12"), 3)
     assert view.crossing_time_lbl.value == "10:03:00"
 
 
@@ -2185,7 +2200,7 @@ def test_on_delete_given_a_confirmed_void_removes_only_that_crossing(
     ]
     assert engine.events[-1].action == "void_crossing"
     assert engine.events[-1].payload == {
-        "entry_id": "12",
+        "entry_id": entry_key(engine._roster, "12"),
         "seq": 2,
         "reason": crossing_detail.DELETE_REASON,
     }
@@ -2201,7 +2216,10 @@ def test_on_delete_given_a_confirmed_void_voids_the_dealt_card(
 
     view._on_delete(_RecordingEvent())
 
-    assert (len(engine.credited_cards("12")), engine.shoe_remaining) == (2, engine.shoe_total - 3)
+    assert (
+        len(engine.credited_cards(entry_key(engine._roster, "12"))),
+        engine.shoe_remaining,
+    ) == (2, engine.shoe_total - 3)
 
 
 def test_on_delete_given_an_earlier_crossing_names_the_crossing_it_voids(
@@ -2414,7 +2432,9 @@ def test_reassign_crossing_plate_given_a_recorded_crossing_reassigns_it() -> Non
     refusal = crossing_detail.reassign_crossing_plate(engine, engine.crossings[0], "34")
 
     assert refusal is None
-    assert [(c.entry_id, c.rider_plate) for c in engine.crossings] == [("34", "34")]
+    assert [(c.entry_id, c.rider_plate) for c in engine.crossings] == [
+        (entry_key(roster, "34"), "34")
+    ]
     assert engine.events[-1].action == "reassign"
     assert engine.events[-1].payload["reason"] == crossing_detail.EDIT_REASON
     assert engine.events[-1].payload["new_plate"] == "34"
@@ -2435,9 +2455,9 @@ def test_reassign_crossing_plate_given_a_mid_ride_crossing_uses_the_ride_wide_or
     refusal = crossing_detail.reassign_crossing_plate(engine, engine.crossings[1], "12")
 
     assert refusal is None
-    assert [c.entry_id for c in engine.crossings] == ["12", "12", "12"]
+    assert [c.entry_id for c in engine.crossings] == [entry_key(roster, "12")] * 3
     assert engine.events[-1].payload["seq"] == 2
-    assert engine.events[-1].payload["old_entry_id"] == "34"
+    assert engine.events[-1].payload["old_entry_id"] == entry_key(roster, "34")
 
 
 def test_reassign_crossing_plate_given_a_stale_crossing_returns_the_refusal() -> None:
@@ -2766,9 +2786,12 @@ def test_on_edit_given_a_saved_number_scores_the_miss_and_stays_open(
     assert view.dialog.modal_ids == []
     assert engine.pending_misses() == ()
     assert [(c.entry_id, c.rider_plate, c.crossed_at) for c in engine.crossings] == [
-        ("34", "34", _dt(10, 2))
+        (entry_key(roster, "34"), "34", _dt(10, 2))
     ]
-    assert (engine.shoe_remaining, len(engine.credited_cards("34"))) == (shoe_before - 1, 1)
+    assert (engine.shoe_remaining, len(engine.credited_cards(entry_key(roster, "34")))) == (
+        shoe_before - 1,
+        1,
+    )
     assert engine.events[-1].action == "assign_plate_to_miss"
     assert engine.events[-1].payload["reason"] == crossing_detail.MISS_EDIT_REASON
     assert engine.events[-1].payload["new_plate"] == "34"
@@ -2798,8 +2821,13 @@ def test_on_edit_given_a_pooled_rider_number_scores_it_of_the_rider(
 
     view._on_edit(_RecordingEvent())
 
-    assert [(c.entry_id, c.rider_plate) for c in engine.crossings] == [("9", "45")]
-    assert (view.dialog.modal_ids, engine.events[-1].payload["entry_id"]) == ([], "9")
+    assert [(c.entry_id, c.rider_plate) for c in engine.crossings] == [
+        (entry_key(roster, "9"), "45")
+    ]
+    assert (view.dialog.modal_ids, engine.events[-1].payload["entry_id"]) == (
+        [],
+        entry_key(roster, "9"),
+    )
     assert (view.crossing_rider_lbl.value, view.crossing_team_lbl.value) == (
         "Sarah",
         "Dirt Dynamos",

@@ -92,29 +92,32 @@ rider's team membership -- may also *reshape* an existing match,
 applying every change through the roster's own mutators (so it is
 fully audit-logged) subject to the same lock matrix E3.1.2 already
 governs edits with:
-DRAFT reshapes freely; once started, relay keeps its permanent lock,
-while pooled keeps team-to-team moves open per
-:func:`~rivercrossing.roster.can_move_rider` (spec S7:171 -- "a changed
-team_name is treated as an audited membership move, not a conflict"). A
-status/model combination that cannot safely reshape becomes a conflict
-at preview time instead of a partial or unaudited mutation. **An entry
+DRAFT reshapes freely; once started, relay keeps its permanent lock
+and a pooled membership reshape waits for DRAFT. A status/model
+combination that cannot safely reshape becomes a conflict at preview
+time instead of a partial or unaudited mutation. **An entry
 present in the roster but absent from the file is
 left alone** -- neither the spec nor commit ever deletes on that basis;
 only DNF/void (E4) or the rider editor removes an entry with no row.
 
-**Pooled team<->solo conversions are DRAFT-only (the pooled-reshape
-follow-on).** A team member's row losing its team name applies via
+**Every pooled membership reshape is DRAFT-only on this surface.** A
+team member's row losing its team name applies via
 :meth:`~rivercrossing.roster.Roster.extract_rider_to_solo`; a
 brand-new or currently-solo rider's row gaining one applies via
 :meth:`~rivercrossing.roster.Roster.add_rider_to_team` (a solo rider's
-own entry is dissolved first). Both are gated by
-:func:`~rivercrossing.roster.can_edit_structure` -- DRAFT only, spec
-S1's "convert solo <-> team ... before start" -- **except** a
-brand-new plate landing straight on an *existing* team, which stays
-open through RUNNING/REOPENED via
-:func:`~rivercrossing.roster.can_move_rider`'s own carve-out, same as
-a team-to-team move. A conversion the current status locks becomes a
-conflict at preview time instead of a partial or unaudited mutation.
+own entry is dissolved first); a member's row naming another team
+moves them via :meth:`~rivercrossing.roster.Roster.move_rider`. All
+three are gated by :func:`~rivercrossing.roster.can_edit_structure` --
+DRAFT only, spec S1's "convert solo <-> team ... before start" -- so a
+reshape the current status locks becomes a conflict at preview time
+instead of a partial or unaudited mutation.
+
+The **Rider Editor is the live (Stop/Reopen-gated) move surface**, not
+CSV: R-17's move re-attributes the rider's plate, crossings and cards,
+and resets their voided laps, while a CSV reshape applies membership
+alone. A rider's recorded crossings stay keyed to the entry they were
+recorded under, so a mid-ride re-import that moved membership alone
+would strand them on the entry left behind.
 
 **Team notes (decided 2026-08-09, unified format).** On import, a
 team's ``notes`` is every non-empty member row's own notes, joined with
@@ -174,7 +177,6 @@ from rivercrossing.roster import (
     Rider,
     Roster,
     can_edit_structure,
-    can_move_rider,
     canonical_person_name,
     rider_name_key,
     team_name_key,
@@ -1447,8 +1449,13 @@ def _lowest_rider_plate(riders: Sequence[ParsedRider]) -> str:
 
 
 def _pooled_move_problem(status: RideStatus) -> str:
-    """Return the conflict text for a pooled move *status* disallows."""
-    return f"team change requires DRAFT, RUNNING or REOPENED (ride is {status})"
+    """Return the conflict text for a pooled membership *status* locks.
+
+    Covers the team-to-team move and a brand-new plate landing on an
+    existing team: both reshape membership alone, so both wait for
+    DRAFT like the team<->solo conversions beside them.
+    """
+    return f"a team membership change requires DRAFT (ride is {status})"
 
 
 def _team_to_solo_problem(status: RideStatus) -> str:
@@ -1468,13 +1475,15 @@ def _pooled_team_structural_conflicts(
 ) -> list[ImportConflict]:
     """Return every conflict this team's own membership reshape has.
 
-    A member already on the resolved target needs nothing. One
-    already on a *different* existing team is a real move, gated by
-    :func:`~rivercrossing.roster.can_move_rider` (spec S7:171's pooled
-    exception, also covering a brand-new plate landing straight on an
-    existing team). A currently-solo rider converting into a team
-    member is gated by :func:`~rivercrossing.roster.can_edit_structure`
-    instead -- DRAFT only, in every case, existing or forming target.
+    A member already on the resolved target needs nothing. Every other
+    membership reshape is DRAFT-only, gated by
+    :func:`~rivercrossing.roster.can_edit_structure`: a member already
+    on a *different* existing team is a real move (spec S7:171's
+    "audited membership move"), a currently-solo rider converts into a
+    team member, and a brand-new plate lands straight on an existing
+    team. Each reshape is membership alone here, so each waits for
+    DRAFT; R-17's re-attribution belongs to the Rider Editor's
+    Stop/Reopen-gated move (module docstring).
     """
     riders = [team_row.rider for team_row in rows]
     target = _pooled_team_target(existing_index, riders)
@@ -1485,14 +1494,14 @@ def _pooled_team_structural_conflicts(
         if owner is not None and owner[0] is target:
             continue
         if owner is not None and owner[0].type is EntryType.TEAM:
-            if not can_move_rider(status, PlateModel.RIDER_POOLED):
+            if not can_edit_structure(status):
                 conflicts.append(ImportConflict(row_num, _pooled_move_problem(status)))
             continue
         if owner is not None:  # currently solo, converting to a team member
             if not can_edit_structure(status):
                 conflicts.append(ImportConflict(row_num, _solo_to_team_problem(status)))
             continue
-        if target is not None and not can_move_rider(status, PlateModel.RIDER_POOLED):
+        if target is not None and not can_edit_structure(status):
             conflicts.append(ImportConflict(row_num, _pooled_move_problem(status)))
     return conflicts
 

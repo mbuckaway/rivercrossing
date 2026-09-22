@@ -32,6 +32,7 @@ from datetime import date, datetime
 from hypothesis import given
 from hypothesis import strategies as st
 
+from conftest import entry_key
 from rivercrossing.cards import Shoe
 from rivercrossing.ride import Event, RideConfig, RideEngine
 from rivercrossing.roster import EntryMode, PlateModel, Roster
@@ -379,7 +380,12 @@ def _engine_source_with_correction() -> tuple[RideEngine, EngineDataSource]:
     )
     engine.start()
     engine.record_crossing("12", at=datetime(2026, 9, 20, 10, 30))  # noqa: DTZ001
-    engine.edit_crossing("12", 1, datetime(2026, 9, 20, 10, 31), reason="mis-key")  # noqa: DTZ001
+    engine.edit_crossing(
+        entry_key(roster, "12"),
+        1,
+        datetime(2026, 9, 20, 10, 31),  # noqa: DTZ001
+        reason="mis-key",
+    )
     return engine, EngineDataSource(engine, roster)
 
 

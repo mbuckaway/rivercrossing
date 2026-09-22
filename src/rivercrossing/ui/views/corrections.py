@@ -43,8 +43,7 @@ one: it authors no ``entry_lbl`` for a target refusal to land on, and
 an unknown-but-numeric plate is left to the engine's own
 ``UnknownPlateError`` refusal.
 
-The move-rider "team picker" has no XRC dialog (spec §15b authors
-none); :func:`run_move_rider` builds a small native picker in code.
+The pooled rider move has no dialog here; the Rider Editor owns it.
 
 The Cards/Riders menu row opens ``audit_dlg`` through
 :func:`run_audit`, which E7.3.1 made real: it binds the
@@ -75,12 +74,10 @@ __all__ = [
     "CrossingEdit",
     "DnfMark",
     "ManualDeal",
-    "RiderMove",
     "run_audit",
     "run_dnf",
     "run_edit_crossing",
     "run_manual_deal",
-    "run_move_rider",
     "run_set_start_time",
     "run_void_card",
 ]
@@ -144,20 +141,6 @@ class DnfMark:
 
     plate: str
     reason: str
-
-
-@dataclass(frozen=True, slots=True)
-class RiderMove:
-    """One confirmed move-rider picker submission (E7.2.1).
-
-    ``rider_plate`` names the rider being moved (a ``Rider.plate`` on
-    a rider_pooled team); ``to_team`` names the destination entry by
-    ``display_name``. The caller resolves both through the roster
-    before calling :meth:`Roster.move_rider`.
-    """
-
-    rider_plate: str
-    to_team: str
 
 
 # The address-reuse poison (views/_support.find_control's docstring)
@@ -666,36 +649,6 @@ def run_set_start_time(
     finally:
         if not dialog.IsBeingDeleted():
             dialog.Destroy()
-
-
-def run_move_rider(
-    frame: Any,  # noqa: ANN401 -- wx ships no stubs
-    *,
-    riders: tuple[str, ...],
-    teams: tuple[str, ...],
-) -> RiderMove | None:
-    """Open the code-built team picker; return the confirmed move.
-
-    Two native single-choice dialogs (which rider, then which
-    destination team); a cancel at either step is a silent no-op.
-    """
-    if not riders or not teams:
-        return None
-    rider_choice = wx.SingleChoiceDialog(frame, "Move which rider?", "Move Rider", list(riders))
-    try:
-        if rider_choice.ShowModal() != wx.ID_OK:
-            return None
-        rider_plate = rider_choice.GetStringSelection()
-    finally:
-        rider_choice.Destroy()
-    team_choice = wx.SingleChoiceDialog(frame, "Move to which team?", "Move Rider", list(teams))
-    try:
-        if team_choice.ShowModal() != wx.ID_OK:
-            return None
-        to_team = team_choice.GetStringSelection()
-    finally:
-        team_choice.Destroy()
-    return RiderMove(rider_plate=rider_plate, to_team=to_team)
 
 
 def run_audit(  # noqa: PLR0913 -- (resource, frame) + the viewer's data seams

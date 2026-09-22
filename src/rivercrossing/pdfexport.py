@@ -183,6 +183,26 @@ def _pair_is_steel(pair: CardPair) -> bool:
     return rank == "JK" or suit in ("h", "d")
 
 
+# The muted whole-hand sub-row's sizing: the DejaVu glyph face -- the
+# one that carries the suit glyphs -- at 6.5pt on a 0.12in leading plus
+# a 0.04in trailing gap. The poster scales all three by its card
+# geometry, whose compact cards are drawn at 68%.
+_DRAWN_SIZE = 6.5
+_DRAWN_LEADING = 0.12
+_DRAWN_GAP = 0.04
+
+
+def _drawn_text(cards: Sequence[CardPair]) -> str:
+    """Return the whole-hand line the field and both podiums share.
+
+    "All N cards, in draw order: …" -- one spelling for the full
+    field's sub-row and both podium cards, so the three surfaces can
+    never drift apart on the wording.
+    """
+    run = " ".join(_pair_text(pair) for pair in cards)
+    return f"All {len(cards)} cards, in draw order: {run}"
+
+
 def _is_team_row(row: ResultRow) -> bool:
     """Return whether a payload row is a team."""
     return row.entry_type.upper().startswith("TEAM")
@@ -732,21 +752,25 @@ class _CardGeom:
     """A poster card's scale and its page-break guard, in inches.
 
     ``scale`` multiplies every card dimension (place number, name,
-    subtitle, hand, card faces); ``guard`` is the height the break
-    check reserves before a card -- the full [5d] sizing needs 1.9in,
-    the compact one 1.2in (its own pitch is 1.16in).
+    subtitle, hand, whole-hand line, card faces); ``guard`` is the
+    height the break check reserves before a card -- each sizing's own
+    pitch (1.68 x ``scale``) plus a hair of slack.
     """
 
     scale: float
     guard: float
 
 
-# Full [5d] sizing for a solo event's top five; a 24% downscale so a
-# team event's two sections with six cards still fit one Letter page
-# (measured: card pitch 1.52in -> 1.155in; six cards + two headings end
-# 1.07in above the footer gap, 0.65in once the organizer logo draws).
-_CARD_FULL = _CardGeom(1.0, 1.9)
-_CARD_COMPACT = _CardGeom(0.76, 1.2)
+# The [5d] poster's two card sizings. Every card now carries the
+# whole-hand line under its hand line, which lengthens its pitch from
+# 1.52 x scale to 1.68 x scale, so both sizings came down to keep the
+# poster one Letter page in its worst case -- with the organizer logo's
+# own 0.42in of header. Measured with the logo drawn: a team event's
+# six compact cards at 0.68 end 0.73in above the footer gap, and a solo
+# event's five full cards at 0.92 end 0.25in above it even with the
+# self-test note's own 0.20in.
+_CARD_FULL = _CardGeom(0.92, 1.62)
+_CARD_COMPACT = _CardGeom(0.68, 1.2)
 
 
 def _poster_name(result: EntryResult) -> str:
@@ -773,8 +797,8 @@ class _PosterPDF(FPDF):
     -- no "Page n of N", there is only one page.
     """
 
-    # (ride, letter, created_at, logo_path, self_test_unverified): the
-    # poster's state inputs
+    # (ride, letter, created_at, logo_path, self_test_unverified,
+    # all_cards): the poster's state inputs
     def __init__(  # noqa: PLR0913
         self,
         ride: _RideLike,
@@ -783,6 +807,7 @@ class _PosterPDF(FPDF):
         created_at: datetime,
         logo_path: Path | str | None,
         self_test_unverified: bool = False,
+        all_cards: bool = True,
     ) -> None:
         """Open one poster: geometry, fonts, metadata, footer stamp.
 
@@ -796,6 +821,7 @@ class _PosterPDF(FPDF):
         self._generated = htmlexport.format_generated(created_at)
         self._logo_path = logo_path
         self._self_test_unverified = self_test_unverified
+        self._all_cards = all_cards
 
     def file_id(self) -> None:
         """Suppress the trailer /ID (R-62 determinism).
@@ -907,11 +933,14 @@ class _PosterPDF(FPDF):
             self._podium_card(card, place=index + _FIRST_PLACE, geom=geom)
 
     def _podium_card(self, card: tuple[Placed, ResultRow], *, place: int, geom: _CardGeom) -> None:
-        """Draw one podium card: place, name, run, hand, card faces.
+        """Draw one podium card: place, name, run, hand, whole hand.
 
         *card* is the placement and its shared payload row; the entry
         supplies the Card objects the large faces need and the row
-        R-14's drawn marker (the one the report's own card draws).
+        R-14's drawn marker (the one the report's own card draws). When
+        ``all_cards`` is on, the row's drawn run is spelled out under
+        the hand line -- the report's own whole-hand sub-row, scaled to
+        this card.
         """
         _maybe_page_break(self, geom.guard)
         entry, row = card
@@ -944,9 +973,30 @@ class _PosterPDF(FPDF):
             _draw_marker(row),
         )
         self.ln(0.20 * scale)
+        if self._all_cards:
+            self._drawn_row(row.drawn, indent=indent, scale=scale)
         self.set_x(self.l_margin + indent)
         self._large_cards(result.hand.best5, size=18 * scale, height=0.30 * scale)
         self.ln(0.32 * scale)
+
+    def _drawn_row(self, cards: Sequence[CardPair], *, indent: float, scale: float) -> None:
+        """Draw a card's muted whole-hand line, scaled to the card.
+
+        The report's own sub-row wording and DejaVu glyph face, sized,
+        led and indented by the card's geometry so the line sits in the
+        card at the same proportion the report's card uses.
+        """
+        self.set_x(self.l_margin + indent)
+        self.set_font(_FONT_GLYPH, "", _DRAWN_SIZE * scale)
+        self.set_text_color(*_INK)
+        self.multi_cell(
+            self.epw - indent,
+            _DRAWN_LEADING * scale,
+            text=_drawn_text(cards),
+            new_x=XPos.LMARGIN,
+            new_y=YPos.NEXT,
+        )
+        self.ln(_DRAWN_GAP * scale)
 
     def _large_cards(self, cards: Sequence[Card], *, size: float, height: float) -> None:
         """Draw best-5 cards large; steel for red suits and jokers."""
@@ -1216,13 +1266,15 @@ class _ReportPDF(FPDF):
                 self._podium_card(row)
 
     def _podium_card(self, row: ResultRow) -> None:
-        """Draw one podium card: place, name, run, hand, drawn card.
+        """Draw one podium card: place, name, run, hand, whole hand.
 
         A team card shows no plate -- its section's heading names the
         kind, mirroring the HTML's ``podium_card`` call. The hand line
         carries R-14's drawn card, as the top-list and field rows do:
         the draw is what decides 1st from 2nd, so it belongs on the
-        most visible surface too.
+        most visible surface too. ``all_cards`` adds the full field's
+        own whole-hand sub-row under that line, indented to the card's
+        name column.
         """
         self._maybe_page_break(1.1)
         indent = 0.70
@@ -1255,7 +1307,10 @@ class _ReportPDF(FPDF):
             ),
             _draw_marker(row),
         )
-        self.ln(0.32)
+        self.ln(0.20)
+        if self._opts.all_cards:
+            self._drawn_row(row.drawn, indent)
+        self.ln(0.12)
 
     def _top_lists(self, plan: Sections) -> None:
         """Draw the standings tables (5/5 or the solo ten)."""
@@ -1556,20 +1611,24 @@ class _ReportPDF(FPDF):
         self._hand_cell(row, max(remaining, 0.0))
         self._row_rule()
 
-    def _drawn_row(self, cards: Sequence[CardPair]) -> None:
-        """Draw the muted "All N cards, in draw order" sub-row."""
-        run = " ".join(_pair_text(pair) for pair in cards)
-        # DejaVu for the run: the sub-row spells out the suit glyphs.
-        self.set_font(_FONT_GLYPH, "", 6.5)
+    def _drawn_row(self, cards: Sequence[CardPair], indent: float = 0.0) -> None:
+        """Draw the muted "All N cards, in draw order" sub-row.
+
+        *indent* moves the line's left edge onto a podium card's name
+        column and narrows it to match; the full field draws it flush
+        left. The DejaVu face supplies the run's suit glyphs.
+        """
+        self.set_x(self.l_margin + indent)
+        self.set_font(_FONT_GLYPH, "", _DRAWN_SIZE)
         self.set_text_color(*_INK)
         self.multi_cell(
-            0,
-            0.12,
-            text=f"All {len(cards)} cards, in draw order: {run}",
+            self.epw - indent,
+            _DRAWN_LEADING,
+            text=_drawn_text(cards),
             new_x=XPos.LMARGIN,
             new_y=YPos.NEXT,
         )
-        self.ln(0.04)
+        self.ln(_DRAWN_GAP)
 
 
 def _atomic_write_bytes(path: Path | str, data: bytes) -> None:
@@ -1651,7 +1710,7 @@ def render(  # noqa: PLR0913, PLR0917
 
 
 # module-skeletons.md's frozen (ride, placed, path) plus the
-# letter/created_at/logo seams
+# letter/created_at/logo/self-test/all-cards seams
 def podium_poster(  # noqa: PLR0913
     ride: _RideLike,
     placed: Sequence[Placed],
@@ -1661,6 +1720,7 @@ def podium_poster(  # noqa: PLR0913
     created_at: datetime | None = None,
     logo_path: Path | str | None = None,
     self_test_unverified: bool = False,
+    all_cards: bool = True,
 ) -> None:
     """Write one finished ride's one-page podium poster PDF to *path*.
 
@@ -1671,7 +1731,11 @@ def podium_poster(  # noqa: PLR0913
     team/solo line, the hand's title-case prose name, and the best-5
     cards as large faces (steel accent for hearts/diamonds/jokers).
     A placing that drew a tie-break card (R-14) renders that card
-    beside its hand prose, as the report's own podium card does. The
+    beside its hand prose, as the report's own podium card does. With
+    ``all_cards`` on (the default) each card also spells out the
+    entry's ENTIRE hand under its hand line -- the report's own muted
+    "All N cards, in draw order: …" sub-row, scaled to the card -- so
+    the poster shows the whole deal, not just the best five faces. The
     footer is a credit line + generated stamp with no "Page n of N" --
     there is only one page. *path* is the caller-supplied full file
     path; the ``{ride-slug}-podium.pdf`` naming is the menu handler's
@@ -1695,6 +1759,8 @@ def podium_poster(  # noqa: PLR0913
         self_test_unverified: E6.4.3: whether the ride was finished
             over a failed evaluator self-test, which adds that note to
             the poster's header block.
+        all_cards: Whether each card spells out the entry's whole hand
+            in draw order (R-63's all-cards flag, the report's own).
 
     Raises:
         ValueError: *created_at* is not tz-aware.
@@ -1706,6 +1772,7 @@ def podium_poster(  # noqa: PLR0913
         created_at=stamp,
         logo_path=logo_path,
         self_test_unverified=self_test_unverified,
+        all_cards=all_cards,
     )
     poster.build(placed)
     data = _store_streams_raw(bytes(poster.output()))

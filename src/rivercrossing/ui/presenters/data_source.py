@@ -38,7 +38,7 @@ from rivercrossing.standings import (
 from rivercrossing.ui.rider_columns import SOLO_TEAM_TEXT
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Sequence
+    from collections.abc import Callable, Mapping, Sequence
 
     from rivercrossing.cards import Card
     from rivercrossing.ride import Crossing, Event, PendingMiss, RideEngine
@@ -421,7 +421,7 @@ def _event_time(event: Event) -> str:
     return ""
 
 
-def _audit_entry(event: Event) -> str:
+def _audit_entry(event: Event, plates_by_key: Mapping[str, str]) -> str:
     """Return the Entry cell one audit row shows for *event*.
 
     A ``dnf`` event carries the marked target's human display -- the
@@ -437,6 +437,11 @@ def _audit_entry(event: Event) -> str:
     that payload's ``draws`` row list is not one entry id and the cell
     would otherwise stay blank. Every other action reads those two keys
     and nothing else.
+
+    ``entry_id`` is the entry's stable key (E3.1.2's pooled-live-move
+    seam), so the cell renders the plate *plates_by_key* maps it to --
+    never the uuid. An id the map does not know (a legacy or
+    hand-written payload) renders as itself.
     """
     if event.action == "dnf":
         carried = event.payload.get("display")
@@ -446,7 +451,10 @@ def _audit_entry(event: Event) -> str:
         summary = event.payload.get("summary")
         if summary:
             return str(summary)
-    return str(event.payload.get("entry_id") or event.payload.get("plate") or "")
+    entry_id = event.payload.get("entry_id")
+    if entry_id:
+        return plates_by_key.get(str(entry_id), str(entry_id))
+    return str(event.payload.get("plate") or "")
 
 
 # E7.3.2: the audited correction actions whose arrival after an export
@@ -680,7 +688,11 @@ class _FeedContext:
     entry lookup maps and the four derived crossing sets) and hands it
     to :func:`_crossing_feed_row` for every crossing, so the per-row
     builder takes two arguments rather than eleven. Nothing outside
-    this module sees it.
+    this module sees it. ``dnf_entries``, ``times_by_entry`` and
+    ``totals_by_entry`` are keyed by the entry's stable
+    :attr:`~rivercrossing.roster.Entry.key`, the identity
+    ``Crossing.entry_id`` carries; ``dnf_riders`` stays plate-keyed,
+    because a rider's own number is what marks them (S1).
     """
 
     engine: RideEngine
@@ -740,18 +752,26 @@ def _crossing_feed_row(context: _FeedContext, crossing: Crossing) -> tuple[datet
     riders' laps, so the Needs Review tab words its row differently
     (``feed_model.review_issue``). It derives from *flagged* rather
     than recomputing the short-lap test, so the two bits cannot
-    disagree; the plate must still resolve to an entry for its type to
+    disagree; the crossing's entry must still resolve for its type to
     be readable, and a miss never reaches this builder at all.
+
+    The crossing's ``entry_id`` is the entry's stable key, so the entry
+    itself comes back through ``Roster.entry_by_key`` -- the same
+    lookup the engine files the crossing under -- and every rendered
+    cell carries the entry's own plate or display name, never the key
+    (E3.1.2's pooled-live-move seam). An entry that has left the
+    roster leaves the typed plate as the row's only handle, so Plate
+    and Name both fall back to it.
     """
     engine = context.engine
-    feed_entry = context.roster.resolve_plate(crossing.entry_id)
+    feed_entry = context.roster.entry_by_key(crossing.entry_id)
     times = context.times_by_entry.get(crossing.entry_id, ())
     totals = context.totals_by_entry.get(crossing.entry_id, ())
     lap_time_s = times[crossing.seq - 1] if crossing.seq <= len(times) else 0.0
     total_s = totals[crossing.seq - 1] if crossing.seq <= len(totals) else 0.0
     held_card = engine.held_card_for(crossing)
     rider_name = _rider_name_for(feed_entry, crossing.rider_plate)
-    entry_name = feed_entry.display_name if feed_entry is not None else crossing.entry_id
+    entry_name = feed_entry.display_name if feed_entry is not None else crossing.rider_plate or ""
     team_name = _team_name_for(feed_entry)
     elapsed_s = _elapsed_seconds(crossing.crossed_at, context.start)
     rider_plate = crossing.rider_plate
@@ -760,7 +780,7 @@ def _crossing_feed_row(context: _FeedContext, crossing: Crossing) -> tuple[datet
         crossing.crossed_at,
         FeedRow(
             time=format_duration(elapsed_s),
-            plate=rider_plate or crossing.entry_id,
+            plate=rider_plate or (feed_entry.plate if feed_entry is not None else ""),
             entry=rider_name or entry_name,
             team=team_name,
             lap=crossing.seq,
@@ -856,19 +876,19 @@ class EngineDataSource:
         """
         engine = self._engine
         dnf_entries = frozenset(
-            entry.plate for entry in self._roster.entries if engine.entry_is_dnf(entry)
+            entry.key for entry in self._roster.entries if engine.entry_is_dnf(entry)
         )
         times_by_entry: dict[str, tuple[float, ...]] = {}
         totals_by_entry: dict[str, list[float]] = {}
         for entry in self._roster.entries:
-            times = engine.lap_times(entry.plate)
-            times_by_entry[entry.plate] = times
+            times = engine.lap_times(entry.key)
+            times_by_entry[entry.key] = times
             running: list[float] = []
             total = 0.0
             for lap_time in times:
                 total += lap_time
                 running.append(total)
-            totals_by_entry[entry.plate] = running
+            totals_by_entry[entry.key] = running
         context = _FeedContext(
             engine=engine,
             roster=self._roster,
@@ -953,7 +973,7 @@ class EngineDataSource:
         engine = self._engine
         rows: list[RiderRow] = []
         for entry in self._roster.entries:
-            cards = tuple(card.code() for card in engine.credited_cards(entry.plate))
+            cards = tuple(card.code() for card in engine.credited_cards(entry.key))
             entry_dnf = engine.entry_is_dnf(entry)
             if entry.type is EntryType.TEAM:
                 rows.extend(
@@ -1045,13 +1065,16 @@ class EngineDataSource:
         reads exactly what the store-backed one projects from the
         persisted payloads (scope 6d). A ``dnf`` row's Entry cell is
         the target's carried display (:func:`_audit_entry`), never the
-        bare entry id.
+        bare entry id; every other row's ``entry_id`` is the entry's
+        stable key, so the cell renders the plate that key names and
+        never the uuid.
         """
+        plates_by_key = {entry.key: entry.plate for entry in self._roster.entries}
         return [
             AuditRow(
                 when=_event_time(event),
                 action=event.action,
-                entry=_audit_entry(event),
+                entry=_audit_entry(event, plates_by_key),
                 reason=str(event.payload.get("reason") or ""),
             )
             for event in reversed(self._engine.events)

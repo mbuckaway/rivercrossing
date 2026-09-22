@@ -11,16 +11,43 @@ not list one, and E8.1.1 stores per-user settings in a JSON config
 file (``rivercrossing.ui.presenters.settings``), not this database --
 the schema stays untouched.
 
-**One flattened v1 baseline.** The DDL below is edited in place as the
-schema evolves, never migrated. The v0 -> v1 -> v2 -> v3 migration
-chain and ``store/migrations.py`` were removed in Phase 2 (the rider
-``sex`` column): the project is unreleased, so a database file written
-by an older build is stale and has to be recreated, and migrations
-return after release. :data:`SCHEMA_VERSION` is 1;
-:func:`ensure_schema` creates this schema on an empty file and refuses
-any other stamped version.
+**Versioned and migrated in place.** :data:`SCHEMA_VERSION` is 3 and
+the DDL below is the *latest* shape, not a frozen baseline. The
+product-owner policy (spec §2): every schema change bumps
+:data:`SCHEMA_VERSION` and ships the step that upgrades an older file,
+in :mod:`rivercrossing.store.migrations`. :func:`ensure_schema` creates
+this schema on an empty file (ledger version 0), runs the chain on an
+older one, does nothing on a current one, and refuses a file stamped
+*newer* than this build -- there is no downgrade path.
 
-That flatten folded four changes back into the CREATE:
+Version 1 was the released flattened baseline, and the changes under
+**Version 1** below were folded into its CREATE while the project was
+unreleased. **Version 2** is the pooled-live-move seam, and the
+v1 -> v2 migration rebuilds ``entry`` for it, because SQLite cannot
+drop a table-level ``UNIQUE``. **Version 3** changes no DDL at all: it
+is a data-only step that rewrites the ``audit`` payloads a pre-v2
+build wrote -- the plated ``entry_id``/``old_entry_id``/``new_entry_id``
+the replay seam now resolves as keys -- which is why the DDL below is
+still v2's shape.
+
+**Version 2** adds, both in the table the migration rebuilds:
+
+- ``entry.key`` -- the entry's stable identity (E3.1.2's
+  pooled-live-move seam), a surrogate the ride engine files crossings
+  and credited hands under where a derived plate is mutable -- is a
+  real column, NOT NULL, right after the ``plate`` it is the stable
+  counterpart of.
+- ``entry.retired`` -- 0 for a live entry, 1 for one a pooled move
+  dissolved after it had recorded data (the same seam's persistence
+  half) -- is a real column with a NOT NULL DEFAULT 0, and the
+  per-ride plate uniqueness moved off the table into a partial unique
+  index over the live rows alone (``entry_plate_live_unique``,
+  ``WHERE retired = 0``): spec §2's "plate UNIQUE per ride" still
+  holds for the field, while a solo->team move may leave the retired
+  solo row holding the very plate the destination team has since
+  adopted (S1's lowest-numbered-rider derivation).
+
+**Version 1** carries:
 
 - ``ride.hold_short_laps`` -- the short-lap card policy -- is a real
   column (NOT NULL, DEFAULT 1 = hold short-lap cards for review), in
@@ -61,6 +88,8 @@ them; ``journal_mode`` persists in the file once set.
 
 import sqlite3
 
+from rivercrossing.store.migrations import run_migrations
+
 __all__ = [
     "PRAGMA_STATEMENTS",
     "SCHEMA_STATEMENTS",
@@ -72,10 +101,11 @@ __all__ = [
     "ensure_schema",
 ]
 
-# The one schema version this build reads and writes. A file stamped
-# with any other value is refused by :func:`ensure_schema` rather than
-# read under a shape it was not written with.
-SCHEMA_VERSION = 1
+# The schema version this build reads and writes. A file stamped with
+# an older one is upgraded in place by ``store.migrations``; a file
+# stamped with a newer one is refused by :func:`ensure_schema` rather
+# than read under a shape it was not written with.
+SCHEMA_VERSION = 3
 
 
 class StoreError(RuntimeError):
@@ -159,6 +189,7 @@ SCHEMA_STATEMENTS: tuple[str, ...] = (
         id           INTEGER PRIMARY KEY,
         ride_id      INTEGER NOT NULL REFERENCES ride(id),
         plate        TEXT    NOT NULL,
+        key          TEXT    NOT NULL,
         display_name TEXT    NOT NULL,
         type         TEXT    NOT NULL CHECK (type IN ('solo', 'team')),
         team_size    INTEGER NOT NULL,
@@ -166,8 +197,15 @@ SCHEMA_STATEMENTS: tuple[str, ...] = (
         dnf_at       INTEGER,
         notes        TEXT,
         logo_card    TEXT,
-        UNIQUE (ride_id, plate)
+        retired      INTEGER NOT NULL DEFAULT 0
     )
+    """,
+    # Spec §2's "plate UNIQUE per ride", enforced for the live field
+    # alone: a retired entry keeps the plate it held (a solo->team move
+    # re-derives the destination team's plate to exactly that number).
+    """
+    CREATE UNIQUE INDEX entry_plate_live_unique
+        ON entry (ride_id, plate) WHERE retired = 0
     """,
     """
     CREATE TABLE rider (
@@ -252,20 +290,26 @@ def _current_version(conn: sqlite3.Connection) -> int:
 
 
 def ensure_schema(conn: sqlite3.Connection) -> None:
-    """Create or verify the v1 schema on one connection.
+    """Bring the database to :data:`SCHEMA_VERSION` on one connection.
 
     The ledger table is bootstrapped first (CREATE IF NOT EXISTS, so
     re-running is harmless), then the stamped version decides:
 
-    - ``0`` -- no ledger row yet: create every table and stamp
+    - ``0`` -- no ledger row yet: create the current schema and stamp
       :data:`SCHEMA_VERSION`, all inside one explicit BEGIN/COMMIT so
       a mid-create failure rolls the whole schema back rather than
       leaving a half-built database behind (DDL alone autocommits in
       sqlite3, so the version record must share the transaction).
     - :data:`SCHEMA_VERSION` -- already current: a no-op, which is what
       makes re-open idempotent.
-    - anything else -- a file from another build: refuse, naming the
-      version found and the one expected.
+    - older -- upgrade in place: run
+      :func:`~rivercrossing.store.migrations.run_migrations` from the
+      stamped version to :data:`SCHEMA_VERSION`, then stamp it. Every
+      schema change ships the step that upgrades a file written before
+      it (product-owner policy, spec §2), so a file is never refused
+      for being old.
+    - newer -- a file from a later build: refuse, naming the version
+      found and the one expected. There is no downgrade path.
 
     Args:
         conn: The connection to bring to the current schema. Expects
@@ -274,18 +318,26 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
 
     Raises:
         SchemaVersionMismatchError: If the database's stamped version
-            is neither 0 nor :data:`SCHEMA_VERSION`.
+            is newer than :data:`SCHEMA_VERSION`.
     """
     conn.execute(SCHEMA_VERSION_DDL)
     current = _current_version(conn)
     if current == SCHEMA_VERSION:
         return
-    if current != 0:
+    if current == 0:
+        _create_schema(conn)
+        return
+    if current > SCHEMA_VERSION:
         raise SchemaVersionMismatchError(
             f"Database schema version {current} does not match this build's "
             f"schema version {SCHEMA_VERSION}. "
             "Rename or delete the database file to continue."
         )
+    run_migrations(conn, current, SCHEMA_VERSION)
+
+
+def _create_schema(conn: sqlite3.Connection) -> None:
+    """Create the current schema and stamp it, in one transaction."""
     conn.execute("BEGIN")
     try:
         for statement in SCHEMA_STATEMENTS:

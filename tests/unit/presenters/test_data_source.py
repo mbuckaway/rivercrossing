@@ -14,6 +14,14 @@ Pure functions over plain values -- no wx, no I/O, so there is nothing
 to fake or mock (T-10), bar the card-disposition read's scripted
 engine: a double for the one arm no engine command can still reach,
 never an I/O boundary.
+
+E3.1.2's live rider move lands here too: the console the editor's
+close-persist refreshes reads this source live, so the standings
+credit the destination with the moved rider's laps and the Needs
+Review list gains or loses the row the re-derived short-lap flag
+decides. Those two tests drive the real engine end to end, which is
+what makes the refresh's own claim ("the results recalculate from the
+engine") a pinned contract rather than an assumption.
 """
 
 from dataclasses import replace
@@ -27,6 +35,7 @@ from conftest import _pooled_team_roster, _roster_with_entries, gorba_config
 from rivercrossing.cards import Card, Shoe
 from rivercrossing.ride import Crossing, Event, RideEngine
 from rivercrossing.roster import Entry, EntryMode, EntryType, PlateModel, Rider, Roster
+from rivercrossing.ui.feed_model import review_issue
 from rivercrossing.ui.presenters import data_source as data_source_module
 from rivercrossing.ui.presenters.data_source import EngineDataSource
 
@@ -312,8 +321,10 @@ def test_feed_rows_given_a_crossing_whose_entry_left_the_roster_is_blank() -> No
 
     The crossing is recorded against the real roster and then read
     through a source whose roster no longer holds that entry -- the
-    feed's own "entry left the roster" case, where Plate and Name fall
-    back to the stored id and the Team cell has nothing to render.
+    feed's own "entry left the roster" case, where the plate the
+    operator typed is the row's only handle: Plate and Name both fall
+    back to it (never the crossing's internal key) and the Team cell
+    has nothing to render.
     """
     roster = _pooled_team_roster()
     engine = _running_engine(roster)
@@ -322,7 +333,7 @@ def test_feed_rows_given_a_crossing_whose_entry_left_the_roster_is_blank() -> No
 
     feed = source.feed_rows()
 
-    assert (feed[0].entry, feed[0].team) == ("9", "")
+    assert (feed[0].plate, feed[0].entry, feed[0].team) == ("45", "45", "")
 
 
 def test_rider_name_for_given_matching_plate_returns_that_riders_full_name() -> None:
@@ -1210,6 +1221,112 @@ def test_audit_entry_given_any_payload_renders_a_string(
     action: str, payload: dict[str, object]
 ) -> None:
     """Property (T-7): whatever a payload holds, the cell is text."""
-    cell = data_source_module._audit_entry(Event(action=action, payload=payload))
+    cell = data_source_module._audit_entry(Event(action=action, payload=payload), {"key": "12"})
 
     assert isinstance(cell, str)
+
+
+# --------------------------------- pooled live move re-attribution
+# E3.1.2's live move (R-17) re-keys the moved rider's data -- laps,
+# held and credited cards -- onto the destination entry, and the
+# engine files the moved crossings under the destination's key.
+# Every projection this source serves therefore follows the move,
+# because each reads the engine and the roster live: the standings
+# credit the destination with the laps, and the Needs Review list
+# gains or loses the row its re-derived short-lap flag decides
+# (``feed_model.review_issue``). Both tests drive the real engine --
+# nothing here is faked (T-10).
+
+
+def _two_team_pooled_roster() -> Roster:
+    """Build two pooled teams: Dynamos (9, 45) and Trail (7, 6)."""
+    roster = Roster(entry_mode=EntryMode.MIXED, plate_model=PlateModel.RIDER_POOLED)
+    roster.create_team_entry(
+        display_name="Dirt Dynamos",
+        riders=[Rider(first_name="Priya", plate="9"), Rider(first_name="Sarah", plate="45")],
+    )
+    roster.create_team_entry(
+        display_name="Trail Blazers",
+        riders=[Rider(first_name="Tara", plate="7"), Rider(first_name="Uma", plate="6")],
+    )
+    return roster
+
+
+def _review_issues(source: EngineDataSource) -> list[tuple[str, str]]:
+    """Return each row's plate and issue, plate-sorted (arrange).
+
+    Sorted so these tests read as "which rows are in the review set",
+    independent of the feed's own newest-first order (pinned elsewhere).
+    """
+    return sorted((row.plate, review_issue(row)) for row in source.feed_rows())
+
+
+def test_standings_given_a_live_move_credit_the_destination_with_the_laps() -> None:
+    """A team-to-team move re-attributes the ranked laps (R-17)."""
+    roster = _two_team_pooled_roster()
+    engine = _running_engine(roster)
+    engine.record_crossing("45", at=_dt(10, 0, 5))
+    engine.record_crossing("45", at=_dt(10, 0, 10))
+    engine.record_crossing("7", at=_dt(10, 0, 6))
+    engine.stop()
+    source = EngineDataSource(engine, roster)
+    before = [(row.entry, row.laps) for row in source.standings()[0]]
+
+    engine.move_rider("45", to_team="Trail Blazers", reason="rider swapped teams")
+
+    after = [(row.entry, row.laps) for row in source.standings()[0]]
+    assert (before, after) == (
+        [("Dirt Dynamos", 2), ("Trail Blazers", 1)],
+        [("Trail Blazers", 3), ("Dirt Dynamos", 0)],
+    )
+
+
+def test_feed_rows_given_a_move_that_lengthens_the_lap_drops_the_review_item() -> None:
+    """A moved lap is re-derived, so a team overlap can clear (R-17).
+
+    Sarah's second lap is half a second after Priya's on Dirt Dynamos
+    (the team-overlap reading); on Trail Blazers' later clock it is a
+    full lap, so the move takes the row out of the review set.
+    """
+    roster = _two_team_pooled_roster()
+    engine = _running_engine(roster, hold_short_laps=False)
+    engine.record_crossing("9", at=_dt(10, 0, 5))
+    engine.record_crossing("45", at=_half_a_second_on(_dt(10, 0, 5)))
+    engine.record_crossing("7", at=_dt(10, 0, 4))
+    engine.stop()
+    source = EngineDataSource(engine, roster)
+    before = _review_issues(source)
+
+    engine.move_rider("45", to_team="Trail Blazers", reason="rider swapped teams")
+
+    assert (before, _review_issues(source)) == (
+        [("45", "Team overlap"), ("7", ""), ("9", "")],
+        [("45", ""), ("7", ""), ("9", "")],
+    )
+
+
+def test_feed_rows_given_a_move_that_restores_a_short_lap_adds_the_review_item() -> None:
+    """A moved rider's reset void re-enters the review set (R-17).
+
+    Sarah's short second lap is voided, which takes the row out of the
+    feed; the move resets that void onto Trail Blazers, where the lap
+    is still short, so the row -- and its Team overlap reading -- comes
+    back.
+    """
+    roster = _two_team_pooled_roster()
+    team_a, _team_b = roster.entries
+    engine = _running_engine(roster)
+    engine.record_crossing("9", at=_dt(10, 0, 6))
+    engine.record_crossing("45", at=_half_a_second_on(_dt(10, 0, 5)))
+    engine.record_crossing("7", at=_dt(10, 0, 5))
+    engine.void_crossing(team_a.key, 2, reason="double entry")
+    engine.stop()
+    source = EngineDataSource(engine, roster)
+    before = _review_issues(source)
+
+    engine.move_rider("45", to_team="Trail Blazers", reason="rider swapped teams")
+
+    assert (before, _review_issues(source)) == (
+        [("7", ""), ("9", "")],
+        [("45", "Team overlap"), ("7", ""), ("9", "")],
+    )
