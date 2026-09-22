@@ -6,6 +6,27 @@ All notable changes to RiverCrossing are recorded here. The format follows
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-09-21
+
+### Added
+
+- **Live rider moves on a pooled ride** — a `rider_pooled` ride can move a rider **between teams**,
+  **team → solo**, or **solo → team** after the start, from **Stop** mode (RUNNING + stopped) or a
+  **reopened** ride; a live move is refused with "Stop the ride first". The rider's laps and cards
+  are re-credited to the destination, their voided laps reset, and the standings and review list
+  recalculate; the move is audit-logged and replays exactly. `team_relay` keeps its permanent start
+  lock (R-17), and the CSV import refuses every pooled reshape outside DRAFT (R-21).
+- **Whole hand on the podium** — the podium poster (HTML and PDF) and the results-page podium cards
+  now list each entry's entire hand (every drawn card, in draw order) beneath the best-5, matching
+  the full-field reports. The podium poster stays a single page.
+
+### Fixed
+
+- **Rides recorded before the pooled-move change reopen again** — the v1 → v2 migration added the
+  stable entry key but left the audit trail's plate-based entry ids, so an earlier ride failed to
+  load with "unknown entry key". The new data-only v2 → v3 step rewrites those audit identities to
+  the entries' keys, in place, on open.
+
 ## [1.0.23] - 2026-09-19
 
 ### Changed
