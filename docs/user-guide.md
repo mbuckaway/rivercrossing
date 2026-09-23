@@ -209,7 +209,20 @@ A ⚠ badge beside a tied place gives the tie's explanation on a double-click. O
 - **Podium Poster HTML…** — the same poster as a self-contained page.
 - **Export Standings CSV…** — place, plate, entry, type, sex, laps, hand, draw, and times when shown.
 - **Preview HTML in Browser** / **Preview Podium Poster HTML in Browser** / **Preview PDF in Browser** — open this session's last export of that format in your browser. Each needs a finished ride and an export made this session. After a restart the preview is disabled until the next export.
+- **Publish to WordPress…** — create or update a page on your WordPress site from the finished ride's results. Enter the site URL, a WordPress username, and an **Application Password**, then the page title, slug, an optional parent page (the "section" it sits under), and the publish status. The page is looked up by slug: one already there is updated, and a new page is created when there is none. The connection is remembered in this machine's settings file, so you type it once.
 - **Publish Options** — five checkable rows on the Results menu that shape every export: **Show lap & total times**, **Laps leaderboard**, **Fastest-time leaderboard**, **Full field**, and **All cards drawn**. With show-times off, the exports embed no time data, and the fastest-time leaderboard is cleared and disabled.
+
+### Before you publish to WordPress {: #before-wordpress }
+
+The site must be on **HTTPS**, and the account you use needs permission to publish pages. Do **not** use your normal WordPress password — create an **Application Password** at **Users → Your Profile → Application Passwords**, on the same page that shows the site URL and username to enter.
+
+If that **Application Passwords** section is missing from your profile, a security plugin has switched it off. **Wordfence disables Application Passwords by default**, and the option is not obvious to find:
+
+1. Open **Wordfence → Firewall → All Firewall Options**.
+2. The page has a **search box at the top** — search for `application passwords`. (Without the search, expand the **Brute Force Protection** section and look under its *Additional Options* heading.)
+3. Untick **Disable WordPress application passwords** and save. The label is inverted, so it must be **empty** for Application Passwords to work.
+
+Leave it unticked — an Application Password stops authenticating the moment that option is switched back on.
 
 ## How scoring works {: #poker-the-run-way }
 
@@ -344,6 +357,7 @@ A red check at launch opens the window so you can read it before carrying on. A 
 - **Moving the database to another machine** — copy `rides.db`, and its `rides.db.backups/` folder if you want the history. The app opens it in place on the new machine.
 - **Restoring a backup** — replace `rides.db` with the backup file, then relaunch.
 - **Theme change on Windows** — a dark or light switch applies at the next launch. The status bar says so.
+- **WordPress rejects the Application Password** — a security plugin has switched Application Passwords off. In Wordfence, open **Firewall → All Firewall Options**, search `application passwords` in the box at the top (or expand **Brute Force Protection → Additional Options**), and untick **Disable WordPress application passwords**. The setting is not obvious.
 
 ## Appendix A — Keyboard shortcuts {: #appendix-a-shortcuts }
 
