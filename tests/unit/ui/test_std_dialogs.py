@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-only
 """Headless tests for ui.std_dialogs' native message-dialog helpers.
 
-The seven ``show_*`` functions are thin ``wx.MessageDialog`` wiring:
+The eight ``show_*`` functions are thin ``wx.MessageDialog`` wiring:
 construct with a fixed style, optionally override the button labels,
 show modally, destroy, and return the modal id. Real dialogs
 need a desktop and would block on ``ShowModal``, so every test swaps
@@ -15,9 +15,12 @@ flag set: ``wx.ICON_INFORMATION`` / ``wx.ICON_WARNING`` /
 ``wx.ICON_ERROR`` with ``wx.CENTRE`` on every dialog. The two
 destructive confirms (``show_confirm`` warns, ``show_danger`` errors)
 also carry ``wx.CANCEL`` + ``wx.CANCEL_DEFAULT``, while the
-non-destructive ``show_prompt`` carries ``wx.CANCEL`` but leaves OK
-as the default button -- a reflex Enter must never destroy data, and
-must never block a safe action either.
+non-destructive ``show_prompt`` and ``show_retry`` carry
+``wx.CANCEL`` but leave OK as the default button -- a reflex Enter
+must never destroy data, and must never block a safe action either.
+``show_retry`` is the publish failure's question (Part B): the error
+icon because it reports a failure, and Retry as the default because
+retrying a failed publish loses nothing.
 
 ``show_three_choice`` is the one dialog with three outcomes -- Yes
 confirms, No voids, Cancel leaves the record alone -- so it carries
@@ -46,6 +49,7 @@ _ERROR_STYLE = wx.OK | wx.CENTRE | wx.ICON_ERROR
 _CONFIRM_STYLE = wx.OK | wx.CANCEL | wx.CENTRE | wx.ICON_WARNING | wx.CANCEL_DEFAULT
 _DANGER_STYLE = wx.OK | wx.CANCEL | wx.CENTRE | wx.ICON_ERROR | wx.CANCEL_DEFAULT
 _PROMPT_STYLE = wx.OK | wx.CANCEL | wx.CENTRE | wx.ICON_INFORMATION
+_RETRY_STYLE = wx.OK | wx.CANCEL | wx.CENTRE | wx.ICON_ERROR
 _THREE_CHOICE_STYLE = wx.YES_NO | wx.CANCEL | wx.CENTRE | wx.ICON_QUESTION | wx.CANCEL_DEFAULT
 
 _OK_LABEL = "Delete ride"
@@ -56,6 +60,7 @@ _LEAVE_LABEL = "Leave as is"
 _CONFIRM_ACT = partial(std_dialogs.show_confirm, ok_label=_OK_LABEL, cancel_label=_CANCEL_LABEL)
 _DANGER_ACT = partial(std_dialogs.show_danger, ok_label=_OK_LABEL, cancel_label=_CANCEL_LABEL)
 _PROMPT_ACT = partial(std_dialogs.show_prompt, ok_label=_OK_LABEL, cancel_label=_CANCEL_LABEL)
+_RETRY_ACT = partial(std_dialogs.show_retry, retry_label=_OK_LABEL, cancel_label=_CANCEL_LABEL)
 _THREE_CHOICE_ACT = partial(
     std_dialogs.show_three_choice,
     yes_label=_YES_LABEL,
@@ -71,6 +76,7 @@ _SHOW_CASES = (
     (_CONFIRM_ACT, _CONFIRM_STYLE),
     (_DANGER_ACT, _DANGER_STYLE),
     (_PROMPT_ACT, _PROMPT_STYLE),
+    (_RETRY_ACT, _RETRY_STYLE),
     (_THREE_CHOICE_ACT, _THREE_CHOICE_STYLE),
 )
 _SHOW_CASE_IDS = (
@@ -80,26 +86,37 @@ _SHOW_CASE_IDS = (
     "show_confirm",
     "show_danger",
     "show_prompt",
+    "show_retry",
     "show_three_choice",
 )
 _ALERT_CASES = _SHOW_CASES[:3]
 _ALERT_CASE_IDS = _SHOW_CASE_IDS[:3]
-# The three confirms name their own buttons; the three alerts keep wx's.
+# The four labelled questions name their own buttons; the three alerts
+# keep wx's.
 _LABELLED_CONFIRM_CASES = (
     (_CONFIRM_ACT, _CONFIRM_STYLE),
     (_DANGER_ACT, _DANGER_STYLE),
     (_PROMPT_ACT, _PROMPT_STYLE),
+    (_RETRY_ACT, _RETRY_STYLE),
 )
-_LABELLED_CONFIRM_CASE_IDS = ("show_confirm", "show_danger", "show_prompt")
+_LABELLED_CONFIRM_CASE_IDS = ("show_confirm", "show_danger", "show_prompt", "show_retry")
 
 # Phase 11 H2: the icon and the default button are what separate the
-# three confirms -- (act, expected icon, whether Cancel is the default).
+# labelled two-button questions -- (act, expected icon, whether Cancel
+# is the default). show_retry (Part B) is the one error-icon question
+# whose default is the OK/Retry side.
 _CONFIRM_ICON_AND_DEFAULT_CASES = (
     (_CONFIRM_ACT, wx.ICON_WARNING, True),
     (_DANGER_ACT, wx.ICON_ERROR, True),
     (_PROMPT_ACT, wx.ICON_INFORMATION, False),
+    (_RETRY_ACT, wx.ICON_ERROR, False),
 )
-_CONFIRM_ICON_AND_DEFAULT_CASE_IDS = ("show_confirm", "show_danger", "show_prompt")
+_CONFIRM_ICON_AND_DEFAULT_CASE_IDS = (
+    "show_confirm",
+    "show_danger",
+    "show_prompt",
+    "show_retry",
+)
 
 # Every modal id the three-choice dialog can return.
 _THREE_CHOICE_RESULT_CASES = (wx.ID_YES, wx.ID_NO, wx.ID_CANCEL)
@@ -253,6 +270,32 @@ def test_show_danger_differs_from_show_confirm_only_in_its_icon(
     assert style & wx.ICON_ERROR == wx.ICON_ERROR
     assert style & wx.ICON_WARNING == 0
     assert style & wx.CANCEL_DEFAULT == wx.CANCEL_DEFAULT
+
+
+def test_show_retry_given_a_failed_publish_keeps_retry_as_the_default_button(
+    created_dialogs: list[_FakeMessageDialog],
+) -> None:
+    """Part B: retrying loses nothing, so a reflex Enter retries.
+
+    The publish failure's own shape: the error icon (it reports a
+    failure) with OK left as the default, unlike ``show_danger``'s
+    error icon plus ``wx.CANCEL_DEFAULT``.
+    """
+    _RETRY_ACT(_PARENT, _TITLE, _MESSAGE)
+
+    style = created_dialogs[0].style
+    assert style & wx.ICON_ERROR == wx.ICON_ERROR
+    assert style & (wx.OK | wx.CANCEL) == wx.OK | wx.CANCEL
+    assert style & wx.CANCEL_DEFAULT == 0
+
+
+def test_show_retry_given_no_labels_names_its_buttons_retry_and_cancel(
+    created_dialogs: list[_FakeMessageDialog],
+) -> None:
+    """The defaults are the wording the publish failure shows."""
+    std_dialogs.show_retry(_PARENT, _TITLE, _MESSAGE)
+
+    assert created_dialogs[0].ok_cancel_labels == ("Retry", "Cancel")
 
 
 @pytest.mark.parametrize(("act", "expected_style"), _ALERT_CASES, ids=_ALERT_CASE_IDS)

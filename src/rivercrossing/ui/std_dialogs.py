@@ -2,27 +2,28 @@
 """Show one-shot alerts and multi-button questions as native wx dialogs.
 
 XRC-authored dialogs load and show through ``views.dialogs.run_dialog``,
-which wires their stock ids and light-mode panel tint. The seven
+which wires their stock ids and light-mode panel tint. The eight
 functions here cover the code-side native dialogs that need no XRC
 resource: one-shot alerts (``show_info``, ``show_warning``,
 ``show_error``), the three confirms -- ``show_confirm`` (a
 destructive question, warning icon), ``show_danger`` (a destructive
 question that discards data, so it carries the error icon rather than
 the warning one) and ``show_prompt`` (a non-destructive question,
-information icon, OK default) -- and ``show_three_choice`` (Yes
+information icon, OK default) -- ``show_retry`` (a failed action's
+question, error icon, Retry default) and ``show_three_choice`` (Yes
 confirms, No voids, Cancel does nothing). Each function constructs a
 plain ``wx.MessageDialog``, shows it modally, destroys it, and
 returns the modal id.
 
-The three confirms share :func:`_confirm`: the icon is what separates
+The confirms share :func:`_confirm`: the icon is what separates
 warning from error, and ``default_ok`` decides whether wx's
 ``CANCEL_DEFAULT`` marker is added -- every destructive question
 defaults to Cancel so a reflex Enter never destroys data, while
-``show_prompt`` leaves OK as the default because its action loses
-nothing. ``show_three_choice`` is its own shape rather than a fourth
-``_confirm``: the one dialog carries three named outcomes, and Cancel
-is the default there too, so a reflex Enter neither confirms nor
-voids.
+``show_prompt`` and ``show_retry`` leave OK as the default because
+their actions lose nothing. ``show_three_choice`` is its own shape
+rather than a fourth ``_confirm``: the one dialog carries three named
+outcomes, and Cancel is the default there too, so a reflex Enter
+neither confirms nor voids.
 
 The XRC wiring deliberately does not apply here. The panel tint is for
 XRC-drawn dialogs whose background wx cannot restyle natively; a
@@ -45,6 +46,7 @@ __all__ = [
     "show_error",
     "show_info",
     "show_prompt",
+    "show_retry",
     "show_three_choice",
     "show_warning",
 ]
@@ -264,6 +266,45 @@ def show_prompt(  # noqa: PLR0913, PLR0917 -- (parent, title, message) + 2 butto
         ok_label,
         cancel_label,
         icon=wx.ICON_INFORMATION,
+        default_ok=True,
+    )
+
+
+def show_retry(  # noqa: PLR0913, PLR0917 -- (parent, title, message) + 2 button labels
+    parent: wx.Window | None,
+    title: str,
+    message: str,
+    retry_label: str = "Retry",
+    cancel_label: str = "Cancel",
+) -> int:
+    """Show *message* as a failed action's retry confirm; return the id.
+
+    :func:`show_prompt`'s shape with the error icon in place of the
+    information one: a publish that failed reports a failure, not a
+    prompt. Retry stays the default button for the same reason the
+    prompt's OK does -- retrying a failed publish loses nothing, so a
+    reflex Enter may retry it. The two labels default to the retry
+    wording the publish failure shows, and still name both buttons.
+
+    Args:
+        parent: The owning window, or ``None`` for an unparented
+            dialog.
+        title: The dialog caption.
+        message: The question shown under the caption.
+        retry_label: The retry button's text.
+        cancel_label: The cancel button's text.
+
+    Returns:
+        ``ShowModal``'s result (``wx.ID_OK`` on retry,
+        ``wx.ID_CANCEL`` on cancel).
+    """
+    return _confirm(
+        parent,
+        title,
+        message,
+        retry_label,
+        cancel_label,
+        icon=wx.ICON_ERROR,
         default_ok=True,
     )
 

@@ -2783,9 +2783,10 @@ def _run_publish_offloop(  # noqa: PLR0913 -- context + the captured publish inp
     A successful publish posts the page's own link on the status bar and
     records it in the launch's log -- the always-on record, because a
     page that reached the internet has to be traceable from the log
-    alone. A failure shows the site's own message in one native error
-    alert and records it the same way, so a publish never fails
-    silently.
+    alone. A failure asks Retry/Cancel on the main thread and records
+    the site's own message the same way, so a publish never fails
+    silently: Retry starts a fresh worker thread on the captured
+    publish inputs, Cancel leaves the page unpublished.
     """
     from rivercrossing.ui import std_dialogs  # noqa: PLC0415 -- deferred, see module docstring
 
@@ -2806,11 +2807,22 @@ def _run_publish_offloop(  # noqa: PLR0913 -- context + the captured publish inp
             # unbound by the time CallAfter runs (Python deletes an
             # except target at the end of its block).
             wx = require_wx()
-            wx.CallAfter(std_dialogs.show_error, context.frame, "Publish Failed", str(exc))
+            wx.CallAfter(_ask_retry, str(exc))
             return
         _log_warn(context, f"Published to {page.link}")
         wx = require_wx()
         wx.CallAfter(context.frame.SetStatusText, f"Published to {page.link}")
+
+    def _ask_retry(message: str) -> None:
+        """Ask Retry/Cancel on the main thread; Retry re-publishes.
+
+        Called through ``wx.CallAfter`` so the dialog runs on the main
+        thread. Retry starts a fresh worker thread running the same
+        ``publish`` closure with the already-captured publish inputs.
+        """
+        wx = require_wx()
+        if std_dialogs.show_retry(context.frame, "Publish Failed", message) == int(wx.ID_OK):
+            threading.Thread(target=publish, daemon=True).start()
 
     threading.Thread(target=publish, daemon=True).start()
 
