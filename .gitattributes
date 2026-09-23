@@ -13,6 +13,11 @@ src/rivercrossing/vectors/*.csv text eol=lf
 # compiled_css + theme.css + the .j2 templates, added in EPIC 6).
 src/rivercrossing/htmlexport/templates/*.j2 text eol=lf
 src/rivercrossing/htmlexport/templates/compiled_css text eol=lf
+# The WordPress-scoped variant is derived from compiled_css by the same
+# LF-emitting generator and byte-compared by css_drift + test_gen_css,
+# so it needs the identical eol=lf contract (Windows autocrlf turned it
+# into CRLF and broke windows-latest).
+src/rivercrossing/htmlexport/templates/compiled_css_wp text eol=lf
 src/rivercrossing/htmlexport/templates/fonts_css text eol=lf
 src/rivercrossing/htmlexport/templates/theme.css text eol=lf
 tests/unit/fixtures/htmlexport/*.html text eol=lf
