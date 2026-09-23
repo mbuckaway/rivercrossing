@@ -49,6 +49,19 @@ Handling rules, in order of application:
   Test_standings' exclusion group pins the three shapes: a mixed
   field, a laps-leading DNF and an all-DNF field.
 
+- 0-lap ACTIVE entries are a PARTITION, not a filter, and only at
+  :func:`rank_by_kind` (Phase 7's DNS display). A rider who never
+  crossed a line still finished the ride ACTIVE, so on a FINISHED
+  ride their entry is a DNS ("Did Not Start") row: it is split off
+  *before* the sort, the surviving places renumber contiguously, and
+  the DNS rows are appended afterwards as unplaced, unflagged
+  :class:`Placed` rows (:attr:`Placed.dns`). Partitioning before the
+  ranking is what keeps a DNS row out of the draw flag a pair of
+  tied empty hands would otherwise collect. :class:`ZeroLapMode`
+  selects the treatment (``RANK`` legacy, ``DNS`` partition,
+  ``HIDE`` drop); :func:`rank` itself stays pure and never sees a
+  mode.
+
 - The two leaderboards share spec §6's board rule, "laps DESC, then
   total ASC", capped at ``top``, ACTIVE entries only; a (laps, time)
   tie is a draw, marked exactly as in :func:`rank`. The skeleton's
@@ -90,6 +103,7 @@ __all__ = [
     "EntryResult",
     "Placed",
     "TieBreak",
+    "ZeroLapMode",
     "hand_name",
     "laps_leaderboard",
     "rank",
@@ -139,6 +153,33 @@ LIVE_TIEBREAK_ORDER: tuple[TieBreak, ...] = (
     TieBreak.MOST_LAPS,
     TieBreak.TOTAL_TIME,
 )
+
+
+class ZeroLapMode(Enum):
+    """How a 0-lap ACTIVE entry is treated on a FINISHED ride (Phase 7).
+
+    A rider who recorded no crossing rode the whole ride without passing
+    a line; their entry is ACTIVE, so nothing in :func:`rank` drops it.
+    The Results menu's "Show DNS Riders" decides what the display does
+    with it, and the choice arrives here as one of these three:
+
+    - ``RANK`` -- legacy: the 0-lap entry ranks normally, on its (empty)
+      hand. This is what a LIVE board uses, because a board must always
+      show the whole field.
+    - ``DNS`` -- the 0-lap entry is a DNS row: partitioned out before
+      the ranking and appended unplaced at the end of its section.
+    - ``HIDE`` -- the 0-lap entry is dropped outright.
+
+    Nothing persists or reports this choice: the members themselves are
+    the whole interface (one per call site). The values are the
+    members' own readable spellings, so a stray repr -- a test id, a
+    debugger, a log line -- reads "rank"/"dns"/"hide" rather than a
+    number; unlike :class:`TieBreak`, they are not a storage contract.
+    """
+
+    RANK = "rank"
+    DNS = "dns"
+    HIDE = "hide"
 
 
 def tiebreak_order_from_spellings(spellings: Sequence[str]) -> tuple[TieBreak, ...]:
@@ -211,12 +252,20 @@ class Placed:
     any configured tie-break and must never be ordered silently; the
     results window badges the row (xrc-windows.md). ``tie_note`` names
     the flag ("draw required") when set, else None.
+
+    ``dns`` (Phase 7) marks a 0-lap ACTIVE entry on a FINISHED ride: it
+    is listed after the placed rows, with no place, no tie note and no
+    draw flag. Such a row carries ``place = 0`` -- a value no ranker
+    hands out -- because every place renderer gates on ``dns`` first
+    (a blank window/HTML/PDF cell, an empty CSV cell); the number is a
+    placeholder the renderers never read, not a place.
     """
 
     place: int
     result: EntryResult
     tie_note: str | None
     draw_required: bool
+    dns: bool = False
 
 
 def _validate_order(order: Sequence[object]) -> None:
@@ -324,6 +373,10 @@ def rank(
     entry, and an all-DNF field ranks to ``[]`` -- a DNF rider never
     appears in the results at all.
 
+    The function is pure: every ACTIVE entry it is given is placed,
+    0-lap ones included. The DNS treatment of a 0-lap entry is a
+    display decision the caller makes at :func:`rank_by_kind`.
+
     Args:
         results: The ride's finished snapshots, in any order.
         order: Tie-break criteria in priority sequence; defaults to
@@ -353,9 +406,46 @@ def rank(
     return _place_runs(runs)
 
 
+def _is_dns_candidate(result: EntryResult) -> bool:
+    """Return whether *result* is a 0-lap ACTIVE entry (a DNS row)."""
+    return not result.dnf and result.laps == 0
+
+
+def _dns_placed(result: EntryResult) -> Placed:
+    """Build the unplaced DNS row for one 0-lap ACTIVE entry.
+
+    ``place`` is 0: no ranker hands that value out, so a renderer that
+    forgot to gate on :attr:`Placed.dns` would show a visibly wrong
+    number rather than a plausible one.
+    """
+    return Placed(place=0, result=result, tie_note=None, draw_required=False, dns=True)
+
+
+def _rank_section(
+    results: Sequence[EntryResult], order: tuple[TieBreak, ...], zero_laps: ZeroLapMode
+) -> list[Placed]:
+    """Rank one kind's entries under *order* and the *zero_laps* mode.
+
+    ``RANK`` is the plain :func:`rank` result. Otherwise the 0-lap
+    ACTIVE entries are split off first -- so the survivors' places stay
+    contiguous and a tied pair of empty hands never draws a flag --
+    and put back per the mode: ``DNS`` appends them unplaced, in input
+    order, after the placed rows; ``HIDE`` leaves them out.
+    """
+    if zero_laps is ZeroLapMode.RANK:
+        return rank(results, order)
+    placed = rank([result for result in results if not _is_dns_candidate(result)], order)
+    if zero_laps is ZeroLapMode.HIDE:
+        return placed
+    placed.extend(_dns_placed(result) for result in results if _is_dns_candidate(result))
+    return placed
+
+
 def rank_by_kind(
     results: Sequence[EntryResult],
     order: tuple[TieBreak, ...] = DEFAULT_TIEBREAK_ORDER,
+    *,
+    zero_laps: ZeroLapMode = ZeroLapMode.RANK,
 ) -> tuple[list[Placed], list[Placed]]:
     """Rank a mixed field as two sections: teams, then solos.
 
@@ -367,16 +457,25 @@ def rank_by_kind(
     places from 1 and dropping its own DNF entries. A section with no
     results is empty.
 
+    Phase 7's ``zero_laps`` mode is applied per section by
+    :func:`_rank_section`, so each section keeps its own DNS tail (or
+    hides its own 0-lap entries) and neither kind's tail can appear in
+    the other's list.
+
     Args:
         results: The ride's finished snapshots, in any order.
         order: Tie-break criteria in priority sequence; defaults to
             :data:`DEFAULT_TIEBREAK_ORDER` -- the high-card draw first,
             so a drawn hand tie is ordered by card and an undrawn one
             flags for the venue (R-14).
+        zero_laps: How each section treats its 0-lap ACTIVE entries:
+            :attr:`ZeroLapMode.RANK` (the default) places them like any
+            other entry, :attr:`ZeroLapMode.DNS` appends them unplaced
+            after the placed rows, :attr:`ZeroLapMode.HIDE` drops them.
 
     Returns:
-        ``(teams, solo)`` -- each a :func:`rank` output over that
-        kind's ACTIVE results, best hand first.
+        ``(teams, solo)`` -- each a :func:`rank` output (plus that
+        section's DNS tail) best hand first.
 
     Raises:
         TypeError: *order* contains something other than a
@@ -384,7 +483,10 @@ def rank_by_kind(
     """
     teams = [result for result in results if result.kind == "team"]
     solo = [result for result in results if result.kind == "solo"]
-    return rank(teams, order), rank(solo, order)
+    return (
+        _rank_section(teams, order, zero_laps),
+        _rank_section(solo, order, zero_laps),
+    )
 
 
 def _lap_time_key(result: EntryResult) -> tuple[int, float]:

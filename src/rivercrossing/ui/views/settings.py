@@ -130,6 +130,7 @@ class SettingsDialog(DialogFindMixin):  # _find: ui.views._support
             publish_time_board=self._settings.publish_time_board,
             publish_full_field=self._settings.publish_full_field,
             publish_all_cards=self._settings.publish_all_cards,
+            show_dns_riders=self._settings.show_dns_riders,
         )
 
     # wx handler signature; EndModal is explicit, no Skip needed

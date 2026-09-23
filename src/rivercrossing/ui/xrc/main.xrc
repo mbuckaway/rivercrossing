@@ -694,19 +694,24 @@
   </object>
 
   <!--
-    Seven menus, 47 mi_* items and three stock ids, mapping 1:1 onto the
-    spec.md 15 table (File 8 - Ride 9 - Riders 4 - Cards 4 - Results 12 -
-    View 1 row, 9 items - Help 4). File order follows the 15 table
+    Seven menus, 49 mi_* items and three stock ids (two on File, one on
+    Help), mapping 1:1 onto the spec.md 15 table: File 6, Ride 9,
+    Riders 4, Cards 3, Results 15, View 9 (the 15 table's single View
+    row, expanding to its nine items) and Help 3 — 49 mi_* names in all.
+    File order follows the 15 table
     (Import CSV, Export CSV, Back Up, Simulation), not 15b's listing
     order.
 
-    Results 12: mi_tiebreak_order retired; the tie-break order now comes
+    Results 15: mi_tiebreak_order retired; the tie-break order now comes
     only from the ride's stored config, set in Ride Setup. The single
     mi_preview_browser split into the per-format HTML/PDF preview
     items (Part D), each gated on its own export existing, and G6
     added the five checkable publish options after them (a separator
     first, since they are a second group), plus its rename of the
-    HTML row to "Export HTML…". File 8:
+    HTML row to "Export HTML…". mi_show_dns_riders followed those five
+    (the same checkable group, no further separator): the Standings
+    window's and every export's DNS toggle — checked by default, from
+    the AppSettings default. File 6:
     mi_simulation opens the Rider Simulator after Back Up Database.
 
     W14: mi_ride_setup left the Ride menu with its spec.md 15 row; the
@@ -884,6 +889,19 @@
       </object>
       <object class="wxMenuItem" name="mi_all_cards">
         <label>All cards drawn</label>
+        <checkable>1</checkable>
+      </object>
+      <!--
+        The row's sixth toggle: hides a Finished ride's DNS rows from
+        the results (the Standings window and every export), and the
+        DNS text they carry. Checked by default; the default lives in
+        AppSettings.show_dns_riders, so the item carries no checked
+        element. Deliberately not a publish_* name, since it is not an
+        export-only option. A live ride always shows everyone (the
+        FINISHED gate lives in app/data_source).
+      -->
+      <object class="wxMenuItem" name="mi_show_dns_riders">
+        <label>Show DNS Riders</label>
         <checkable>1</checkable>
       </object>
     </object>

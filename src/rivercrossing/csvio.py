@@ -643,7 +643,12 @@ def export_standings(placed: Sequence[Placed], path: Path, *, show_times: bool =
     for the venue's high-card tie-break as its stored code (``"AH"``,
     ``"JK"``), blank for every entry that drew none -- a
     machine-readable companion to the window's Draw column and the
-    page's draw badge. DNF rows never reach this function --
+    page's draw badge. A DNS row (Phase 7) writes an empty ``place``
+    cell, the word ``DNS`` in ``laps`` and an empty ``total_time``: the
+    CSV belongs to the human standings surface the window draws, while
+    the embedded ``race-data`` JSON is the one that keeps the numeric 0
+    beside its ``dns`` flag (and a ``null`` time for the same row).
+    DNF rows never reach this function --
     ``standings.rank`` excludes them outright (per-rider DNF) -- so
     every row here is an active entry; an entry that never crossed
     renders a blank hand. The write
@@ -664,18 +669,26 @@ def export_standings(placed: Sequence[Placed], path: Path, *, show_times: bool =
     rows: list[list[str]] = []
     for placed_row in placed:
         result = placed_row.result
+        # A DNS row drew nothing: the finish's own draw records a card
+        # against every 0-lap entry (their empty hands all tie), and the
+        # row must not carry it (Phase 7).
+        draw = (
+            "" if placed_row.dns or result.tiebreak_card is None else result.tiebreak_card.code()
+        )
         row = [
-            str(placed_row.place),
+            "" if placed_row.dns else str(placed_row.place),
             result.plate,
             result.name,
             result.kind,
             result.sex or "",
-            str(result.laps),
+            "DNS" if placed_row.dns else str(result.laps),
             hand_name(result.hand) if result.cards else "",
-            result.tiebreak_card.code() if result.tiebreak_card is not None else "",
+            draw,
         ]
         if show_times:
-            row.append(repr(result.total_time))
+            # A DNS row holds no reading at all: blank, never the 0.0 a
+            # real zero-second total would print (Phase 7).
+            row.append("" if placed_row.dns else repr(result.total_time))
         rows.append(row)
     _write_csv_rows(path, header, rows)
 

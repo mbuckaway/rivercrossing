@@ -122,6 +122,12 @@ class AppSettings:
     XRC checkboxes' own (times off, laps leaderboard on, fastest-time
     leaderboard off, full field on, all cards on), so an upgrade reads
     the same as the canvas did.
+
+    ``show_dns_riders`` is that row's sixth entry: the Results menu's
+    "Show DNS Riders", **on** by default, so a finished ride's 0-lap
+    entries appear as DNS rows unless the operator hides them. It is
+    deliberately not a ``publish_*`` name -- it also drives the
+    Standings window, so it is not an export-only option.
     """
 
     appearance: str
@@ -153,6 +159,11 @@ class AppSettings:
     publish_time_board: bool = False
     publish_full_field: bool = True
     publish_all_cards: bool = True
+    # The Results menu's "Show DNS Riders": unlike the publish_* pair it
+    # also drives the Standings window, so it is not named publish_*.
+    # Off hides a Finished ride's DNS rows -- and the DNS text they
+    # carry in the exports; a live ride always shows everyone.
+    show_dns_riders: bool = True
 
 
 def default_settings() -> AppSettings:
@@ -162,9 +173,9 @@ def default_settings() -> AppSettings:
     on (spec §10's default), Total hidden and Lap time shown, 100%
     zoom, no saved layout yet, verbose logging on, the simulator's
     XRC spin and behaviour defaults (G9: one short-lap rider, no
-    lapped riders, no team rider stopping), and G6's publish options
+    lapped riders, no team rider stopping), G6's publish options
     (times off, laps leaderboard on, fastest-time leaderboard off,
-    full field and all cards on).
+    full field and all cards on) and the DNS toggle on.
     """
     return AppSettings(
         appearance=ThemeMode.SYSTEM.value,
@@ -189,6 +200,7 @@ def default_settings() -> AppSettings:
         publish_time_board=False,
         publish_full_field=True,
         publish_all_cards=True,
+        show_dns_riders=True,
     )
 
 
@@ -278,6 +290,7 @@ def save_settings(settings: AppSettings, path: Path | None = None) -> None:
         "publish_time_board": settings.publish_time_board,
         "publish_full_field": settings.publish_full_field,
         "publish_all_cards": settings.publish_all_cards,
+        "show_dns_riders": settings.show_dns_riders,
     }
     tmp = settings_path.with_name(settings_path.name + ".tmp")
     tmp.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
@@ -350,6 +363,7 @@ def _settings_from_mapping(raw: Mapping[str, object]) -> AppSettings:
         publish_all_cards=_bool_or(
             raw.get("publish_all_cards"), default=defaults.publish_all_cards
         ),
+        show_dns_riders=_bool_or(raw.get("show_dns_riders"), default=defaults.show_dns_riders),
     )
 
 

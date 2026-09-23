@@ -279,11 +279,39 @@ def _draw_marker(row: ResultRow) -> str:
     the DejaVu face, because Barlow carries no suit glyph (measured:
     fpdf2 drops ♥ and ★ from it); the two runs share the one column's
     width.
+
+    A DNS row (Phase 7) drew nothing: it never started, so the card
+    the finish's draw recorded against its tied empty hand is refused
+    here -- the rule holds even for a record built with ``dns`` and
+    ``draw`` both set, which the parsed ``race-data`` path can carry.
     """
-    if row.draw is None:
+    if row.dns or row.draw is None:
         return ""
     card = _pair_text(row.draw)
     return f" · DRAW {card}" if row.hand else f"DRAW {card}"
+
+
+def _laps_cell(row: ResultRow) -> str:
+    """Return a row's Laps cell: the word "DNS", else the count.
+
+    Phase 7: a DNS row never started, so its cell names that instead of
+    printing the 0 laps it recorded -- matching the page's own row
+    macros and the standings CSV.
+    """
+    return "DNS" if row.dns else str(row.laps)
+
+
+def _time_cell(row: ResultRow, value: str | None) -> str:
+    """Return a Total time / Best lap cell: blank for a DNS row.
+
+    Phase 7: a DNS entry never started, so it holds no reading at all
+    (the paired payload row's ``total``/``best_lap`` are ``None``); the
+    column itself stays, so no table width moves. A ``None`` from any
+    other source renders blank rather than the text "None".
+    """
+    if row.dns:
+        return ""
+    return value if value is not None else ""
 
 
 def _poster_subtitle(result: EntryResult) -> str:
@@ -861,6 +889,14 @@ class _PosterPDF(FPDF):
         team entry is a team event, the exporters' own rule). The
         payload maps *placed* position for position, so the pair the
         cards draw from is a plain zip of the two.
+
+        The cards come from the RANKED rows only: a DNS row (Phase 7)
+        was never placed, so it is not a podium finisher -- and because
+        ``_cards`` numbers its cards by position, a DNS row left in
+        would borrow a place it never earned. The team-event decision
+        still reads the whole partition, so a field whose teams are all
+        DNS is still a team event (its "Teams" heading is skipped, that
+        section having no cards).
         """
         payload = htmlexport.build_payload(
             self._ride,
@@ -872,13 +908,15 @@ class _PosterPDF(FPDF):
         self.add_page()
         self._header_block(payload.event.meta, payload.self_test_note)
         cards = list(zip(placed, payload.results, strict=True))
-        teams = [card for card in cards if card[0].result.kind == "team"]
-        solo = [card for card in cards if card[0].result.kind != "team"]
-        if not teams:
+        ranked = [card for card in cards if not card[0].dns]
+        teams = [card for card in ranked if card[0].result.kind == "team"]
+        solo = [card for card in ranked if card[0].result.kind != "team"]
+        if not any(card[0].result.kind == "team" for card in cards):
             self._cards(solo[: _FIRST_PLACE + 4], geom=_CARD_FULL)
             return
-        self._section_head("Teams")
-        self._cards(teams[: _FIRST_PLACE + 2], geom=_CARD_COMPACT)
+        if teams:
+            self._section_head("Teams")
+            self._cards(teams[: _FIRST_PLACE + 2], geom=_CARD_COMPACT)
         if solo:
             self._section_head("Solo riders")
             self._cards(solo[: _FIRST_PLACE + 2], geom=_CARD_COMPACT)
@@ -1017,8 +1055,8 @@ class _ReportPDF(FPDF):
     export's order, one drawer per planned section.
     """
 
-    # (ride, opts, letter, created_at, logo_path, self_test_unverified):
-    # the report's state inputs
+    # (ride, opts, letter, created_at, logo_path, self_test_unverified,
+    # riders): the report's state inputs
     def __init__(  # noqa: PLR0913
         self,
         ride: _RideLike,
@@ -1028,6 +1066,7 @@ class _ReportPDF(FPDF):
         created_at: datetime,
         logo_path: Path | str | None = None,
         self_test_unverified: bool = False,
+        riders: int = 0,
     ) -> None:
         """Open one report: geometry, fonts, metadata, footer stamp.
 
@@ -1043,6 +1082,7 @@ class _ReportPDF(FPDF):
         self._generated = htmlexport.format_generated(created_at)
         self._logo_path = logo_path
         self._self_test_unverified = self_test_unverified
+        self._riders = riders
         self.alias_nb_pages("{nb}")
 
     def file_id(self) -> None:
@@ -1192,6 +1232,7 @@ class _ReportPDF(FPDF):
             self._opts,
             self._generated,
             self_test_unverified=self._self_test_unverified,
+            riders=self._riders,
         )
         plan = htmlexport.sections(payload, placed)
         self.add_page()
@@ -1221,10 +1262,15 @@ class _ReportPDF(FPDF):
         self.set_text_color(*_INK)
         self.cell(0, 0.16, text=event.meta)
         self.ln(0.18)
-        self.cell(0, 0.16, text=f"{event.entries:,} · {event.laps:,} · {event.cards:,}", align="R")
+        self.cell(
+            0,
+            0.16,
+            text=f"{event.entries:,} · {event.laps:,} · {event.cards:,} · {event.riders:,}",
+            align="R",
+        )
         self.ln(0.17)
         self.set_font(_FONT_BODY, "", 7.5)
-        self.cell(0, 0.13, text="entries · laps · cards dealt", align="R")
+        self.cell(0, 0.13, text="entries · laps · cards dealt · unique riders", align="R")
         self.ln(0.05)
         self._rule()
         self.ln(0.10)
@@ -1347,9 +1393,15 @@ class _ReportPDF(FPDF):
     def _standings_row(
         self, widths: Sequence[float], row: ResultRow, *, show_plate: bool = True
     ) -> None:
-        """Draw one top-list row (the team form has no Plate cell)."""
+        """Draw one top-list row (the team form has no Plate cell).
+
+        A DNS row (Phase 7) has no place to print and no lap count to
+        show: its Place cell is blank and its Laps cell carries the
+        word "DNS", the same two readings the page's own row macros
+        render.
+        """
         self._at_column(widths, 0)
-        self._scalar(_Cell(widths[0], str(row.place), _ROW_BOLD))
+        self._scalar(_Cell(widths[0], "" if row.dns else str(row.place), _ROW_BOLD))
         col = 1
         if show_plate:
             self._at_column(widths, col)
@@ -1359,7 +1411,7 @@ class _ReportPDF(FPDF):
         self._scalar(_Cell(widths[col], row.entry, _ROW_STYLE))
         col += 1
         self._at_column(widths, col)
-        self._scalar(_Cell(widths[col], str(row.laps), _ROW_RIGHT))
+        self._scalar(_Cell(widths[col], _laps_cell(row), _ROW_RIGHT))
         col += 1
         if self._opts.show_times:
             self._at_column(widths, col)
@@ -1538,24 +1590,26 @@ class _ReportPDF(FPDF):
         The row's small inline logo (the shared payload's own data URI)
         draws before the name when it carries one, mirroring the HTML's
         ``team_field_row``; the DNF mark follows the name and the last
-        column carries R-14's drawn card like the solo row's own.
+        column carries R-14's drawn card like the solo row's own. A DNS
+        row (Phase 7) prints a blank Place cell, "DNS" for its laps and
+        blank Total time / Best lap cells.
         """
         name = f"{row.entry} DNF" if row.dnf else row.entry
         self._at_column(widths, 0)
-        self._scalar(_Cell(widths[0], str(row.place), _FIELD_BOLD))
+        self._scalar(_Cell(widths[0], "" if row.dns else str(row.place), _FIELD_BOLD))
         self._at_column(widths, 1)
         logo_width = self._inline_logo(row.logo)
         self._scalar(_Cell(widths[1] - logo_width, name, _FIELD_STYLE))
         col = 2
         self._at_column(widths, col)
-        self._scalar(_Cell(widths[col], str(row.laps), _FIELD_STYLE))
+        self._scalar(_Cell(widths[col], _laps_cell(row), _FIELD_STYLE))
         col += 1
         if self._opts.show_times:
             self._at_column(widths, col)
-            self._scalar(_Cell(widths[col], cast("str", row.total), _FIELD_STYLE))
+            self._scalar(_Cell(widths[col], _time_cell(row, row.total), _FIELD_STYLE))
             col += 1
             self._at_column(widths, col)
-            self._scalar(_Cell(widths[col], cast("str", row.best_lap), _FIELD_STYLE))
+            self._scalar(_Cell(widths[col], _time_cell(row, row.best_lap), _FIELD_STYLE))
             col += 1
         self._at_column(widths, col)
         self._cards_cell(row.cards, widths[col])
@@ -1582,12 +1636,14 @@ class _ReportPDF(FPDF):
         The row's sex (E7) rides in the entry cell beside the name --
         "Luca Ferrari (M)" -- the least invasive of the two options,
         since a dedicated column would re-cut every width. A team's sex
-        is None (no single sex) and renders nothing.
+        is None (no single sex) and renders nothing. A DNS row
+        (Phase 7) prints a blank Place cell, "DNS" for its laps and
+        blank Total time / Best lap cells.
         """
         cell_name = f"{row.entry} ({row.sex})" if row.sex else row.entry
         name = f"{cell_name} DNF" if row.dnf else cell_name
         self._at_column(widths, 0)
-        self._scalar(_Cell(widths[0], str(row.place), _FIELD_BOLD))
+        self._scalar(_Cell(widths[0], "" if row.dns else str(row.place), _FIELD_BOLD))
         self._at_column(widths, 1)
         self._scalar(_Cell(widths[1], str(row.plate), _FIELD_BOLD))
         self._at_column(widths, 2)
@@ -1595,14 +1651,14 @@ class _ReportPDF(FPDF):
         self._at_column(widths, 3)
         self._scalar(_Cell(widths[3], row.entry_type, _FIELD_STYLE))
         self._at_column(widths, 4)
-        self._scalar(_Cell(widths[4], str(row.laps), _FIELD_STYLE))
+        self._scalar(_Cell(widths[4], _laps_cell(row), _FIELD_STYLE))
         col = 5
         if self._opts.show_times:
             self._at_column(widths, col)
-            self._scalar(_Cell(widths[col], cast("str", row.total), _FIELD_STYLE))
+            self._scalar(_Cell(widths[col], _time_cell(row, row.total), _FIELD_STYLE))
             col += 1
             self._at_column(widths, col)
-            self._scalar(_Cell(widths[col], cast("str", row.best_lap), _FIELD_STYLE))
+            self._scalar(_Cell(widths[col], _time_cell(row, row.best_lap), _FIELD_STYLE))
             col += 1
         last = len(widths) - 1
         self._at_column(widths, last)
@@ -1659,6 +1715,7 @@ def render(  # noqa: PLR0913, PLR0917
     created_at: datetime | None = None,
     logo_path: Path | str | None = None,
     self_test_unverified: bool = False,
+    riders: int = 0,
 ) -> None:
     """Write one finished ride's results report PDF to *path*.
 
@@ -1691,6 +1748,8 @@ def render(  # noqa: PLR0913, PLR0917
         self_test_unverified: E6.4.3: whether the ride was finished
             over a failed evaluator self-test, which adds that note to
             the cover.
+        riders: The number of individual riders the cover's fourth
+            counter shows; 0 when the caller supplies no count.
 
     Raises:
         ValueError: *created_at* is not tz-aware.
@@ -1703,6 +1762,7 @@ def render(  # noqa: PLR0913, PLR0917
         created_at=stamp,
         logo_path=logo_path,
         self_test_unverified=self_test_unverified,
+        riders=riders,
     )
     report.build(placed)
     data = _store_streams_raw(bytes(report.output()))

@@ -197,19 +197,19 @@ Select a row on the Needs Review tab and press **Review…**, or double-click it
 
 ### The Standings window {: #results-window }
 
-**Results ▸ Standings** (<kbd>F5</kbd>) shows the full field with place, plate, entry, laps, best-5 cards, hand name, and the drawn card. The **Draw** column holds the card the entry drew for the tie-break draw. It is blank for every entry that drew none.
+**Results ▸ Standings** (<kbd>F5</kbd>) shows the full field with place, plate, entry, laps, best-5 cards, hand name, and the drawn card. The **Draw** column holds the card the entry drew for the tie-break draw. It is blank for every entry that drew none. On a finished ride, an entry with no recorded laps appears at the bottom of its section with no place and **DNS** for laps.
 
 A ⚠ badge beside a tied place gives the tie's explanation on a double-click. On a mixed ride the standings sit on two notebook pages, **Teams** and **Solo**, each numbered from 1. On a rider-pooled ride the Teams tab drops its Plate column, because a pooled team's plate comes from its members. The dialog is modal, so close it to get back to the console.
 
 ## Publishing results {: #publishing-results }
 
-- **Export HTML…** — one self-contained file you can post anywhere. A row that drew a tie-break card shows a **draw** badge beside its entry name. On a mixed ride it renders per-kind sections: top 3 teams then top 3 solo riders on the podium, Top teams and Top solo riders (five each), Most laps split teams and solo (five each), and the Full field with a compact plate-less Teams subsection followed by the Solo riders with plates. A solo ride keeps the single-kind page.
+- **Export HTML…** — one self-contained file you can post anywhere. A row that drew a tie-break card shows a **draw** badge beside its entry name. On a mixed ride it renders per-kind sections: top 3 teams then top 3 solo riders on the podium, Top teams and Top solo riders (five each), Most laps split teams and solo (five each), and the Full field with a compact plate-less Teams subsection followed by the Solo riders with plates. A solo ride keeps the single-kind page. The page header carries a fourth counter, **unique riders** (individual riders riding solo or on a team), which excludes the DNS entries.
 - **Export PDF…** — the same sections as the HTML export, as a printable report.
 - **Podium Poster PDF…** — a single celebratory page for the prize table: top 3 teams plus top 3 solo riders on a mixed ride, or the top 5 solo riders on a solo ride.
 - **Podium Poster HTML…** — the same poster as a self-contained page.
 - **Export Standings CSV…** — place, plate, entry, type, sex, laps, hand, draw, and times when shown.
 - **Preview HTML in Browser** / **Preview Podium Poster HTML in Browser** / **Preview PDF in Browser** — open this session's last export of that format in your browser. Each needs a finished ride and an export made this session. After a restart the preview is disabled until the next export.
-- **Publish Options** — five checkable rows on the Results menu that shape every export: **Show lap & total times**, **Laps leaderboard**, **Fastest-time leaderboard**, **Full field**, and **All cards drawn**. With show-times off, the exports embed no time data, and the fastest-time leaderboard is cleared and disabled.
+- **Publish Options** — six checkable rows on the Results menu that shape every export: **Show lap & total times**, **Laps leaderboard**, **Fastest-time leaderboard**, **Full field**, **All cards drawn**, and **Show DNS Riders**. A rider or team with no recorded laps on a finished ride shows as **DNS** at the bottom of its section; unchecking **Show DNS Riders** hides those rows. With show-times off, the exports embed no time data, and the fastest-time leaderboard is cleared and disabled.
 
 ## How scoring works {: #poker-the-run-way }
 

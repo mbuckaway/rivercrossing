@@ -46,8 +46,8 @@
         <p class="mt-1 text-sm text-ink/60">{{ event.meta }}</p>
       </div>
       <div class="ms-auto text-right hidden sm:block">
-        <div class="font-head font-semibold text-3xl leading-none">{{ event.entries }} · {{ event.laps }} · {{ event.cards }}</div>
-        <div class="text-xs text-ink/55 mt-1">entries · laps · cards dealt</div>
+        <div class="font-head font-semibold text-3xl leading-none">{{ event.entries }} · {{ event.laps }} · {{ event.cards }} · {{ event.riders }}</div>
+        <div class="text-xs text-ink/55 mt-1">entries · laps · cards dealt · unique riders</div>
       </div>
     </div>
   </header>
@@ -58,11 +58,11 @@
 {%- endmacro %}
 
 {% macro standings_row(r, options) -%}
-<tr class="border-b border-ink/8{{ ' bg-steel-500/10' if r.place == 1 }}"><td class="py-2 pr-3 font-bold">{{ r.place }}</td><td class="py-2 pr-3 font-bold">{{ r.plate }}</td><td class="py-2 pr-3">{% if r.logo %}<img src="{{ r.logo }}" alt="" class="team-logo h-5 w-auto align-middle me-1.5">{% endif %}{{ r.entry }}{% if r.tie %} <span class="text-[10px] uppercase border border-steel-600 text-steel-700 px-1.5 py-0.5">tie-break</span>{% endif %}{% if r.draw %} {{ draw_badge(r) }}{% endif %}</td><td class="py-2 pr-3">{{ r.laps }}</td>{% if options.show_times %}<td class="py-2 pr-3 t-col">{{ r.total }}</td>{% endif %}<td class="py-2 pr-3">{{ chips(r.cards) }}</td><td class="py-2 font-head font-semibold uppercase">{{ r.hand }}</td></tr>
+<tr class="border-b border-ink/8{{ ' bg-steel-500/10' if r.place == 1 }}"><td class="py-2 pr-3 font-bold">{{ '' if r.dns else r.place }}</td><td class="py-2 pr-3 font-bold">{{ r.plate }}</td><td class="py-2 pr-3">{% if r.logo %}<img src="{{ r.logo }}" alt="" class="team-logo h-5 w-auto align-middle me-1.5">{% endif %}{{ r.entry }}{% if r.tie %} <span class="text-[10px] uppercase border border-steel-600 text-steel-700 px-1.5 py-0.5">tie-break</span>{% endif %}{% if r.draw %} {{ draw_badge(r) }}{% endif %}</td><td class="py-2 pr-3">{{ 'DNS' if r.dns else r.laps }}</td>{% if options.show_times %}<td class="py-2 pr-3 t-col">{{ r.total }}</td>{% endif %}<td class="py-2 pr-3">{{ chips(r.cards) }}</td><td class="py-2 font-head font-semibold uppercase">{{ r.hand }}</td></tr>
 {%- endmacro %}
 
 {% macro team_standings_row(r, options) -%}
-<tr class="border-b border-ink/8{{ ' bg-steel-500/10' if r.place == 1 }}"><td class="py-2 pr-3 font-bold">{{ r.place }}</td><td class="py-2 pr-3">{% if r.logo %}<img src="{{ r.logo }}" alt="" class="team-logo h-5 w-auto align-middle me-1.5">{% endif %}{{ r.entry }}{% if r.tie %} <span class="text-[10px] uppercase border border-steel-600 text-steel-700 px-1.5 py-0.5">tie-break</span>{% endif %}{% if r.draw %} {{ draw_badge(r) }}{% endif %}</td><td class="py-2 pr-3">{{ r.laps }}</td>{% if options.show_times %}<td class="py-2 pr-3 t-col">{{ r.total }}</td>{% endif %}<td class="py-2 pr-3">{{ chips(r.cards) }}</td><td class="py-2 font-head font-semibold uppercase">{{ r.hand }}</td></tr>
+<tr class="border-b border-ink/8{{ ' bg-steel-500/10' if r.place == 1 }}"><td class="py-2 pr-3 font-bold">{{ '' if r.dns else r.place }}</td><td class="py-2 pr-3">{% if r.logo %}<img src="{{ r.logo }}" alt="" class="team-logo h-5 w-auto align-middle me-1.5">{% endif %}{{ r.entry }}{% if r.tie %} <span class="text-[10px] uppercase border border-steel-600 text-steel-700 px-1.5 py-0.5">tie-break</span>{% endif %}{% if r.draw %} {{ draw_badge(r) }}{% endif %}</td><td class="py-2 pr-3">{{ 'DNS' if r.dns else r.laps }}</td>{% if options.show_times %}<td class="py-2 pr-3 t-col">{{ r.total }}</td>{% endif %}<td class="py-2 pr-3">{{ chips(r.cards) }}</td><td class="py-2 font-head font-semibold uppercase">{{ r.hand }}</td></tr>
 {%- endmacro %}
 
 {% macro laps_board(rows, options, title='Most laps', show_plate=true) -%}
@@ -74,11 +74,11 @@
 {%- endmacro %}
 
 {% macro field_row(r, options) -%}
-<tr class="border-b border-ink/8{{ ' opacity-60' if r.dnf }}"><td class="py-1.5 pr-3">{{ r.place }}</td><td class="py-1.5 pr-3 font-bold">{{ r.plate }}</td><td class="py-1.5 pr-3">{% if r.logo %}<img src="{{ r.logo }}" alt="" class="team-logo h-5 w-auto align-middle me-1.5">{% endif %}{{ r.entry }}{% if r.sex %}<span class="text-xs text-ink/55"> · {{ r.sex }}</span>{% endif %}{% if r.dnf %} <span class="text-[10px] uppercase border border-ink/30 px-1.5 py-0.5">dnf</span>{% endif %}{% if r.draw %} {{ draw_badge(r) }}{% endif %}</td><td class="py-1.5 pr-3 text-xs uppercase text-ink/55">{{ r.type }}</td><td class="py-1.5 pr-3">{{ r.laps }}</td>{% if options.show_times %}<td class="py-1.5 pr-3 t-col">{{ r.total }}</td><td class="py-1.5 pr-3 t-col">{{ r.best_lap }}</td>{% endif %}<td class="py-1.5">{{ chips(r.cards) }} <span class="ms-1 font-head font-semibold uppercase text-xs">{{ r.hand }}</span></td></tr>
+<tr class="border-b border-ink/8{{ ' opacity-60' if r.dnf }}"><td class="py-1.5 pr-3">{{ '' if r.dns else r.place }}</td><td class="py-1.5 pr-3 font-bold">{{ r.plate }}</td><td class="py-1.5 pr-3">{% if r.logo %}<img src="{{ r.logo }}" alt="" class="team-logo h-5 w-auto align-middle me-1.5">{% endif %}{{ r.entry }}{% if r.sex %}<span class="text-xs text-ink/55"> · {{ r.sex }}</span>{% endif %}{% if r.dnf %} <span class="text-[10px] uppercase border border-ink/30 px-1.5 py-0.5">dnf</span>{% endif %}{% if r.draw %} {{ draw_badge(r) }}{% endif %}</td><td class="py-1.5 pr-3 text-xs uppercase text-ink/55">{{ r.type }}</td><td class="py-1.5 pr-3">{{ 'DNS' if r.dns else r.laps }}</td>{% if options.show_times %}<td class="py-1.5 pr-3 t-col">{{ '' if r.dns else r.total }}</td><td class="py-1.5 pr-3 t-col">{{ '' if r.dns else r.best_lap }}</td>{% endif %}<td class="py-1.5">{{ chips(r.cards) }} <span class="ms-1 font-head font-semibold uppercase text-xs">{{ r.hand }}</span></td></tr>
 {%- endmacro %}
 
 {% macro team_field_row(r, options) -%}
-<tr class="border-b border-ink/8{{ ' opacity-60' if r.dnf }}"><td class="py-1.5 pr-3">{{ r.place }}</td><td class="py-1.5 pr-3">{% if r.logo %}<img src="{{ r.logo }}" alt="" class="team-logo h-5 w-auto align-middle me-1.5">{% endif %}{{ r.entry }}{% if r.dnf %} <span class="text-[10px] uppercase border border-ink/30 px-1.5 py-0.5">dnf</span>{% endif %}{% if r.draw %} {{ draw_badge(r) }}{% endif %}</td><td class="py-1.5 pr-3">{{ r.laps }}</td>{% if options.show_times %}<td class="py-1.5 pr-3 t-col">{{ r.total }}</td><td class="py-1.5 pr-3 t-col">{{ r.best_lap }}</td>{% endif %}<td class="py-1.5 pr-3">{{ chips(r.cards) }}</td><td class="py-1.5 font-head font-semibold uppercase text-xs">{{ r.hand }}</td></tr>
+<tr class="border-b border-ink/8{{ ' opacity-60' if r.dnf }}"><td class="py-1.5 pr-3">{{ '' if r.dns else r.place }}</td><td class="py-1.5 pr-3">{% if r.logo %}<img src="{{ r.logo }}" alt="" class="team-logo h-5 w-auto align-middle me-1.5">{% endif %}{{ r.entry }}{% if r.dnf %} <span class="text-[10px] uppercase border border-ink/30 px-1.5 py-0.5">dnf</span>{% endif %}{% if r.draw %} {{ draw_badge(r) }}{% endif %}</td><td class="py-1.5 pr-3">{{ 'DNS' if r.dns else r.laps }}</td>{% if options.show_times %}<td class="py-1.5 pr-3 t-col">{{ '' if r.dns else r.total }}</td><td class="py-1.5 pr-3 t-col">{{ '' if r.dns else r.best_lap }}</td>{% endif %}<td class="py-1.5 pr-3">{{ chips(r.cards) }}</td><td class="py-1.5 font-head font-semibold uppercase text-xs">{{ r.hand }}</td></tr>
 {%- endmacro %}
 
 {% macro drawn_row(r, span) -%}
