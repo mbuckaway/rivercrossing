@@ -1330,3 +1330,106 @@ def test_feed_rows_given_a_move_that_restores_a_short_lap_adds_the_review_item()
         [("7", ""), ("9", "")],
         [("45", "Team overlap"), ("7", ""), ("9", "")],
     )
+
+
+# ------------------------------------------- the DNS results display
+# The Results menu's "Show DNS Riders" reaches this source as
+# ``show_dns_riders`` (checked by default). It only bites on a FINISHED
+# ride: a live board (DRAFT/RUNNING/REOPENED) ranks everyone normally,
+# so the operator never watches rows vanish mid-ride.
+
+
+def _finished_two_entry_ride() -> tuple[EngineDataSource, RideEngine]:
+    """Return a FINISHED two-team ride source and its engine.
+
+    One team crossed twice, the other never: the 0-lap ACTIVE entry
+    the toggle decides about.
+    """
+    roster = _two_team_pooled_roster()
+    engine = _running_engine(roster)
+    engine.record_crossing("45", at=_dt(10, 0, 5))
+    engine.record_crossing("9", at=_dt(10, 0, 9))
+    engine.finish()
+    return EngineDataSource(engine, roster), engine
+
+
+def test_standings_given_a_finished_ride_and_dns_riders_on_appends_the_dns_team() -> None:
+    """Checked: the 0-lap team renders last, unplaced and marked DNS."""
+    source, _engine = _finished_two_entry_ride()
+
+    teams, _solo = source.standings(show_dns_riders=True)
+
+    assert [(row.entry, row.laps, row.place, row.dns) for row in teams] == [
+        ("Dirt Dynamos", 2, 1, False),
+        ("Trail Blazers", 0, 0, True),
+    ]
+
+
+def test_standings_given_a_finished_ride_and_dns_riders_omitted_shows_them() -> None:
+    """Omitting the flag is the checked menu item's own reading."""
+    source, _engine = _finished_two_entry_ride()
+
+    teams, _solo = source.standings()
+
+    assert [(row.entry, row.dns) for row in teams] == [
+        ("Dirt Dynamos", False),
+        ("Trail Blazers", True),
+    ]
+
+
+def test_standings_given_a_finished_ride_and_dns_riders_off_hides_the_dns_team() -> None:
+    """Unchecked drops the 0-lap team and renumbers the rest from 1."""
+    source, _engine = _finished_two_entry_ride()
+
+    teams, _solo = source.standings(show_dns_riders=False)
+
+    assert [(row.entry, row.laps, row.place, row.dns) for row in teams] == [
+        ("Dirt Dynamos", 2, 1, False)
+    ]
+
+
+def test_standings_given_a_finished_solo_ride_and_dns_riders_on_marks_the_dns_row() -> None:
+    """The solo section keeps its own DNS tail, unplaced and last."""
+    roster = _roster_with_entries("12", "34")
+    engine = _running_engine(roster)
+    engine.record_crossing("12", at=_dt(10, 0, 5))
+    engine.finish()
+    source = EngineDataSource(engine, roster)
+
+    _teams, solo = source.standings(show_dns_riders=True)
+
+    assert [(row.plate, row.laps, row.place, row.dns) for row in solo] == [
+        ("12", 1, 1, False),
+        ("34", 0, 0, True),
+    ]
+
+
+def test_standings_given_a_live_ride_ranks_the_zero_lap_team_whatever_the_toggle() -> None:
+    """A RUNNING board is never filtered: rows never vanish."""
+    roster = _two_team_pooled_roster()
+    engine = _running_engine(roster)
+    engine.record_crossing("45", at=_dt(10, 0, 5))
+    source = EngineDataSource(engine, roster)
+
+    teams, _solo = source.standings(show_dns_riders=False)
+
+    assert [(row.entry, row.laps, row.place, row.dns) for row in teams] == [
+        ("Dirt Dynamos", 1, 1, False),
+        ("Trail Blazers", 0, 2, False),
+    ]
+
+
+def test_standings_given_a_stopped_ride_keeps_the_zero_lap_team_placed() -> None:
+    """Stop is not Finish: the board stays live until closed."""
+    roster = _two_team_pooled_roster()
+    engine = _running_engine(roster)
+    engine.record_crossing("45", at=_dt(10, 0, 5))
+    engine.stop()
+    source = EngineDataSource(engine, roster)
+
+    teams, _solo = source.standings(show_dns_riders=False)
+
+    assert [(row.entry, row.laps, row.place, row.dns) for row in teams] == [
+        ("Dirt Dynamos", 1, 1, False),
+        ("Trail Blazers", 0, 2, False),
+    ]

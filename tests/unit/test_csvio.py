@@ -3038,6 +3038,76 @@ def test_export_standings_zero_card_hand_writes_a_blank_hand() -> None:
         assert _read_lines(path)[1] == "1,9,Rider,solo,,0,,"
 
 
+def test_export_standings_dns_row_writes_a_blank_place_and_dns_laps() -> None:
+    """Phase 7: a DNS row's place is empty and its laps read "DNS"."""
+    placed = [
+        _placed("88", "9S 9D 9C 9H 2C", laps=11),
+        replace(_placed("9", "", laps=0), place=0, dns=True),
+    ]
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        path = Path(tmp_dir) / "standings.csv"
+        export_standings(placed, path)
+        lines = _read_lines(path)
+
+    assert lines[2] == ",9,Rider,solo,,DNS,,"
+
+
+def test_export_standings_dns_row_blanks_the_total_time_cell() -> None:
+    """Phase 7: a DNS entry never started, so its time cell is blank.
+
+    A non-zero stored reading (1200.0) is used deliberately: the cell
+    goes empty for the row's own reason, not because the number was
+    already zero.
+    """
+    placed = [replace(_placed("9", "", laps=0, total_time=1200.0), place=0, dns=True)]
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        path = Path(tmp_dir) / "standings.csv"
+        export_standings(placed, path, show_times=True)
+        row = _read_lines(path)[1]
+
+    assert row == ",9,Rider,solo,,DNS,,,"
+
+
+def test_export_standings_placed_row_keeps_its_total_time_cell() -> None:
+    """T-3: an ordinary row still writes its numeric seconds."""
+    placed = [_placed("88", "9S 9D 9C 9H 2C", laps=11, total_time=1200.0)]
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        path = Path(tmp_dir) / "standings.csv"
+        export_standings(placed, path, show_times=True)
+        row = _read_lines(path)[1]
+
+    assert row == "1,88,Rider,solo,,11,Four of a Kind — Nines,,1200.0"
+
+
+def test_export_standings_placed_row_is_untouched_by_the_dns_rule() -> None:
+    """T-3: an ordinary row still writes its place and lap count."""
+    placed = [_placed("88", "9S 9D 9C 9H 2C", laps=11)]
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        path = Path(tmp_dir) / "standings.csv"
+        export_standings(placed, path)
+        row = _read_lines(path)[1]
+
+    assert row == "1,88,Rider,solo,,11,Four of a Kind — Nines,"
+
+
+def test_export_standings_dns_row_writes_no_draw_code() -> None:
+    """Phase 7: a DNS entry never started, so it drew no card.
+
+    A 0-lap entry's empty hand ties the finish's own draw, so its
+    snapshot carries one; the DNS row must leave the column blank.
+    """
+    dns = replace(_placed("9", "", laps=0), place=0, dns=True)
+    placed = [
+        replace(dns, result=replace(dns.result, tiebreak_card=Card.parse("7D"))),
+    ]
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        path = Path(tmp_dir) / "standings.csv"
+        export_standings(placed, path)
+        row = _read_lines(path)[1]
+
+    assert row == ",9,Rider,solo,,DNS,,"
+
+
 # ========================================================= T-7 property
 
 

@@ -642,7 +642,12 @@ def test_engine_data_source_standings_maps_the_ranked_snapshot() -> None:
 
 
 def test_engine_data_source_standings_splits_teams_from_solo() -> None:
-    """A mixed roster ranks each kind in its own section from 1."""
+    """A mixed roster ranks each kind in its own section from 1.
+
+    Phase 7: each section numbers its own placed rows from 1 and keeps
+    its own DNS tail, so the 0-lap team and the 0-lap solo rider each
+    land unplaced (``place = 0``) at the bottom of their own list.
+    """
     roster = Roster(entry_mode=EntryMode.MIXED, plate_model=PlateModel.RIDER_POOLED)
     roster.create_solo_entry(first_name="Rider", last_name="12", plate="12")
     roster.create_solo_entry(first_name="Rider", last_name="34", plate="34")
@@ -659,12 +664,11 @@ def test_engine_data_source_standings_splits_teams_from_solo() -> None:
     engine.finish()
     source = EngineDataSource(engine, roster)
 
-    teams, solo = source.standings()
+    teams, solo = source.standings(show_dns_riders=True)
 
-    assert [row.plate for row in teams] == ["77"]
-    assert [row.place for row in teams] == [1]
+    assert [(row.plate, row.place, row.dns) for row in teams] == [("77", 0, True)]
     assert {row.plate for row in solo} == {"12", "34"}
-    assert [row.place for row in solo] == [1, 2]
+    assert [(row.place, row.dns) for row in solo] == [(1, False), (0, True)]
 
 
 def test_engine_data_source_standings_omitted_order_uses_the_default_constant() -> None:
@@ -706,6 +710,23 @@ def _engine_with_a_hand_tie() -> RideEngine:
     _seed_credited_hand(engine, "12", tied)
     _seed_credited_hand(engine, "34", tied)
     return engine
+
+
+def _one_lap_and_a_tied_hand_each(
+    engine: RideEngine, clock: _FakeDatetimeClock, plates: list[str]
+) -> None:
+    """Give every plate in *plates* one lap and the same five cards.
+
+    The wide-tie arrange the draw tests need: each entry starts (so
+    none is a Phase 7 DNS row) yet every credited hand is the same
+    pair-plus-kickers, which is what makes one tie group larger than
+    the 52-card draw deck. The loop lives here, in a helper, so the
+    test bodies stay single-Act (T-8).
+    """
+    tied = [Card.parse(code) for code in ("5H", "5D", "2C", "3C", "4C")]
+    for plate in plates:
+        _record(engine, clock, plate, lap_time_s=100)
+        _seed_credited_hand(engine, plate, tied)
 
 
 def test_engine_data_source_standings_live_ride_ignores_the_stored_order() -> None:
@@ -778,6 +799,41 @@ def test_engine_data_source_standings_rows_carry_the_drawn_card_codes() -> None:
     _teams, rows = source.standings()
 
     assert {row.plate: row.tiebreak_card for row in rows} == {"12": "5H", "34": "AH"}
+
+
+def test_engine_data_source_standings_finished_dns_rows_carry_no_drawn_card() -> None:
+    """Phase 7: a DNS row shows no draw, though the finish made one.
+
+    Two 0-lap entries tie on their empty hands, so ``finish`` records a
+    card against each of them; their rows are DNS (unplaced, never
+    started), so the Draw cell stays blank while the lapped pair's own
+    resolved draw (R-14) is untouched.
+    """
+    roster = _roster_with_entries("12", "34", "56", "78")
+    engine, clock = _make_engine(roster=roster)
+    engine.start()
+    _record(engine, clock, "12", lap_time_s=100)
+    _record(engine, clock, "34", lap_time_s=60)
+    _record(engine, clock, "12", lap_time_s=100)
+    tied = [Card.parse(code) for code in ("5H", "5D", "2C", "3C", "4C")]
+    _seed_credited_hand(engine, "12", tied)
+    _seed_credited_hand(engine, "34", tied)
+    engine.finish()
+    source = EngineDataSource(engine, engine._roster)
+    drawn = {
+        result.plate: result.tiebreak_card.code()
+        for result in engine.snapshot()
+        if result.tiebreak_card is not None
+    }
+
+    _teams, rows = source.standings()
+
+    assert {row.plate: row.tiebreak_card for row in rows} == {
+        "12": drawn["12"],
+        "34": drawn["34"],
+        "56": "",
+        "78": "",
+    }
 
 
 def test_engine_data_source_standings_given_an_undrawn_pair_leaves_the_draw_blank() -> None:
@@ -857,7 +913,7 @@ def test_engine_data_source_standings_given_a_zero_card_entry_renders_a_blank_ha
     engine.finish()
     source = EngineDataSource(engine, engine._roster)
 
-    teams, rows = source.standings()
+    teams, rows = source.standings(show_dns_riders=True)
 
     by_plate = {row.plate: row for row in rows}
     assert by_plate["12"].hand != ""  # one credited card has a real prose hand
@@ -874,16 +930,17 @@ def test_engine_data_source_standings_given_more_ties_than_the_deck_keeps_the_dr
     partly drawn, which keeps the configured order's high-card barrier
     exactly where it was: every row keeps the ⚠ flag and its note --
     while the 52 that did draw still carry their card, which is what
-    the Draw column shows. 53 entries with no crossings all tie on the
-    empty hand.
+    the Draw column shows. 53 entries with the same five cards tie on
+    hand (Phase 7: each rides a lap, so none is a DNS row).
     """
     roster = _roster_with_entries(*[str(plate) for plate in range(1, 54)])
-    engine, _ = _make_engine(roster=roster)
+    engine, clock = _make_engine(roster=roster)
     engine.start()
+    _one_lap_and_a_tied_hand_each(engine, clock, [str(plate) for plate in range(1, 54)])
     engine.finish()
     source = EngineDataSource(engine, engine._roster)
 
-    _teams, rows = source.standings()
+    _teams, rows = source.standings(show_dns_riders=True)
 
     assert len(rows) == 53
     assert {row.place for row in rows} == {1}
@@ -3288,7 +3345,7 @@ def test_standings_given_reopened_zero_card_entry_renders_blank_hand_again() -> 
     engine.finish()
     source = EngineDataSource(engine, engine._roster)
 
-    _teams, rows = source.standings()
+    _teams, rows = source.standings(show_dns_riders=True)
     by_plate = {row.plate: row for row in rows}
 
     assert by_plate["12"].hand != ""

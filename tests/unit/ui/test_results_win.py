@@ -41,6 +41,7 @@ The live layout -- real columns on real controls -- stays with the
 
 from __future__ import annotations
 
+from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -50,9 +51,12 @@ from defusedxml.ElementTree import parse
 from hypothesis import given
 from hypothesis import strategies as st
 
-from rivercrossing.roster import EntryMode, PlateModel
+from conftest import _roster_with_entries, gorba_config
+from rivercrossing.cards import Shoe
+from rivercrossing.ride import RideEngine
+from rivercrossing.roster import EntryMode, PlateModel, Roster
 from rivercrossing.ui import accelerators, std_dialogs
-from rivercrossing.ui.presenters.data_source import StandingsRow
+from rivercrossing.ui.presenters.data_source import EngineDataSource, StandingsRow
 from rivercrossing.ui.views import results_win
 from rivercrossing.ui.views.results_win import (
     COL_BEST5,
@@ -102,6 +106,7 @@ def _row(  # noqa: PLR0913 -- a fixture builder mirroring StandingsRow's fields
     draw_required: bool = False,
     tie_note: str | None = None,
     tiebreak_card: str = "",
+    dns: bool = False,
 ) -> StandingsRow:
     """Build one standings row varying only what a test needs."""
     return StandingsRow(
@@ -118,6 +123,7 @@ def _row(  # noqa: PLR0913 -- a fixture builder mirroring StandingsRow's fields
         best_lap=best_lap,
         best_lap_seconds=best_lap_seconds,
         tiebreak_card=tiebreak_card,
+        dns=dns,
     )
 
 
@@ -377,6 +383,30 @@ def test_get_column_count_given_a_rendered_row_reads_every_cell() -> None:
     assert model.GetValueByRow(0, COL_DRAW) == "10♦"
 
 
+def test_get_value_by_row_given_a_dns_row_blanks_the_place_cell() -> None:
+    """Phase 7: the DNS row's Place cell is blank, not its place 0."""
+    model = StandingsListModel([_row(place=0, laps=0, dns=True)])
+
+    assert model.GetValueByRow(0, COL_PLACE) == ""
+
+
+def test_get_value_by_row_given_a_dns_row_renders_the_dns_laps_cell() -> None:
+    """Phase 7: the Laps cell reads the word "DNS", never the number."""
+    model = StandingsListModel([_row(place=0, laps=0, dns=True)])
+
+    assert model.GetValueByRow(0, COL_LAPS) == "DNS"
+
+
+def test_format_place_given_a_dns_row_returns_an_empty_cell() -> None:
+    """The Place formatter gates on dns before it reads the place."""
+    assert results_win.format_place(_row(place=0, dns=True)) == ""
+
+
+def test_format_place_given_a_drawn_tie_still_badges_its_place() -> None:
+    """T-3: a placed row keeps the ⚠ badge -- dns is the only blank."""
+    assert results_win.format_place(_row(place=2, draw_required=True)) == "⚠ 2"
+
+
 def test_build_columns_given_rider_pooled_hides_the_plate_column_on_the_team_list() -> None:
     """Part 2: a pooled team's plate repeats a member's -- it goes."""
     shell = _ColumnsShell(PlateModel.RIDER_POOLED)
@@ -574,6 +604,34 @@ def test_standings_compare_given_the_place_column_orders_numerically_not_as_text
 
     # wx's positional bool
     result = StandingsListModel.Compare(shell, 0, 1, COL_PLACE, True)  # noqa: FBT003
+
+    assert result == 1
+
+
+def test_standings_compare_given_a_dns_row_orders_it_after_a_placed_row() -> None:
+    """Phase 7: the Place key sorts a DNS row last."""
+    dns = _row(place=0, dns=True)
+    placed = _row(place=9)
+    shell = _CompareShell([dns, placed])
+
+    # wx's positional bool
+    result = StandingsListModel.Compare(shell, 0, 1, COL_PLACE, True)  # noqa: FBT003
+
+    assert result == 1
+
+
+def test_standings_compare_given_a_dns_row_orders_it_last_on_the_laps_column() -> None:
+    """Phase 7: the Laps key sorts a DNS row last too.
+
+    The row's ``laps`` is 0, so a bare numeric key would list every DNS
+    row first -- the exact opposite of the Place column's own rule.
+    """
+    dns = _row(laps=0, dns=True)
+    placed = _row(laps=9)
+    shell = _CompareShell([dns, placed])
+
+    # wx's positional bool
+    result = StandingsListModel.Compare(shell, 0, 1, COL_LAPS, True)  # noqa: FBT003
 
     assert result == 1
 
@@ -1244,3 +1302,295 @@ def test_apply_min_size_given_the_dialog_keeps_the_measured_width_floor() -> Non
         results_win.MIN_SIZE[0],
         -1,
     )
+
+
+# ---------------------------------------------- the DNS results display
+#
+# The Results menu's "Show DNS Riders" arrives at the window as
+# ``show_dns_riders`` (checked by default) and reaches the standings
+# through the one presenter. The whole window is built headless here --
+# a dialog double, control doubles resolved through the one ``_find``
+# seam, and a fake ``wx.InfoBar`` (the measured exception: a real
+# ``wx.InfoBar`` cannot be built without a desktop) -- so the assertion
+# runs on the real ``ResultsPresenter`` and the real source over a real
+# finished ride, never on a mock of either.
+
+
+class _FakeInfoBar:
+    """A ``wx.InfoBar`` double: the banner is code-side only."""
+
+    def __init__(self, parent: object) -> None:
+        """Record the parent the SUT passed."""
+        self.parent = parent
+
+    def SetName(self, name: str) -> None:  # noqa: N802 -- wx API name the SUT calls
+        """Record the frozen name the SUT applies."""
+
+    def SetShowHideEffects(self, show: int, hide: int) -> None:  # noqa: N802 -- wx API
+        """Accept the two disabled effects."""
+
+    def ShowMessage(self, message: str, flags: int) -> None:  # noqa: N802 -- wx API
+        """Record the note the banner would show."""
+
+    def Dismiss(self) -> None:  # noqa: N802 -- wx API name the SUT calls
+        """Accept the dismissal."""
+
+
+class _FakeSizer:
+    """The dialog sizer double ``_build_infobar`` inserts into."""
+
+    def Insert(  # noqa: N802, PLR0913, PLR0917 -- wx API name and shape
+        self, index: int, window: object, flags: int, border: int
+    ) -> None:
+        """Accept the insert; the banner is not under test."""
+
+
+class _WindowControl:
+    """A standings-list / notebook double for the whole window."""
+
+    def __init__(self) -> None:
+        """Start with no associated model and no columns."""
+        self.model: object | None = None
+        self.columns: list[tuple[str, int, int, int, _Column]] = []
+
+    def AppendTextColumn(  # noqa: N802, PLR0913 -- wx API name and shape
+        self, label: str, col: int, *, width: int, flags: int
+    ) -> _Column:
+        """Record the column and return its double."""
+        column = _Column()
+        self.columns.append((label, col, width, flags, column))
+        return column
+
+    def Bind(self, event: object, handler: object) -> None:  # noqa: N802 -- wx API
+        """Accept one binding."""
+
+    def AssociateModel(self, model: object) -> None:  # noqa: N802 -- wx API name
+        """Record the model the view associates."""
+        self.model = model
+
+    def Refresh(self) -> None:  # noqa: N802 -- wx API name the SUT calls
+        """Accept the repaint request."""
+
+    def Update(self) -> None:  # noqa: N802 -- wx API name the SUT calls
+        """Accept the update request."""
+
+    def SetMinSize(self, size: object) -> None:  # noqa: N802 -- wx API name
+        """Accept the row floor."""
+
+    def Hide(self) -> None:  # noqa: N802 -- wx API name the SUT calls
+        """Accept the hide."""
+
+    def Show(self) -> None:  # noqa: N802 -- wx API name the SUT calls
+        """Accept the show."""
+
+
+class _WindowDialog:
+    """The wx.Dialog double a whole ``ResultsWindow`` decorates."""
+
+    def __init__(self) -> None:
+        """Start with no presenter attached."""
+        self.presenter: object | None = None
+
+    def GetSizer(self) -> _FakeSizer:  # noqa: N802 -- wx API name the SUT calls
+        """Return the sizer double."""
+        return _FakeSizer()
+
+    def Layout(self) -> None:  # noqa: N802 -- wx API name the SUT calls
+        """Accept the layout request."""
+
+    def SetMinSize(self, size: object) -> None:  # noqa: N802 -- wx API name
+        """Accept the window floor."""
+
+    def Fit(self) -> None:  # noqa: N802 -- wx API name the SUT calls
+        """Accept the fit."""
+
+
+def _build_results_window(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    data_source: object,
+    show_dns_riders: bool,
+) -> tuple[ResultsWindow, _WindowControl]:
+    """Build a whole live ``ResultsWindow`` headless, in SOLO mode.
+
+    Returns the window and the standalone ``standings_list`` double --
+    its associated model is the rendered result, the assertion surface.
+    """
+    dialog = _WindowDialog()
+    controls = {
+        "standings_list": _WindowControl(),
+        "teams_standings_list": _WindowControl(),
+        "solo_standings_list": _WindowControl(),
+        "results_notebook": _WindowControl(),
+    }
+    monkeypatch.setattr(ResultsWindow, "_find", lambda _self, name, _kind=None: controls[name])
+    monkeypatch.setattr(results_win.wx, "InfoBar", _FakeInfoBar)
+    window = ResultsWindow(dialog, data_source=data_source, show_dns_riders=show_dns_riders)
+    return window, controls["standings_list"]
+
+
+def _build_ride(roster: Roster) -> RideEngine:
+    """Build and start a RUNNING engine over *roster* (1 s laps)."""
+    config = gorba_config(min_lap_s=1)
+    shoe = Shoe(decks=config.deck_count, jokers_per_deck=config.jokers_per_deck, seed=20260920)
+    engine = RideEngine(config=config, shoe=shoe, clock=_frozen_clock, roster=roster)
+    engine.start()
+    return engine
+
+
+def _frozen_clock() -> datetime:
+    """Return the event start; the tests stamp crossings explicitly."""
+    return datetime(2026, 9, 20, 10, 0)  # noqa: DTZ001 -- naive by design
+
+
+def _lapped_solo_roster() -> Roster:
+    """Return a solo roster whose plate 12 rode a lap, 34 none."""
+    roster = _roster_with_entries("12", "34")
+    engine = _build_ride(roster)
+    engine.record_crossing("12", at=datetime(2026, 9, 20, 10, 0, 5))  # noqa: DTZ001 -- by design
+    engine.finish()
+    return roster, engine
+
+
+def _finished_ride_source() -> EngineDataSource:
+    """Return an ``EngineDataSource`` over a FINISHED two-solo ride.
+
+    Plate 12 rode a lap; plate 34 never crossed, so its entry is ACTIVE
+    with 0 recorded laps -- the row the toggle decides about.
+    """
+    roster, engine = _lapped_solo_roster()
+    return EngineDataSource(engine, roster)
+
+
+def _live_ride_source() -> EngineDataSource:
+    """Return a source over the same ride, still RUNNING."""
+    roster = _roster_with_entries("12", "34")
+    engine = _build_ride(roster)
+    engine.record_crossing("12", at=datetime(2026, 9, 20, 10, 0, 5))  # noqa: DTZ001 -- by design
+    return EngineDataSource(engine, roster)
+
+
+def _zero_lap_ride_source() -> EngineDataSource:
+    """Return a source over a FINISHED ride neither entry started.
+
+    Two 0-lap entries are two DNS rows, and their tied empty hands make
+    ``finish`` record a tie-break draw for each -- the card the Draw
+    column must never show for a row that never started.
+    """
+    roster = _roster_with_entries("12", "34")
+    engine = _build_ride(roster)
+    engine.finish()
+    return EngineDataSource(engine, roster)
+
+
+def _rendered_cells(list_control: _WindowControl, col: int) -> list[str]:
+    """Return the *col* cell of every row on *list_control*'s model."""
+    model = list_control.model
+    assert isinstance(model, StandingsListModel)
+    return [model.GetValueByRow(row, col) for row in range(model.GetCount())]
+
+
+def _rendered_entries(list_control: _WindowControl) -> list[str]:
+    """Return the Entry cell of every row on *list_control*'s model."""
+    return _rendered_cells(list_control, COL_ENTRY)
+
+
+def test_results_window_given_a_finished_ride_and_dns_riders_off_hides_the_dns_rider(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Unchecked: the DNS rider is absent from the standings."""
+    _window, list_control = _build_results_window(
+        monkeypatch, data_source=_finished_ride_source(), show_dns_riders=False
+    )
+
+    assert _rendered_entries(list_control) == ["Rider 12"]
+
+
+def test_results_window_given_a_finished_ride_and_dns_riders_on_lists_the_dns_rider_last(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Checked: the DNS rider renders, after every placed row."""
+    _window, list_control = _build_results_window(
+        monkeypatch, data_source=_finished_ride_source(), show_dns_riders=True
+    )
+
+    assert _rendered_entries(list_control) == ["Rider 12", "Rider 34"]
+
+
+def test_results_window_given_a_dns_row_blanks_the_place_cell(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The DNS row's Place cell is blank, never the placeholder 0."""
+    _window, list_control = _build_results_window(
+        monkeypatch, data_source=_finished_ride_source(), show_dns_riders=True
+    )
+
+    assert _rendered_cells(list_control, COL_PLACE) == ["1", ""]
+
+
+def test_results_window_given_a_dns_row_renders_the_dns_laps_cell(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The DNS row's Laps cell reads "DNS", the word not the 0."""
+    _window, list_control = _build_results_window(
+        monkeypatch, data_source=_finished_ride_source(), show_dns_riders=True
+    )
+
+    assert _rendered_cells(list_control, COL_LAPS) == ["1", "DNS"]
+
+
+def test_results_window_given_a_live_ride_lists_every_rider_whatever_the_toggle(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A RUNNING board shows everyone: rows must not vanish mid-ride."""
+    _window, list_control = _build_results_window(
+        monkeypatch, data_source=_live_ride_source(), show_dns_riders=False
+    )
+
+    assert _rendered_entries(list_control) == ["Rider 12", "Rider 34"]
+
+
+def test_results_window_given_a_live_zero_lap_rider_renders_a_zero_laps_cell(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """T-3: a live 0-lap row is not DNS -- its Laps cell is 0."""
+    _window, list_control = _build_results_window(
+        monkeypatch, data_source=_live_ride_source(), show_dns_riders=False
+    )
+
+    assert _rendered_cells(list_control, COL_LAPS) == ["1", "0"]
+
+
+def test_results_window_given_dns_rows_blanks_their_draw_cells(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Phase 7: the Draw column shows no card for a DNS row.
+
+    The finish drew a tie-break card for both 0-lap entries (their
+    empty hands tie), so an ungated row would render "5H"/"AH" beside a
+    row holding no place at all.
+    """
+    _window, list_control = _build_results_window(
+        monkeypatch, data_source=_zero_lap_ride_source(), show_dns_riders=True
+    )
+
+    assert _rendered_cells(list_control, COL_DRAW) == ["", ""]
+
+
+def test_results_window_defaults_show_dns_riders_to_on(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Omitting the seam is the checked menu item's own reading."""
+    dialog = _WindowDialog()
+    controls = {
+        "standings_list": _WindowControl(),
+        "teams_standings_list": _WindowControl(),
+        "solo_standings_list": _WindowControl(),
+        "results_notebook": _WindowControl(),
+    }
+    monkeypatch.setattr(ResultsWindow, "_find", lambda _self, name, _kind=None: controls[name])
+    monkeypatch.setattr(results_win.wx, "InfoBar", _FakeInfoBar)
+
+    ResultsWindow(dialog, data_source=_finished_ride_source())
+
+    assert _rendered_cells(controls["standings_list"], COL_LAPS) == ["1", "DNS"]

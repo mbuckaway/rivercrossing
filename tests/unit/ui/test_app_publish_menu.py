@@ -39,19 +39,23 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 # G6: each setting and the Results-menu item that mirrors it, in the
-# menu's own order -- transcribed independently of app.py's map.
+# menu's own order -- transcribed independently of app.py's map. The
+# DNS toggle is the row's sixth entry: the same flip/persist/startup
+# machinery, no R-63 gating, and it ships checked (the setting's
+# default is True).
 PUBLISH_ITEMS = (
     ("publish_show_times", ids.MI_SHOW_TIMES),
     ("publish_laps_board", ids.MI_LAPS_BOARD),
     ("publish_time_board", ids.MI_TIME_BOARD),
     ("publish_full_field", ids.MI_FULL_FIELD),
     ("publish_all_cards", ids.MI_ALL_CARDS),
+    ("show_dns_riders", ids.MI_SHOW_DNS_RIDERS),
 )
 PUBLISH_ITEM_IDS = [item_id for _key, item_id in PUBLISH_ITEMS]
 PUBLISH_KEYS = [key for key, _item_id in PUBLISH_ITEMS]
 
-# The five settings-surface names, plus the Fastest-time board item the
-# R-63 gate acts on (one of the five) and nothing else.
+# The six settings-surface names, plus the Fastest-time board item the
+# R-63 gate acts on (one of the six) and nothing else.
 MENU_ITEM_NAMES = (*PUBLISH_ITEM_IDS, ids.MI_TIME_BOARD)
 
 

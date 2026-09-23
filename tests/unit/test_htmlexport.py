@@ -506,12 +506,28 @@ def test_render_public_builds_valid_page_from_minimal_fake_ride() -> None:
     assert "Saturday June 6, 2026 · Test Venue · 8 km loop" in html
     assert "Organizer: Test Org" in html
     assert "Scorer: T. Ester" in html
-    assert "2 · 21 · 10" in html
+    assert "2 · 21 · 10 · 0" in html
+    assert "entries · laps · cards dealt · unique riders" in html
     assert "#88 Moss Ridge Riders" in html
     record = json.loads(race_data_block(html))
     assert record["event"]["entries"] == 2
     assert record["results"][0]["plate"] == 88
     assert record["results"][0]["total"] == "5:32:00"
+    assert "riders" not in record["event"]
+
+
+def test_render_public_given_a_rider_count_renders_it_in_the_header() -> None:
+    """``riders`` is the header's fourth counter."""
+    html = render(_StubRide(), _placed_pair(), ExportOptions(), riders=207)
+
+    assert "2 · 21 · 10 · 207" in html
+
+
+def test_render_public_omitted_rider_count_renders_zero_in_the_header() -> None:
+    """A caller that threads no count renders 0, never a blank cell."""
+    html = render(_StubRide(), _placed_pair(), ExportOptions())
+
+    assert "2 · 21 · 10 · 0" in html
 
 
 def test_render_public_defaults_generated_to_samples_style() -> None:
@@ -660,6 +676,20 @@ def _drawn_placed(*, code: str = "AH", kind: str = "solo", place: int = 1) -> tu
         _sample_entry("88", "Moss Ridge Riders", 11, kind=kind), tiebreak_card=Card.parse(code)
     )
     return (Placed(place=place, result=result, tie_note=None, draw_required=False),)
+
+
+def _drawn_dns_placed(  # noqa: PLR0913 -- the row's own (plate, name, code, kind)
+    plate: str, name: str, code: str, *, kind: str = "solo"
+) -> Placed:
+    """Build a DNS row whose result still carries a finish-time draw.
+
+    Every 0-lap entry's empty hand ties every other empty hand, so
+    ``RideEngine.finish`` records a tiebreak draw for each and the card
+    survives on the snapshot's :attr:`EntryResult.tiebreak_card`. A DNS
+    row (never placed, never started) must render none of it.
+    """
+    dns = _dns_placed(plate, name, kind=kind)
+    return replace(dns, result=replace(dns.result, tiebreak_card=Card.parse(code)))
 
 
 # The podium card's own badge form: with no text class of its own it
@@ -1632,6 +1662,195 @@ def test_sections_never_exceeds_the_per_kind_caps(team_count: int, solo_count: i
     assert len(plan.laps_solo) <= (5 if team_count else 10)
 
 
+# ------------------------------------------------- DNS rows (Phase 7)
+# A DNS row is a 0-lap ACTIVE entry on a FINISHED ride: it keeps its
+# row at the bottom of the Full field (blank Place, ``DNS`` Laps) and
+# carries ``laps: 0`` plus a sparse ``"dns": true`` in the record -- but
+# it was never placed, so the podiums, the top lists and the boards
+# leave it off.
+
+
+def _dns_placed(plate: str, name: str, *, kind: str = "solo") -> Placed:
+    """Build one DNS row (Phase 7): unplaced, 0 laps, no tie note."""
+    return Placed(
+        place=0,
+        result=_sample_entry(plate, name, 0, kind=kind),
+        tie_note=None,
+        draw_required=False,
+        dns=True,
+    )
+
+
+def test_sections_given_a_dns_row_keeps_it_in_the_full_field_only() -> None:
+    """The DNS rows stay in the full field; no podium or top list."""
+    placed = (
+        *_field(teams=2, solo=2),
+        _dns_placed("31", "Rita Slow"),
+        _dns_placed("77", "Late Starters", kind="team"),
+    )
+    payload = build_payload(_StubRide(), placed, ExportOptions(), _FIXTURE_GENERATED)
+
+    plan = sections(payload, placed)
+
+    assert [row.entry for row in plan.solo] == ["Solo 1", "Solo 2", "Rita Slow"]
+    assert [row.entry for row in plan.podium_solo] == ["Solo 1", "Solo 2"]
+    assert [row.entry for row in plan.top_solo] == ["Solo 1", "Solo 2"]
+    assert [row.entry for row in plan.podium_teams] == ["Team 1", "Team 2"]
+    assert [row.entry for row in plan.top_teams] == ["Team 1", "Team 2"]
+
+
+def test_sections_given_a_dns_row_leaves_it_off_the_laps_boards() -> None:
+    """The most-laps boards rank started entries only."""
+    placed = (*_field(teams=2, solo=2), _dns_placed("31", "Rita Slow"))
+    payload = build_payload(
+        _StubRide(), placed, ExportOptions(laps_board=True), _FIXTURE_GENERATED
+    )
+
+    plan = sections(payload, placed)
+
+    assert [row.entry for row in plan.laps_teams] == ["Team 1", "Team 2"]
+    assert [row.entry for row in plan.laps_solo] == ["Solo 1", "Solo 2"]
+
+
+def test_build_payload_given_a_dns_row_keeps_it_off_the_record_boards() -> None:
+    """The record's own boards carry no DNS row either."""
+    placed = (*_field(teams=2, solo=2), _dns_placed("31", "Rita Slow"))
+    opts = ExportOptions(show_times=True, time_board=True, laps_board=True)
+
+    payload = build_payload(_StubRide(), placed, opts, _FIXTURE_GENERATED)
+
+    assert [row.entry for row in payload.laps_board] == [
+        "Team 1",
+        "Team 2",
+        "Solo 1",
+        "Solo 2",
+    ]
+    assert [row.entry for row in payload.time_board] == [
+        "Team 1",
+        "Team 2",
+        "Solo 1",
+        "Solo 2",
+    ]
+
+
+def test_build_payload_given_a_dns_row_records_it_last_with_laps_zero() -> None:
+    """The record keeps the DNS row, after every placed row."""
+    placed = (*_field(teams=2, solo=2), _dns_placed("31", "Rita Slow"))
+
+    payload = build_payload(_StubRide(), placed, ExportOptions(), _FIXTURE_GENERATED)
+
+    assert [(row.entry, row.laps, row.dns) for row in payload.results] == [
+        ("Team 1", 30, False),
+        ("Team 2", 29, False),
+        ("Solo 1", 20, False),
+        ("Solo 2", 19, False),
+        ("Rita Slow", 0, True),
+    ]
+
+
+def test_sections_given_only_dns_teams_keeps_the_mixed_solo_cap() -> None:
+    """Phase 7: a DNS team still makes the field a team event.
+
+    The solo top list and its laps board must share one cap: sizing
+    the list off the *ranked* teams (empty when every team is DNS)
+    would silently widen it from five to ten.
+    """
+    placed = (_dns_placed("77", "Late Starters", kind="team"), *_field(teams=0, solo=7))
+    payload = build_payload(
+        _StubRide(), placed, ExportOptions(laps_board=True), _FIXTURE_GENERATED
+    )
+
+    plan = sections(payload, placed)
+
+    assert len(plan.top_solo) == 5
+    assert len(plan.laps_solo) == 5
+
+
+def test_render_public_given_a_dns_row_blanks_its_place_and_renders_dns_laps() -> None:
+    """The full field prints no place and the word "DNS"."""
+    placed = (*_placed_pair(), _dns_placed("31", "Rita Slow"))
+
+    html = render(_StubRide(), placed, ExportOptions())
+
+    assert '<td class="py-1.5 pr-3"></td><td class="py-1.5 pr-3 font-bold">31</td>' in html
+    assert ">DNS</td>" in html
+
+
+def test_render_public_given_a_dns_row_records_laps_zero_and_the_dns_flag() -> None:
+    """The embedded record keeps the laps and the sparse flag."""
+    placed = (*_placed_pair(), _dns_placed("31", "Rita Slow"))
+
+    html = render(_StubRide(), placed, ExportOptions())
+
+    record = json.loads(race_data_block(html))
+    row = next(result for result in record["results"] if result["plate"] == 31)
+    assert (row["laps"], row["place"], row["dns"]) == (0, 0, True)
+
+
+def test_build_payload_given_a_drawn_dns_row_records_no_drawn_card() -> None:
+    """Phase 7: a DNS entry never started, so it drew nothing.
+
+    A 0-lap entry's empty hand still ties the finish's draw, so its
+    snapshot carries a card -- the row must not hand it on as ``draw``.
+    """
+    placed = (_drawn_dns_placed("31", "Rita Slow", "7D"),)
+
+    payload = build_payload(_StubRide(), placed, ExportOptions(), _FIXTURE_GENERATED)
+
+    assert payload.results[0].draw is None
+
+
+def test_render_public_given_a_drawn_dns_row_renders_no_draw_badge() -> None:
+    """Phase 7: the DNS row's finish-time draw never renders."""
+    placed = (*_drawn_placed(), _drawn_dns_placed("31", "Rita Slow", "7D"))
+
+    html = render(_StubRide(), placed, ExportOptions())
+
+    assert 'draw <span class="chip r">A ♥</span>' in html
+    assert 'draw <span class="chip r">7 ♦</span>' not in html
+
+
+def test_render_public_given_a_dns_row_blanks_its_time_cells() -> None:
+    """Phase 7: a DNS entry never started, so its time cells are blank.
+
+    The columns stay (the table's shape never moves); only the two
+    ``t-col`` cells go empty, where a placed row still prints its total
+    and best lap. The DNS row's own would-be readings are distinctive
+    here (20:00 / 15:00), so their absence is the cells going empty
+    rather than the whole row vanishing -- and the embedded record's
+    own null times agree.
+    """
+    dns = _dns_placed("31", "Rita Slow")
+    placed = (
+        *_placed_pair(),
+        replace(dns, result=replace(dns.result, total_time=1_200.0, best_lap=900.0)),
+    )
+
+    html = render(_StubRide(), placed, ExportOptions(show_times=True))
+
+    assert '<td class="py-1.5 pr-3 t-col"></td><td class="py-1.5 pr-3 t-col"></td>' in html
+    assert "5:32:00" in html  # the placed pair's own total is untouched
+    assert "20:00" not in html  # the DNS row's would-be total
+    assert "15:00" not in html  # ... and best lap
+
+
+def test_build_payload_given_a_dns_row_records_null_times() -> None:
+    """The record carries ``null`` times for a DNS row (times shown).
+
+    Null, never 0: the machine record distinguishes "never started"
+    from a real zero-second reading, exactly as the human surfaces show
+    a blank cell.
+    """
+    placed = (*_placed_pair(), _dns_placed("31", "Rita Slow"))
+
+    payload = build_payload(
+        _StubRide(), placed, ExportOptions(show_times=True), _FIXTURE_GENERATED
+    )
+
+    assert (payload.results[2].total, payload.results[2].best_lap) == (None, None)
+    assert payload.results[0].total == "5:32:00"
+
+
 # ================================================== template (the plan)
 # The page renders the planned sections: per-kind titles, per-kind
 # tables (teams never show a plate), per-kind drawn-row colspans, and
@@ -2314,6 +2533,50 @@ def test_render_poster_given_no_draw_renders_no_draw_badge() -> None:
     page = _poster_page(_poster_placed())
 
     assert "draw <span" not in page
+
+
+# --------------------------------------------- DNS rows (Phase 7)
+# A DNS row never placed, so it is not a podium finisher: the poster
+# slices the ranked rows only, exactly as the report's own podiums and
+# top lists do. Reachable whenever a kind's placed count sits below the
+# poster's cap (five solo, three per kind on a team event).
+
+
+def test_render_poster_given_a_dns_row_omits_it_from_the_solo_five() -> None:
+    """Phase 7: the solo-only poster's five carry no DNS row."""
+    placed = (
+        Placed(
+            place=1,
+            result=_sample_entry("88", "Moss Ridge Riders", 11),
+            tie_note=None,
+            draw_required=False,
+        ),
+        _dns_placed("31", "Rita Slow"),
+    )
+
+    page = _poster_page(placed)
+
+    assert "Moss Ridge Riders" in page
+    assert "Rita Slow" not in page
+
+
+def test_render_poster_given_a_dns_team_row_omits_it_from_the_team_three() -> None:
+    """Phase 7: a team event's three carry no DNS team either."""
+    placed = (
+        Placed(
+            place=1,
+            result=_sample_entry("88", "Moss Ridge Riders", 11, kind="team"),
+            tie_note=None,
+            draw_required=False,
+        ),
+        _dns_placed("77", "Late Starters", kind="team"),
+    )
+
+    page = _poster_page(placed)
+
+    assert "Moss Ridge Riders" in page
+    assert "Late Starters" not in page
+    assert "#77" not in page
 
 
 # ------------------- the poster card's whole hand (drawn_row's design)

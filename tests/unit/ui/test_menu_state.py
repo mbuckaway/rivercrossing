@@ -148,6 +148,7 @@ _PUBLISH_MENU_IDS = (
     "mi_time_board",
     "mi_full_field",
     "mi_all_cards",
+    "mi_show_dns_riders",
 )
 
 
