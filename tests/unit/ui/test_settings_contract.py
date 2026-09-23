@@ -200,6 +200,23 @@ def test_settings_dialog_collect_settings_carries_the_publish_options_through(
     ) == (True, False, True, False, False)
 
 
+def test_default_settings_show_dns_riders_defaults_to_true() -> None:
+    """The Results menu's "Show DNS Riders" ships checked."""
+    assert default_settings().show_dns_riders is True
+
+
+def test_settings_dialog_collect_settings_carries_the_dns_riders_toggle_through(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The DNS toggle has no dialog control, so OK carries it over."""
+    settings = replace(default_settings(), show_dns_riders=False)
+    view, _controls, _dialog = _build_view(monkeypatch, settings=settings)
+
+    collected = view.collect_settings()
+
+    assert collected.show_dns_riders is False
+
+
 # ---------------------------------------- the appearance radio render
 
 

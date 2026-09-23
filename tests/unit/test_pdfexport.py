@@ -803,7 +803,7 @@ def test_render_empty_field_renders(tmp_path: Path) -> None:
     out = _render(tmp_path, (), ExportOptions(full_field=True, laps_board=True, time_board=True))
 
     text = _text(out)
-    assert "0 · 0 · 0" in text
+    assert "0 · 0 · 0 · 0" in text
     assert "Full field" in text
 
 
@@ -813,8 +813,164 @@ def test_render_cover_block_shows_kicker_title_and_counters(tmp_path: Path) -> N
 
     assert "Official results · poker run" in text
     assert "GORBA EPIC & MTB Festival 2026" in text
-    assert "50 · 347 · 349" in text
-    assert "entries · laps · cards dealt" in text
+    assert "50 · 347 · 349 · 0" in text
+    assert "entries · laps · cards dealt · unique riders" in text
+
+
+def test_render_given_a_rider_count_puts_it_on_the_cover_counter_row(tmp_path: Path) -> None:
+    """``riders`` is the cover's fourth counter, thousands-separated."""
+    out = tmp_path / "results.pdf"
+
+    pdfexport.render(
+        build_ride(),
+        build_placed(),
+        golden_opts(),
+        out,
+        created_at=FIXED_CREATED,
+        riders=1207,
+    )
+
+    assert "50 · 347 · 349 · 1,207" in _text(out)
+
+
+# --------------------------------------------- DNS rows (Phase 7)
+# A DNS row is a 0-lap ACTIVE entry on a FINISHED ride. It keeps its
+# row at the bottom of the Full field, with a blank Place cell and the
+# word "DNS" where its lap count would be; the podiums, the top lists
+# and the boards it never reached are untouched.
+
+
+def _dns_placed(plate: str, name: str, *, kind: str = "solo") -> Placed:
+    """Build one DNS row (Phase 7): unplaced, 0 laps, no tie note."""
+    return Placed(
+        place=0,
+        result=_entry(plate, name, 0, kind=kind),
+        tie_note=None,
+        draw_required=False,
+        dns=True,
+    )
+
+
+def _dns_field() -> tuple[Placed, ...]:
+    """Build a one-solo field plus its DNS tail (one section)."""
+    return (
+        Placed(
+            place=1,
+            result=_entry("88", "Moss Ridge Riders", 11),
+            tie_note=None,
+            draw_required=False,
+        ),
+        _dns_placed("31", "Rita Slow"),
+    )
+
+
+def test_render_given_a_dns_row_prints_dns_where_the_laps_would_be(tmp_path: Path) -> None:
+    """The full field's DNS row renders the word "DNS"."""
+    opts = ExportOptions(full_field=True, laps_board=False, time_board=False)
+
+    text = _text(_render(tmp_path, _dns_field(), opts))
+
+    assert "DNS" in text
+
+
+def test_render_given_a_dns_row_prints_no_place_before_its_plate(tmp_path: Path) -> None:
+    """T-3: the DNS row's Place cell is blank, not its placeholder 0.
+
+    The extracted row therefore reads plate-name-laps with no leading
+    digit, which is what ``"0 31"`` would be if the placeholder leaked
+    through the Place cell.
+    """
+    opts = ExportOptions(full_field=True, laps_board=False, time_board=False)
+
+    text = _text(_render(tmp_path, _dns_field(), opts))
+
+    assert "31 Rita Slow" in text
+    assert "0 31" not in text
+
+
+def test_render_given_a_dns_row_leaves_it_off_the_podium(tmp_path: Path) -> None:
+    """T-3: the DNS rider is not a podium card (it was never placed)."""
+    text = _text(_render(tmp_path, _dns_field(), ExportOptions(full_field=True)))
+
+    podium = _section(text, "Best hands — top 3", "Top ten")
+    assert "#88 Moss Ridge Riders" in podium
+    assert "Rita Slow" not in podium
+
+
+def test_render_given_a_placed_row_keeps_its_place_and_lap_count(tmp_path: Path) -> None:
+    """T-3: an ordinary row is untouched by the DNS rule."""
+    opts = ExportOptions(full_field=True, laps_board=False, time_board=False)
+
+    text = _text(_render(tmp_path, _dns_field(), opts))
+
+    assert "1 88 Moss Ridge Riders" in text
+
+
+def test_render_given_a_dns_row_blanks_its_time_cells(tmp_path: Path) -> None:
+    """Phase 7: a DNS entry's Total time and Best lap cells are blank.
+
+    The DNS row's own would-be readings are distinctive here
+    (20:00 / 15:00), so their absence is the cells going empty rather
+    than the whole row vanishing.
+    """
+    opts = ExportOptions(show_times=True, full_field=True, laps_board=False, time_board=False)
+    dns = _dns_placed("31", "Rita Slow")
+    placed = (
+        Placed(
+            place=1,
+            result=_entry("88", "Moss Ridge Riders", 11),
+            tie_note=None,
+            draw_required=False,
+        ),
+        replace(dns, result=replace(dns.result, total_time=1_200.0, best_lap=900.0)),
+    )
+
+    text = _text(_render(tmp_path, placed, opts))
+
+    assert "5:32:00" in text  # the placed row keeps its times
+    assert "20:00" not in text
+    assert "15:00" not in text
+
+
+def test_draw_marker_given_a_dns_row_returns_no_marker() -> None:
+    """Phase 7: a DNS row renders no draw marker, whatever it carries.
+
+    The record path can hand a DNS row a stray draw (a parsed
+    ``race-data`` row may hold both ``dns`` and ``draw``), so the
+    marker's own rule refuses it rather than trusting the caller.
+    """
+    row = ResultRow(
+        place=0,
+        plate=31,
+        entry="Rita Slow",
+        entry_type="SOLO",
+        laps=0,
+        hand="",
+        dns=True,
+        draw=("7", "d"),
+    )
+
+    assert pdfexport._draw_marker(row) == ""
+
+
+def test_render_given_a_drawn_dns_row_prints_no_draw_marker(tmp_path: Path) -> None:
+    """Phase 7: a DNS row's finish-time draw never reaches the page."""
+    opts = ExportOptions(full_field=True, laps_board=False, time_board=False)
+    dns = _dns_placed("31", "Rita Slow")
+    placed = (
+        Placed(
+            place=1,
+            result=replace(_entry("88", "Moss Ridge Riders", 11), tiebreak_card=Card.parse("AH")),
+            tie_note=None,
+            draw_required=False,
+        ),
+        replace(dns, result=replace(dns.result, tiebreak_card=Card.parse("7D"))),
+    )
+
+    text = _text(_render(tmp_path, placed, opts))
+
+    assert "DRAW A♥" in text
+    assert "DRAW 7♦" not in text
 
 
 def test_render_meta_line_formats_ride_fields(tmp_path: Path) -> None:
@@ -1044,6 +1200,74 @@ def test_podium_poster_team_only_field_omits_the_solo_riders_section(
     assert "Teams" in text
     assert "Team 3" in text
     assert "Solo riders" not in text
+
+
+# --------------------------------------------- DNS rows (Phase 7)
+# The PDF sibling of the HTML poster's own rule: the cards come from
+# the ranked rows only, so a DNS row (never placed) is not a card --
+# and never borrows the enumerated place `_cards` hands out.
+
+
+def test_podium_poster_given_a_dns_row_omits_it_from_the_solo_five(tmp_path: Path) -> None:
+    """Phase 7: a solo field's poster carries no DNS card."""
+    placed = (
+        Placed(
+            place=1,
+            result=_entry("88", "Moss Ridge Riders", 11),
+            tie_note=None,
+            draw_required=False,
+        ),
+        _dns_placed("31", "Rita Slow"),
+    )
+
+    text = _text(_poster(tmp_path, placed))
+
+    assert "Moss Ridge Riders" in text
+    assert "Rita Slow" not in text
+
+
+def test_podium_poster_given_a_dns_team_row_omits_it_from_the_team_three(
+    tmp_path: Path,
+) -> None:
+    """Phase 7: a team event's poster carries no DNS team card."""
+    placed = (
+        Placed(
+            place=1,
+            result=_entry("88", "Moss Ridge Riders", 11, kind="team"),
+            tie_note=None,
+            draw_required=False,
+        ),
+        _dns_placed("77", "Late Starters", kind="team"),
+    )
+
+    text = _text(_poster(tmp_path, placed))
+
+    assert "Moss Ridge Riders" in text
+    assert "Late Starters" not in text
+
+
+def test_podium_poster_given_only_dns_teams_skips_the_teams_section(tmp_path: Path) -> None:
+    """Phase 7: an all-DNS team partition draws no Teams heading.
+
+    The field is still a team event (the layout rule reads the whole
+    partition), so the solo section keeps the compact card sizing; the
+    Teams section, having no cards, draws neither heading nor card.
+    """
+    placed = (
+        _dns_placed("77", "Late Starters", kind="team"),
+        Placed(
+            place=1,
+            result=_entry("88", "Moss Ridge Riders", 11),
+            tie_note=None,
+            draw_required=False,
+        ),
+    )
+
+    text = _text(_poster(tmp_path, placed))
+
+    assert "Late Starters" not in text
+    assert "Teams" not in text
+    assert "Solo riders" in text
 
 
 def test_podium_poster_team_event_content_fits_one_letter_page() -> None:

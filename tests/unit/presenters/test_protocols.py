@@ -358,8 +358,10 @@ class FakeDataSource:
 
     def standings(
         self,
-        # DataSource's signature; the fake ignores order
+        # DataSource's signature; the fake ignores order and the toggle
         order: tuple[TieBreak, ...] = DEFAULT_TIEBREAK_ORDER,  # noqa: ARG002
+        *,
+        show_dns_riders: bool = True,  # noqa: ARG002 -- DataSource's signature
     ) -> tuple[list[StandingsRow], list[StandingsRow]]:
         """Return one fixed team standings row for any order."""
         return [

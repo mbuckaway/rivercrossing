@@ -26,6 +26,7 @@ import json
 import re
 import sys
 import tempfile
+from dataclasses import replace
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -47,20 +48,35 @@ _RACE_DATA_RE = re.compile(
     r'<script type="application/json" id="race-data">(.*?)</script>', re.DOTALL
 )
 
-# (sample page, payload fixture, golden page) -- the three-layer freeze.
-GOLDEN_SPECS: tuple[tuple[str, str, str], ...] = (
-    ("epic-2026-results.html", "payload-times.json", "epic-2026-results.html"),
+# (sample page, payload fixture, golden page, riders) -- the three-layer
+# freeze plus the header's unique-rider census.
+#
+# The census is the ride's whole field, not something the sample page
+# can be read for: each sample's ``race-data`` carries a 14-row subset
+# of its 180 entries (7 rows on the solo sample), so a count derived
+# from those rows (29) would contradict ``event.entries`` itself. The
+# figures come from the ride's own documented census --
+# ``design/docs-md/ui-designs-retired.md``: "180 entries · 262 riders"
+# -- and the solo-only sample, where a field of solo entries has one
+# rider each, is that same identity: 180 entries, 180 riders.
+GOLDEN_SPECS: tuple[tuple[str, str, str, int], ...] = (
+    ("epic-2026-results.html", "payload-times.json", "epic-2026-results.html", 262),
     (
         "epic-2026-results-no-times.html",
         "payload-no-times.json",
         "epic-2026-results-no-times.html",
+        262,
     ),
     (
         "epic-2026-results-solo.html",
         "payload-solo.json",
         "epic-2026-results-solo.html",
+        180,
     ),
 )
+
+# The census by sample page, what :func:`payload_and_record` looks up.
+_CENSUS_BY_SAMPLE: dict[str, int] = {sample: riders for sample, _f, _g, riders in GOLDEN_SPECS}
 
 
 def _race_data_block(html: str) -> str:
@@ -81,6 +97,14 @@ def payload_and_record(
 ) -> tuple[RacePayload, dict[str, object]]:
     """Parse one sample's ``race-data`` and build its payload.
 
+    The returned payload carries the sample's documented rider census
+    on its :class:`~rivercrossing.htmlexport.EventInfo`
+    (:data:`GOLDEN_SPECS`, applied with ``dataclasses.replace`` after
+    the parity check): the count reaches the rendered page only, so the
+    record handed back beside it stays exactly the sample's own. A
+    sample outside the spec -- a synthetic fixture a test writes --
+    carries none.
+
     Raises:
         ValueError: The sample's record does not round-trip through the
             payload model, or the page has no ``race-data`` block.
@@ -91,7 +115,8 @@ def payload_and_record(
     if payload.to_record() != record:
         msg = f"value-parity failed for {sample_name}: record does not round-trip"
         raise ValueError(msg)
-    return payload, record
+    census = _CENSUS_BY_SAMPLE.get(sample_name, 0)
+    return replace(payload, event=replace(payload.event, riders=census)), record
 
 
 def write_goldens(samples_dir: Path, out_dir: Path) -> tuple[Path, ...]:
@@ -103,7 +128,7 @@ def write_goldens(samples_dir: Path, out_dir: Path) -> tuple[Path, ...]:
     and the committed tree must reproduce exactly.
     """
     pending: list[tuple[Path, str]] = []
-    for sample_name, fixture_name, golden_name in GOLDEN_SPECS:
+    for sample_name, fixture_name, golden_name, _riders in GOLDEN_SPECS:
         payload, record = payload_and_record(samples_dir, sample_name)
         pending.append(
             (

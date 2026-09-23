@@ -22,6 +22,7 @@ import re
 from pathlib import Path
 from types import ModuleType  # noqa: TC003 -- used at runtime as a return type here
 
+import htmlexport_fixtures
 import pytest
 from htmlexport_fixtures import (
     GOLDEN_NO_TIMES,
@@ -111,6 +112,64 @@ def test_generated_fixture_json_parses_to_the_sample_record() -> None:
     record = json.loads(times_fixture.read_text(encoding="utf-8"))
 
     assert record == parse_race_data(TIMES_SAMPLE)
+
+
+# --------------------------------------- the census rider count
+#
+# ``race-data`` carries no rider count (its nine event keys are frozen)
+# and its ``results`` rows are a SUBSET of the field (14 of the ride's
+# 180 entries), so no row-derived count can be right: the goldens show
+# the ride's own documented census instead -- 262 riders for 180
+# entries (``ui-designs-retired.md``: "180 entries · 262 riders"), and
+# 180 for the solo-only sample, where entries and riders are the same
+# people. The count reaches the rendered page only -- the embedded
+# record stays exactly the sample's own.
+
+
+@pytest.mark.parametrize(
+    ("sample", "expected_riders"),
+    [
+        (TIMES_SAMPLE, 262),
+        (NO_TIMES_SAMPLE, 262),
+        (SOLO_SAMPLE, 180),
+    ],
+    ids=["times", "no-times", "solo"],
+)
+def test_payload_and_record_carries_the_documented_census(
+    sample: Path, expected_riders: int
+) -> None:
+    """Each sample's payload carries its documented census."""
+    payload, record = gen_goldens.payload_and_record(gen_goldens.DEFAULT_SAMPLES_DIR, sample.name)
+
+    assert payload.event.riders == expected_riders
+    assert "riders" not in record["event"]
+
+
+def test_written_golden_renders_the_census_rider_count(tmp_path: Path) -> None:
+    """The frozen page shows the census, never the placeholder 0."""
+    gen_goldens.write_goldens(gen_goldens.DEFAULT_SAMPLES_DIR, tmp_path)
+
+    html = (tmp_path / "epic-2026-results.html").read_text(encoding="utf-8")
+
+    assert "180 · 1124 · 1092 · 262" in html
+    assert "unique riders" in html
+
+
+def test_census_table_matches_the_generators_spec() -> None:
+    """T-3: the fixture loader's census is the generator's own.
+
+    ``load_race_payload`` applies the same per-sample value the goldens
+    were frozen with; the two tables are separate constants (the tool
+    cannot import test code), so this pins them equal -- drift would
+    otherwise show up only as a byte-for-byte golden failure.
+    """
+    mismatches = {
+        fixture_name: spec_riders
+        for _sample, fixture_name, _golden, spec_riders in gen_goldens.GOLDEN_SPECS
+        if htmlexport_fixtures.GOLDEN_RIDERS[fixture_name] != spec_riders
+    }
+
+    assert mismatches == {}
 
 
 # ----------------------------------------------------------- CLI modes

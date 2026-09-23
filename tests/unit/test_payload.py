@@ -403,6 +403,75 @@ def test_payload_from_record_round_trips_the_draw_and_the_self_test_note() -> No
     assert _payload_from_record(record).to_record() == record
 
 
+# --- the render-only unique-rider count ---
+
+
+def test_event_info_riders_defaults_to_zero() -> None:
+    """A payload built without a count renders 0, never a blank."""
+    assert _sample_event().riders == 0
+
+
+def test_event_info_to_record_omits_the_render_only_riders_count() -> None:
+    """``riders`` is render-only, exactly like ``ExportOptions.lap_km``.
+
+    The golden ``race-data`` blocks carry nine event keys, and the
+    golden generator's ``record -> payload -> record`` parity check
+    rebuilds ``EventInfo`` from those nine -- so a tenth key here would
+    break both.
+    """
+    event = replace(_sample_event(), riders=207)
+
+    assert "riders" not in event.to_record()
+
+
+def test_event_info_riders_reaches_the_page_but_not_the_record() -> None:
+    """T-3: the count is on the dataclass, absent from its record."""
+    event = replace(_sample_event(), riders=207)
+
+    assert (event.riders, len(event.to_record())) == (207, 9)
+
+
+# --- the sparse DNS flag (Phase 7) ---
+
+
+def _dns_row() -> ResultRow:
+    """Build one 0-lap DNS results row (Phase 7)."""
+    return ResultRow(
+        place=0,
+        plate=31,
+        entry="Rita Slow",
+        entry_type="SOLO",
+        laps=0,
+        hand="",
+        dns=True,
+    )
+
+
+def test_result_row_dns_defaults_to_false() -> None:
+    """An ordinary results row is not a DNS row."""
+    assert _sample_results()[0].dns is False
+
+
+def test_result_row_to_record_given_a_dns_row_keeps_laps_numeric_and_flags_dns() -> None:
+    """The machine record keeps ``laps: 0`` and adds the flag."""
+    record = _dns_row().to_record(show_times=False)
+
+    assert (record["laps"], record["place"], record["dns"]) == (0, 0, True)
+
+
+def test_result_row_to_record_given_a_placed_row_omits_the_dns_key() -> None:
+    """T-3: the flag is sparse -- a placed row carries no key at all."""
+    assert "dns" not in _sample_results()[0].to_record(show_times=False)
+
+
+def test_payload_from_record_round_trips_a_dns_row() -> None:
+    """The sparse flag survives record -> payload -> record."""
+    payload = replace(_times_hidden_payload(), results=(_dns_row(),))
+    record = payload.to_record()
+
+    assert _payload_from_record(record).to_record() == record
+
+
 # --- camelCase mapping ---
 
 

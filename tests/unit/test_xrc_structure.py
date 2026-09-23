@@ -126,7 +126,10 @@ CARDS_MENU_ITEMS = (
 # new item gates on its own export existing (HTML / PDF), and the
 # poster page gained its own pair (mi_export_poster_html and
 # mi_preview_poster_html_browser). G6: the five checkable publish
-# options follow a separator, after the Preview rows.
+# options follow a separator, after the Preview rows. The Results menu
+# owns a sixth toggle: mi_show_dns_riders, the "Show DNS Riders" check
+# item that hides a Finished ride's DNS rows from the window and every
+# export (checked by default, from AppSettings.show_dns_riders).
 RESULTS_MENU_ITEMS = (
     "mi_standings",
     "mi_export_html",
@@ -142,6 +145,7 @@ RESULTS_MENU_ITEMS = (
     "mi_time_board",
     "mi_full_field",
     "mi_all_cards",
+    "mi_show_dns_riders",
 )
 ZOOM_MENU_ITEMS = (
     "mi_zoom_90",
@@ -229,7 +233,7 @@ MENU_LABELS = ("&File", "&Ride", "Ri&ders", "&Cards", "Re&sults", "&View", "&Hel
 # mi_void_card, G7 retired mi_edit_crossing, and the removals batch
 # retired mi_review_held and authored the two Podium-Poster-HTML
 # rows): File 8 (mi_simulation added), Ride 9, Riders 4, Cards 3,
-# Results 14, View 1, Help 4. The single
+# Results 15, View 1, Help 4. The single
 # View row expands into the 9 items section 15b names for it (W13: the
 # two time-column check items + the seven zoom radios; the theme trio
 # left the View menu).
@@ -238,7 +242,7 @@ MENU_ITEM_COUNTS = (
     ("&Ride", 9),
     ("Ri&ders", 4),
     ("&Cards", 3),
-    ("Re&sults", 14),
+    ("Re&sults", 15),
     ("&View", 9),
     ("&Help", 4),
 )
@@ -525,13 +529,13 @@ def test_menu_declares_the_expected_item_count(menu_label: str, expected_items: 
     assert len(items) == expected_items
 
 
-def test_main_menubar_declares_forty_eight_menu_item_names() -> None:
-    """The removals batch leaves 48 ``mi_*`` names in main.xrc."""
+def test_main_menubar_declares_forty_nine_menu_item_names() -> None:
+    """The Results menu's zero-lap toggle leaves 49 ``mi_*`` names."""
     names = _control_names_in(_window("main_menubar"))
 
     menu_item_names = [name for name in names if name.startswith("mi_")]
 
-    assert len(menu_item_names) == 48
+    assert len(menu_item_names) == 49
 
 
 def test_main_menubar_item_names_are_exactly_the_routed_item_set() -> None:
@@ -568,7 +572,7 @@ def test_ride_menu_declares_the_spec_15_row_order_after_d1() -> None:
 
 
 def test_results_menu_declares_the_publish_rows_after_the_previews() -> None:
-    """G6: the five publish items close the Results menu."""
+    """G6: the five publish items and the DNS toggle close it."""
     results_menu = _menus()[4]
 
     names = [item.attrib["name"] for item in _menu_items(results_menu)]
@@ -609,10 +613,11 @@ def test_results_menu_given_the_publish_group_separates_it_from_the_previews() -
         ("mi_time_board", "Fastest-time leaderboard"),
         ("mi_full_field", "Full field"),
         ("mi_all_cards", "All cards drawn"),
+        ("mi_show_dns_riders", "Show DNS Riders"),
     ],
 )
 def test_results_menu_row_declares_its_label(item_name: str, label: str) -> None:
-    """G6: the renamed export row, plus the five publish options."""
+    """G6: the renamed export row, plus the six Results-menu options."""
     item = _objects_by_name(_window("main_menubar"))[item_name]
 
     assert _param(item, "label") == label
@@ -620,7 +625,14 @@ def test_results_menu_row_declares_its_label(item_name: str, label: str) -> None
 
 @pytest.mark.parametrize(
     "item_name",
-    ["mi_show_times", "mi_laps_board", "mi_time_board", "mi_full_field", "mi_all_cards"],
+    [
+        "mi_show_times",
+        "mi_laps_board",
+        "mi_time_board",
+        "mi_full_field",
+        "mi_all_cards",
+        "mi_show_dns_riders",
+    ],
 )
 def test_results_publish_row_declares_a_checkable_item(item_name: str) -> None:
     """G6: each publish option is checkable (no radio group)."""

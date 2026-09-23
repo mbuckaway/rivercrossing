@@ -38,6 +38,7 @@ from rivercrossing.standings import (
     LIVE_TIEBREAK_ORDER,
     EntryResult,
     TieBreak,
+    ZeroLapMode,
     hand_name,
     laps_leaderboard,
     rank,
@@ -686,6 +687,210 @@ def test_rank_by_kind_unknown_tiebreak_member_raises_type_error() -> None:
             [_result("1", "AS KS QS JS 10S")],
             order=(TieBreak.MOST_LAPS, "laps"),
         )
+
+
+# ------------------------------------------------- 0-lap entries (DNS)
+#
+# A rider who never crossed a line -- 0 recorded laps -- is still an
+# ACTIVE entry: the ride closed with them on the course. On a FINISHED
+# ride such an entry is a DNS ("Did Not Start") row: it is partitioned
+# out BEFORE the sort, the rest renumber from 1 with contiguous places,
+# and the DNS rows are appended afterwards, unplaced and unflagged.
+# ``rank`` itself stays pure and never sees the mode -- the caller picks
+# one with :class:`ZeroLapMode` at the split entry point.
+
+
+def test_zero_lap_mode_members_are_rank_dns_and_hide() -> None:
+    """The three modes, and the readable spellings they report."""
+    assert [(member.name, member.value) for member in ZeroLapMode] == [
+        ("RANK", "rank"),
+        ("DNS", "dns"),
+        ("HIDE", "hide"),
+    ]
+
+
+def test_rank_places_a_zero_lap_entry_normally() -> None:
+    """Rank stays pure: a 0-lap ACTIVE entry still places."""
+    zero = _result("1", "AS KS QS JS 10S", laps=0)
+
+    placed = rank([zero])
+
+    assert [(p.place, p.dns) for p in placed] == [(1, False)]
+
+
+def test_rank_given_the_superseded_include_zero_laps_flag_raises_type_error() -> None:
+    """The filter this design replaced is gone from rank's signature."""
+    with pytest.raises(TypeError, match=re.escape("include_zero_laps")):
+        rank([_result("1", "AS KS QS JS 10S")], include_zero_laps=False)
+
+
+def test_rank_by_kind_default_mode_ranks_a_zero_lap_entry_in_place() -> None:
+    """Omitting the mode is RANK: the whole ACTIVE field places."""
+    zero = _result("1", "9H 8C 7D 6S 5H", laps=0)
+    one_lap = _result("2", "AS KS QS JS 10S", laps=1)
+
+    teams, solo = rank_by_kind([zero, one_lap])
+
+    assert teams == []
+    assert [(p.place, p.dns, p.result.entry_id) for p in solo] == [
+        (1, False, "2"),
+        (2, False, "1"),
+    ]
+
+
+def test_rank_by_kind_given_rank_places_a_zero_lap_entry_in_place() -> None:
+    """An explicit RANK matches the omitted-mode behaviour exactly."""
+    results = [
+        _result("1", "9H 8C 7D 6S 5H", kind="team", laps=0),
+        _result("2", "AS KS QS JS 10S", kind="solo", laps=1),
+    ]
+
+    assert rank_by_kind(results, zero_laps=ZeroLapMode.RANK) == rank_by_kind(results)
+
+
+def test_rank_by_kind_given_dns_appends_the_zero_lap_entry_unplaced_last() -> None:
+    """A DNS row leaves the ranking and lands after the placed rows."""
+    zero = _result("1", "AS KS QS JS 10S", laps=0)
+    one_lap = _result("2", "9H 8C 7D 6S 5H", laps=1)
+
+    _teams, solo = rank_by_kind([zero, one_lap], zero_laps=ZeroLapMode.DNS)
+
+    assert [(p.place, p.dns, p.result.entry_id) for p in solo] == [
+        (1, False, "2"),
+        (0, True, "1"),
+    ]
+
+
+def test_rank_by_kind_given_dns_marks_the_row_with_no_note_or_draw_flag() -> None:
+    """A DNS Placed carries place 0, no tie note and no draw flag."""
+    zero = _result("1", "AS KS QS JS 10S", laps=0)
+
+    _teams, solo = rank_by_kind([zero], zero_laps=ZeroLapMode.DNS)
+
+    assert [(p.place, p.tie_note, p.draw_required, p.dns) for p in solo] == [
+        (0, None, False, True)
+    ]
+
+
+def test_rank_by_kind_given_dns_a_tied_zero_lap_pair_is_never_flagged() -> None:
+    """Two 0-lap tied hands are DNS rows, never a draw."""
+    first = _result("1", "9H 8C 7D 6S 5H", laps=0)
+    second = _result("2", "9C 8D 7H 6C 5D", laps=0)
+
+    _teams, solo = rank_by_kind([first, second], zero_laps=ZeroLapMode.DNS)
+
+    assert [(p.place, p.draw_required, p.dns) for p in solo] == [
+        (0, False, True),
+        (0, False, True),
+    ]
+
+
+def test_rank_by_kind_given_dns_keeps_the_placed_places_contiguous() -> None:
+    """Partitioning before the sort leaves no place gaps (1..3)."""
+    results = [
+        _result("1", "AS KS QS JS 10S", laps=0),
+        _result("2", "AH KH QH JH 10H", laps=4),
+        _result("3", "9H 8C 7D 6S 5H", laps=0),
+        _result("4", "JH JC JD 4H 4C", laps=3),
+        _result("5", "KH KC 5H 5D AS", laps=3),
+    ]
+
+    _teams, solo = rank_by_kind(results, zero_laps=ZeroLapMode.DNS)
+
+    assert [p.place for p in solo] == [1, 2, 3, 0, 0]
+    assert [p.result.entry_id for p in solo] == ["2", "4", "5", "1", "3"]
+
+
+def test_rank_by_kind_given_dns_orders_the_dns_rows_by_input_order() -> None:
+    """The DNS tail keeps the caller's order, never the hand order."""
+    later_input = _result("9", "9H 8C 7D 6S 5H", laps=0)
+    earlier_input = _result("1", "AS KS QS JS 10S", laps=0)
+
+    _teams, solo = rank_by_kind([later_input, earlier_input], zero_laps=ZeroLapMode.DNS)
+
+    assert [p.result.entry_id for p in solo] == ["9", "1"]
+
+
+def test_rank_by_kind_given_dns_drops_a_zero_lap_dnf_entry() -> None:
+    """A 0-lap DNF is neither placed nor a DNS row: DNF wins."""
+    zero_lap_dnf = _result("1", "AS KS QS JS 10S", laps=0, dnf=True)
+    one_lap = _result("2", "9H 8C 7D 6S 5H", laps=1)
+
+    _teams, solo = rank_by_kind([zero_lap_dnf, one_lap], zero_laps=ZeroLapMode.DNS)
+
+    assert [(p.place, p.dns, p.result.entry_id) for p in solo] == [(1, False, "2")]
+
+
+def test_rank_by_kind_given_dns_drops_a_started_dnf_entry() -> None:
+    """A DNF entry never reaches the ranked side either."""
+    zero_lap = _result("1", "AS KS QS JS 10S", laps=0)
+    started_dnf = _result("2", "9H 8C 7D 6S 5H", laps=3, dnf=True)
+
+    _teams, solo = rank_by_kind([zero_lap, started_dnf], zero_laps=ZeroLapMode.DNS)
+
+    assert [(p.place, p.dns, p.result.entry_id) for p in solo] == [(0, True, "1")]
+
+
+def test_rank_by_kind_given_hide_drops_the_zero_lap_entry() -> None:
+    """HIDE is the toggle-off case: the 0-lap entry is gone entirely."""
+    zero = _result("1", "AS KS QS JS 10S", laps=0)
+    one_lap = _result("2", "9H 8C 7D 6S 5H", laps=1)
+
+    _teams, solo = rank_by_kind([zero, one_lap], zero_laps=ZeroLapMode.HIDE)
+
+    assert [(p.place, p.dns, p.result.entry_id) for p in solo] == [(1, False, "2")]
+
+
+@pytest.mark.parametrize("laps", [1, 2, 100])
+def test_rank_by_kind_given_dns_never_partitions_a_started_entry(laps: int) -> None:
+    """T-4 boundary: the partition is exactly ``laps == 0``."""
+    started = _result("1", "AS KS QS JS 10S", laps=laps)
+
+    _teams, solo = rank_by_kind([started], zero_laps=ZeroLapMode.DNS)
+
+    assert [(p.place, p.dns) for p in solo] == [(1, False)]
+
+
+def test_rank_by_kind_given_dns_partitions_teams_and_solos_independently() -> None:
+    """Teams and solos each keep their own DNS tail."""
+    team_zero = _result("1", "AS KS QS JS 10S", kind="team", laps=0)
+    team_lapped = _result("2", "AH KH QH JH 10H", kind="team", laps=5)
+    solo_zero = _result("3", "9H 8C 7D 6S 5H", kind="solo", laps=0)
+    solo_lapped = _result("4", "JH JC JD 4H 4C", kind="solo", laps=3)
+
+    teams, solo = rank_by_kind(
+        [team_zero, solo_zero, team_lapped, solo_lapped], zero_laps=ZeroLapMode.DNS
+    )
+
+    assert [(p.place, p.dns, p.result.entry_id) for p in teams] == [
+        (1, False, "2"),
+        (0, True, "1"),
+    ]
+    assert [(p.place, p.dns, p.result.entry_id) for p in solo] == [
+        (1, False, "4"),
+        (0, True, "3"),
+    ]
+
+
+def test_rank_by_kind_given_dns_an_all_zero_lap_section_is_all_dns() -> None:
+    """A section where nobody started is entirely DNS rows."""
+    first = _result("1", "AS KS QS JS 10S", laps=0)
+    second = _result("2", "9H 8C 7D 6S 5H", laps=0)
+
+    _teams, solo = rank_by_kind([first, second], zero_laps=ZeroLapMode.DNS)
+
+    assert [(p.place, p.dns) for p in solo] == [(0, True), (0, True)]
+
+
+def test_rank_by_kind_given_dns_an_empty_field_is_two_empty_sections() -> None:
+    """The partitioned path turns an empty field into empty sections."""
+    assert rank_by_kind([], zero_laps=ZeroLapMode.DNS) == ([], [])
+
+
+def test_rank_by_kind_zero_laps_is_keyword_only() -> None:
+    """The mode is keyword-only, never read as the order."""
+    with pytest.raises(TypeError, match=re.escape("positional")):
+        rank_by_kind([_result("1", "AS KS QS JS 10S")], DEFAULT_TIEBREAK_ORDER, ZeroLapMode.DNS)
 
 
 # ------------------------------------------------------ empty input

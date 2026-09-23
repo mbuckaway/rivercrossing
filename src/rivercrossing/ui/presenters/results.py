@@ -55,8 +55,8 @@ class ResultsPresenter:
     render.
     """
 
-    # (view, data_source) + the tie-break order and export-watermark
-    # seams
+    # (view, data_source) + the tie-break order, export-watermark and
+    # DNS-display seams
     def __init__(  # noqa: PLR0913
         self,
         view: ResultsView,
@@ -64,6 +64,7 @@ class ResultsPresenter:
         *,
         tiebreak_order: tuple[str, str, str] = DEFAULT_TIEBREAK_ORDER,
         export_watermark: int | None = None,
+        show_dns_riders: bool = True,
     ) -> None:
         """Store the view/source, rank the standings, evaluate stale.
 
@@ -77,13 +78,18 @@ class ResultsPresenter:
                 last export (E7.3.2); ``None`` when nothing was
                 exported. The first render evaluates the stale flag
                 against it.
+            show_dns_riders: The Results menu's "Show DNS Riders"
+                (``AppSettings.show_dns_riders``), forwarded to the
+                source's ranking. On by default.
         """
         self.view = view
         self.data_source = data_source
         self._order = tiebreak_order_from_spellings(tiebreak_order)
         self._export_watermark = export_watermark
 
-        teams, solo = self.data_source.standings(order=self._order)
+        teams, solo = self.data_source.standings(
+            order=self._order, show_dns_riders=show_dns_riders
+        )
         self.view.show_standings(teams, solo)
         self._sync_stale()
 

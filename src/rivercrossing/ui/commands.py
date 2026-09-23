@@ -10,7 +10,9 @@ mi_tiebreak_order row: the tie-break order now comes only from the
 ride's stored config, set in Ride Setup; its single Preview row
 split per format -- HTML and PDF -- in Part D, and G6 moved the five
 results publish options out of the results dialog onto a checkable
-Results row. The poster page's own export and preview pair,
+Results row, which the Results menu's DNS toggle
+(mi_show_dns_riders) then joined. The poster page's own export and
+preview pair,
 mi_export_poster_html / mi_preview_poster_html_browser, joined
 Results beside their PDF siblings.) Phase 2 retired the dead Entry
 Detail… row and the duplicate Reassign Plate… / Void Card… rows --
@@ -551,6 +553,7 @@ ROUTE_TABLE: tuple[MenuRoute, ...] = (
             "mi_time_board",
             "mi_full_field",
             "mi_all_cards",
+            "mi_show_dns_riders",
         ),
         kind=TargetKind.COMMAND,  # "Direct commands"
         target="results_publish",

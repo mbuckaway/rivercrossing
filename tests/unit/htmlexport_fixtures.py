@@ -23,6 +23,7 @@ block.
 
 import json
 import re
+from dataclasses import replace
 from pathlib import Path
 
 from rivercrossing.htmlexport import RacePayload, _payload_from_record
@@ -43,6 +44,22 @@ SOLO_FIXTURE = FIXTURES_DIR / "payload-solo.json"
 GOLDEN_TIMES = FIXTURES_DIR / "epic-2026-results.html"
 GOLDEN_NO_TIMES = FIXTURES_DIR / "epic-2026-results-no-times.html"
 GOLDEN_SOLO = FIXTURES_DIR / "epic-2026-results-solo.html"
+
+# The header's unique-rider census per fixture file, the figure the
+# golden pages were frozen with. It cannot be read from the fixture
+# JSON: each sample's record carries a 14-row (7-row on the solo page)
+# SUBSET of the ride's 180 entries, so no row-derived count can be
+# right. The values mirror ``tools/gen_htmlexport_goldens.py``'s
+# ``GOLDEN_SPECS`` (the tool cannot import test code), and
+# ``test_gen_htmlexport_goldens.py`` pins the two tables equal: 262
+# riders for 180 entries is the ride's own documented census
+# (``ui-designs-retired.md``), and a solo-only field of 180 entries has
+# 180 riders.
+GOLDEN_RIDERS: dict[str, int] = {
+    "payload-times.json": 262,
+    "payload-no-times.json": 262,
+    "payload-solo.json": 180,
+}
 
 _RACE_DATA_RE = re.compile(
     r'<script type="application/json" id="race-data">(.*?)</script>', re.DOTALL
@@ -69,5 +86,13 @@ def parse_race_data(path: Path) -> dict[str, object]:
 
 
 def load_race_payload(path: Path) -> RacePayload:
-    """Read one committed ``payload-*.json`` fixture as a payload."""
-    return _payload_from_record(json.loads(path.read_text(encoding="utf-8")))
+    """Read one committed ``payload-*.json`` fixture as a payload.
+
+    The payload carries its fixture's :data:`GOLDEN_RIDERS` census: the
+    golden pages were frozen with that count in their header, and the
+    count is render-only, so the fixture files themselves (the samples'
+    records, key for key) cannot hold it. Without this the byte-for-byte
+    golden comparisons would render ``· 0`` against the frozen header.
+    """
+    payload = _payload_from_record(json.loads(path.read_text(encoding="utf-8")))
+    return replace(payload, event=replace(payload.event, riders=GOLDEN_RIDERS.get(path.name, 0)))

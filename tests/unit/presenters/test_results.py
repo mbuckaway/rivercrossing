@@ -95,20 +95,25 @@ class RecordingResultsSource(EmptyDataSource):
         """Start with no pre-loaded rows and no recorded orders."""
         super().__init__()
         self.standings_orders: list[tuple[TieBreak, ...]] = []
+        self.standings_dns_riders: list[bool] = []
         self.teams_by_order: dict[tuple[TieBreak, ...], list[StandingsRow]] = {}
         self.rows_by_order: dict[tuple[TieBreak, ...], list[StandingsRow]] = {}
         self.stale_result: bool = False
         self.stale_queries: list[int | None] = []
 
     def standings(
-        self, order: tuple[TieBreak, ...] = DEFAULT_TIEBREAK_ORDER
+        self,
+        order: tuple[TieBreak, ...] = DEFAULT_TIEBREAK_ORDER,
+        *,
+        show_dns_riders: bool = True,
     ) -> tuple[list[StandingsRow], list[StandingsRow]]:
-        """Record *order*, then return the sections pre-loaded for it.
+        """Record *order* and *show_dns_riders*, then the sections.
 
         ``rows_by_order`` holds the solo section; ``teams_by_order``
         the (usually empty) teams section -- Phase 3's two-list shape.
         """
         self.standings_orders.append(order)
+        self.standings_dns_riders.append(show_dns_riders)
         return list(self.teams_by_order.get(order, [])), list(self.rows_by_order.get(order, []))
 
     def results_stale(self, export_watermark: int | None) -> bool:
@@ -212,6 +217,24 @@ def test_results_presenter_holds_the_view_and_data_source_it_was_given() -> None
 
     assert presenter.view is view
     assert presenter.data_source is source
+
+
+def test_results_presenter_init_defaults_show_dns_riders_to_on() -> None:
+    """Omitted, the toggle reaches the source checked."""
+    source = RecordingResultsSource()
+
+    ResultsPresenter(RecordingResultsView(), source)
+
+    assert source.standings_dns_riders == [True]
+
+
+def test_results_presenter_init_given_show_dns_riders_forwards_it_to_the_source() -> None:
+    """The Results menu's toggle reaches the data source's display."""
+    source = RecordingResultsSource()
+
+    ResultsPresenter(RecordingResultsView(), source, show_dns_riders=False)
+
+    assert source.standings_dns_riders == [False]
 
 
 # --------------------------------------- E7.3.2 stale-export flag
