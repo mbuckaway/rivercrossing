@@ -217,8 +217,18 @@ h2, h3 { scroll-margin-top: 1rem; }
 <li><strong>Podium Poster HTML…</strong> — the same poster as a self-contained page.</li>
 <li><strong>Export Standings CSV…</strong> — place, plate, entry, type, sex, laps, hand, draw, and times when shown.</li>
 <li><strong>Preview HTML in Browser</strong> / <strong>Preview Podium Poster HTML in Browser</strong> / <strong>Preview PDF in Browser</strong> — open this session's last export of that format in your browser. Each needs a finished ride and an export made this session. After a restart the preview is disabled until the next export.</li>
+<li><strong>Publish to WordPress…</strong> — create or update a page on your WordPress site from the finished ride's results. Enter the site URL, a WordPress username, and an <strong>Application Password</strong>, then the page title, slug, an optional parent page (the "section" it sits under), and the publish status. The page is looked up by slug: one already there is updated, and a new page is created when there is none. The connection is remembered in this machine's settings file, so you type it once.</li>
 <li><strong>Publish Options</strong> — six checkable rows on the Results menu that shape every export: <strong>Show lap &amp; total times</strong>, <strong>Laps leaderboard</strong>, <strong>Fastest-time leaderboard</strong>, <strong>Full field</strong>, <strong>All cards drawn</strong>, and <strong>Show DNS Riders</strong>. A rider or team with no recorded laps on a finished ride shows as <strong>DNS</strong> at the bottom of its section; unchecking <strong>Show DNS Riders</strong> hides those rows. With show-times off, the exports embed no time data, and the fastest-time leaderboard is cleared and disabled.</li>
 </ul>
+<h3 id="before-wordpress">Before you publish to WordPress</h3>
+<p>The site must be on <strong>HTTPS</strong>, and the account you use needs permission to publish pages. Do <strong>not</strong> use your normal WordPress password — create an <strong>Application Password</strong> at <strong>Users → Your Profile → Application Passwords</strong>, on the same page that shows the site URL and username to enter.</p>
+<p>If that <strong>Application Passwords</strong> section is missing from your profile, a security plugin has switched it off. <strong>Wordfence disables Application Passwords by default</strong>, and the option is not obvious to find:</p>
+<ol>
+<li>Open <strong>Wordfence → Firewall → All Firewall Options</strong>.</li>
+<li>The page has a <strong>search box at the top</strong> — search for <code>application passwords</code>. (Without the search, expand the <strong>Brute Force Protection</strong> section and look under its <em>Additional Options</em> heading.)</li>
+<li>Untick <strong>Disable WordPress application passwords</strong> and save. The label is inverted, so it must be <strong>empty</strong> for Application Passwords to work.</li>
+</ol>
+<p>Leave it unticked — an Application Password stops authenticating the moment that option is switched back on.</p>
 <h2 id="poker-the-run-way">How scoring works</h2>
 <p>It is not a race. It is a poker run. Each completed lap deals one card. At the finish, every entry's <strong>best 5-card hand from all cards drawn</strong> is scored. Jokers are wild: a joker plays as any card you need, but only when it actually improves the hand. A spare joker that does not improve it is left unused.</p>
 <h3>How a card is selected on a crossing</h3>
@@ -314,6 +324,7 @@ h2, h3 { scroll-margin-top: 1rem; }
 <li><strong>Moving the database to another machine</strong> — copy <code>rides.db</code>, and its <code>rides.db.backups/</code> folder if you want the history. The app opens it in place on the new machine.</li>
 <li><strong>Restoring a backup</strong> — replace <code>rides.db</code> with the backup file, then relaunch.</li>
 <li><strong>Theme change on Windows</strong> — a dark or light switch applies at the next launch. The status bar says so.</li>
+<li><strong>WordPress rejects the Application Password</strong> — a security plugin has switched Application Passwords off. In Wordfence, open <strong>Firewall → All Firewall Options</strong>, search <code>application passwords</code> in the box at the top (or expand <strong>Brute Force Protection → Additional Options</strong>), and untick <strong>Disable WordPress application passwords</strong>. The setting is not obvious.</li>
 </ul>
 <h2 id="appendix-a-shortcuts">Appendix A — Keyboard shortcuts</h2>
 <p>The same shortcuts appear in <strong>Help ▸ Keyboard Shortcuts</strong>, generated from the accelerator table so they never drift. This page writes the modifier key for the platform you are reading on: <kbd>⌘</kbd> on macOS, <kbd>Ctrl</kbd> on Windows.</p>

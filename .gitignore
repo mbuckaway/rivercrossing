@@ -239,3 +239,7 @@ artifacts/
 
 # build-time npm installs (Tailwind CLI, vendored CSS step)
 node_modules/
+
+# Local WordPress publish credentials for testing Results > Publish to WordPress
+# (a real Application Password; never commit it)
+.wp-password.txt

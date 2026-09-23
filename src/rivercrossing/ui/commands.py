@@ -2,9 +2,9 @@
 """The menu route map and its state-enablement rules (E1.4.1, E1.4.2).
 
 spec.md section 15 is one table with two jobs: which target each of
-the 39 menu rows reaches ("Opens / does"), and when it is allowed to
+the 40 menu rows reaches ("Opens / does"), and when it is allowed to
 fire ("Enabled when"). :data:`ROUTE_TABLE` is that table transcribed
-once, so both jobs read off the same 39 :class:`MenuRoute` rows
+once, so both jobs read off the same 40 :class:`MenuRoute` rows
 instead of two tables that could drift apart. (Results lost its
 mi_tiebreak_order row: the tie-break order now comes only from the
 ride's stored config, set in Ride Setup; its single Preview row
@@ -14,7 +14,8 @@ Results row, which the Results menu's DNS toggle
 (mi_show_dns_riders) then joined. The poster page's own export and
 preview pair,
 mi_export_poster_html / mi_preview_poster_html_browser, joined
-Results beside their PDF siblings.) Phase 2 retired the dead Entry
+Results beside their PDF siblings; Phase 4b added the WordPress
+publish form, mi_publish_wordpress.) Phase 2 retired the dead Entry
 Detail… row and the duplicate Reassign Plate… / Void Card… rows --
 Crossing Detail now owns both corrections -- and G7 retired Edit
 Crossing…, whose ground Crossing Detail's Edit Time and the F2
@@ -457,8 +458,8 @@ ROUTE_TABLE: tuple[MenuRoute, ...] = (
         target=ids.MANUAL_DEAL_DLG,
         enabled_when=Enablement(allowed_states=_RUNNING_REOPENED),  # "RUNNING · REOPENED"
     ),
-    # --- Results: 10 rows (G6 adds the publish options; H the two
-    # Podium-Poster-HTML rows) ---
+    # --- Results: 11 rows (G6 adds the publish options; H the two
+    # Podium-Poster-HTML rows; Phase 4b the WordPress publish form) ---
     MenuRoute(
         menu="Results",
         label="Standings",
@@ -543,6 +544,14 @@ ROUTE_TABLE: tuple[MenuRoute, ...] = (
         # poster) record the PDF path, so either export enables the
         # row.
         enabled_when=Enablement(allowed_states=_FINISHED, requires_pdf_export=True),
+    ),
+    MenuRoute(
+        menu="Results",
+        label="Publish to WordPress…",
+        ids=("mi_publish_wordpress",),
+        kind=TargetKind.DIALOG,
+        target=ids.PUBLISH_WORDPRESS_DLG,
+        enabled_when=Enablement(allowed_states=_FINISHED),
     ),
     MenuRoute(
         menu="Results",

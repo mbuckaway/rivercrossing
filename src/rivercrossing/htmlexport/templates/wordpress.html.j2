@@ -1,0 +1,137 @@
+{#- rivercrossing.htmlexport — WordPress content fragment (R-61).
+    Rendered by htmlexport.render_wordpress(ride, placed, opts) with the same
+    Environment and macros base.html.j2 uses, and published as a WordPress
+    Page's `content` over the REST API (rivercrossing.wordpress).
+
+    WHAT THIS FILE IS NOT: a document. A WordPress page already has one, so
+    there is no <!DOCTYPE>/<html>/<head>/<body> here — WordPress stores and
+    prints exactly these bytes inside the page — and no <script id="race-data">
+    block either: nothing on the site reads the record, and apiFetch/admin
+    would have to be trusted to keep it intact.
+
+    The whole fragment is wrapped in <div class="rc-results">, the class
+    compiled_css_wp was scoped under by tools/gen_css.py. That stylesheet has
+    already prefixed every selector with .rc-results, so the wrapper — not the
+    site's theme — is what the CSS reaches. The wrapper's own inline
+    background is base.html.j2's <body> background, and carries the same
+    caveat: the scoped `bg-paper` utility cannot match the wrapper itself.
+
+    Context (all required — StrictUndefined):
+      event        EventInfo: kicker, title, meta, organizer, scorer, generated,
+                   entries, laps, cards
+      options      ExportOptions: show_times, laps_board, time_board, full_field,
+                   all_cards, lap_km
+      sections     Sections: the planned page sections — per-kind podiums,
+                   top lists and laps boards plus the full-field teams/solo
+                   partitions, and the derived team_plates set the "Fastest"
+                   board blanks team rows' plates with
+      tie_note     str or None; rendered under each top-list table whose rows
+                   include a tie
+      self_test_note  str or None; the E6.4.3 caption rendered under the
+                   publish-setting note when the ride was finished over a
+                   failed evaluator self-test
+      logo_src     data: URI (base64); the transparent 1x1 PNG when the ride
+                   has no logo
+      logo_alt     organizer name for the logo
+      compiled_css_wp / fonts_css  the vendored, pre-scoped CSS and the base64
+                   Barlow @font-face subsets. Trusted package assets — the
+                   |safe values here, exactly as base.html.j2 marks its own.
+
+    The <style> block leads the fragment so the page's own rules are in force
+    before the markup they style. Markup is STATIC Jinja2 output (autoescape
+    on, StrictUndefined): the same macros render the same sections as the
+    standalone page, so the two can never drift apart. -#}
+{% import "macros.html.j2" as m with context -%}
+<style>{{ fonts_css | safe }}
+{{ compiled_css_wp | safe }}</style>
+<div class="rc-results" style="background-color:#f2f2f3">
+<div class="mx-auto max-w-5xl px-4 sm:px-8 py-8 text-ink font-body">
+
+  {{ m.event_header(event, options, logo_src, logo_alt) }}
+
+  <p class="mt-4 text-sm text-ink/60 max-w-2xl">It's not a race, it's a poker run — placings are by best poker hand. Lap counts{% if options.show_times %} and times{% endif %} below are unofficial and shown for bragging rights only.</p>
+
+  <div class="mt-4 text-xs text-ink/50">{% if options.show_times %}Published with times — the organizer's export setting decides; there is no toggle on the page.{% else %}Published without times — the organizer's export setting decides; there is no toggle on the page, and no time data is embedded in it.{% endif %}</div>{% if self_test_note %}
+  <p class="mt-2 text-xs font-semibold text-steel-700">{{ self_test_note }}</p>{% endif %}
+
+{% set team_event = (sections.teams | length) > 0 %}
+  <!-- Podium -->
+{% if sections.podium_teams %}  <section class="mt-8">
+    <h2 class="font-head font-semibold text-2xl uppercase tracking-wide">Best hands — teams</h2>
+    <!-- j2: {% raw %}{% for r in sections.podium_teams %}{{ podium_card(r, options, false) }}{% endfor %}{% endraw %} -->
+    <div class="mt-4 grid gap-5 sm:grid-cols-3">
+{% for r in sections.podium_teams %}      {{ m.podium_card(r, options, false) }}
+{% endfor %}    </div>
+  </section>
+{% endif %}{% if sections.podium_solo %}  <section class="mt-8">
+    <h2 class="font-head font-semibold text-2xl uppercase tracking-wide">{{ 'Best hands — solo riders' if team_event else 'Best hands — top 3' }}</h2>
+    <!-- j2: {% raw %}{% for r in sections.podium_solo %}{{ podium_card(r, options) }}{% endfor %}{% endraw %} -->
+    <div class="mt-4 grid gap-5 sm:grid-cols-3">
+{% for r in sections.podium_solo %}      {{ m.podium_card(r, options) }}
+{% endfor %}    </div>
+  </section>
+{% endif %}
+
+  <!-- Top lists -->
+{% if sections.top_teams %}  <section class="mt-10">
+    <h2 class="font-head font-semibold text-2xl uppercase tracking-wide">Top teams</h2>
+    <div class="mt-3 overflow-x-auto"><table class="w-full text-sm tabular-nums">
+      <thead><tr class="text-left text-[11px] uppercase tracking-[0.08em] text-ink/55 border-b border-ink/15">
+        <th class="py-2 pr-3">Place</th><th class="py-2 pr-3">Entry</th><th class="py-2 pr-3">Laps</th>{% if options.show_times %}<th class="py-2 pr-3 t-col">Total time</th>{% endif %}<th class="py-2 pr-3">Best 5 cards</th><th class="py-2">Hand</th>
+      </tr></thead>
+      <tbody><!-- j2: {% raw %}{% for r in sections.top_teams %}{{ team_standings_row(r, options) }}{% endfor %}{% endraw %} -->
+{% for r in sections.top_teams %}        {{ m.team_standings_row(r, options) }}
+{% endfor %}      </tbody>
+    </table></div>
+    <!-- j2: {% raw %}{% if tie_note and (sections.top_teams | selectattr('tie') | list) %}{% endraw %} -->{% if tie_note and (sections.top_teams | selectattr('tie') | list) %}<p class="mt-2 text-xs text-ink/50">{{ tie_note }}</p>{% endif %}
+  </section>
+{% endif %}{% if sections.top_solo %}  <section class="mt-10">
+    <h2 class="font-head font-semibold text-2xl uppercase tracking-wide">{{ 'Top solo riders' if team_event else 'Top ten' }}</h2>
+    <div class="mt-3 overflow-x-auto"><table class="w-full text-sm tabular-nums">
+      <thead><tr class="text-left text-[11px] uppercase tracking-[0.08em] text-ink/55 border-b border-ink/15">
+        <th class="py-2 pr-3">Place</th><th class="py-2 pr-3">Plate</th><th class="py-2 pr-3">Entry</th><th class="py-2 pr-3">Laps</th>{% if options.show_times %}<th class="py-2 pr-3 t-col">Total time</th>{% endif %}<th class="py-2 pr-3">Best 5 cards</th><th class="py-2">Hand</th>
+      </tr></thead>
+      <tbody><!-- j2: {% raw %}{% for r in sections.top_solo %}{{ standings_row(r, options) }}{% endfor %}{% endraw %} -->
+{% for r in sections.top_solo %}        {{ m.standings_row(r, options) }}
+{% endfor %}      </tbody>
+    </table></div>
+    <!-- j2: {% raw %}{% if tie_note and (sections.top_solo | selectattr('tie') | list) %}{% endraw %} -->{% if tie_note and (sections.top_solo | selectattr('tie') | list) %}<p class="mt-2 text-xs text-ink/50">{{ tie_note }}</p>{% endif %}
+  </section>
+{% endif %}
+
+  <!-- Optional leaderboards -->
+  <div class="mt-10 grid gap-8 md:grid-cols-2">
+{% if options.laps_board and sections.laps_teams %}    {{ m.laps_board(sections.laps_teams, options, 'Most laps — teams', false) }}
+{% endif %}{% if options.laps_board and sections.laps_solo %}    {{ m.laps_board(sections.laps_solo, options, 'Most laps — solo riders' if team_event else 'Most laps', true) }}
+{% endif %}{% if options.time_board and sections.time_board %}    {{ m.time_board(sections.time_board, sections.team_plates) }}
+{% endif %}  </div>
+
+{% if options.full_field %}  <!-- Full field -->
+  <section class="mt-10">
+    <h2 class="font-head font-semibold text-2xl uppercase tracking-wide">Full field</h2>
+    <p class="text-xs text-ink/50 mt-1">Every entry, ordered by hand{% if team_event %} — teams ranked against teams, solo riders against solo riders{% endif %}. ★ = joker, shown as the card it played.{% if options.all_cards %} This export includes every card drawn (organizer option).{% endif %}</p>
+{% if sections.teams %}    <h3 class="mt-6 font-head font-semibold text-xl uppercase tracking-wide">Teams</h3>
+    <div class="mt-3 overflow-x-auto"><table class="w-full text-sm tabular-nums">
+      <thead><tr class="text-left text-[11px] uppercase tracking-[0.08em] text-ink/55 border-b border-ink/15">
+        <th class="py-2 pr-3">Place</th><th class="py-2 pr-3">Entry</th><th class="py-2 pr-3">Laps</th>{% if options.show_times %}<th class="py-2 pr-3 t-col">Total time</th><th class="py-2 pr-3 t-col">Best lap</th>{% endif %}<th class="py-2 pr-3">Cards</th><th class="py-2">Hand</th>
+      </tr></thead>
+      <tbody><!-- j2: {% raw %}{% for r in sections.teams %}{{ team_field_row(r, options) }}{% if options.all_cards %}{{ drawn_row(r, (5 if options.show_times else 3)) }}{% endif %}{% endfor %}{% endraw %} -->
+{% for r in sections.teams %}        {{ m.team_field_row(r, options) }}{% if options.all_cards %}
+        {{ m.drawn_row(r, (5 if options.show_times else 3)) }}{% endif %}
+{% endfor %}      </tbody>
+    </table></div>
+{% endif %}{% if sections.solo %}    <h3 class="mt-6 font-head font-semibold text-xl uppercase tracking-wide">Solo riders</h3>
+    <div class="mt-3 overflow-x-auto"><table class="w-full text-sm tabular-nums">
+      <thead><tr class="text-left text-[11px] uppercase tracking-[0.08em] text-ink/55 border-b border-ink/15">
+        <th class="py-2 pr-3">Place</th><th class="py-2 pr-3">Plate</th><th class="py-2 pr-3">Entry</th><th class="py-2 pr-3">Type</th><th class="py-2 pr-3">Laps</th>{% if options.show_times %}<th class="py-2 pr-3 t-col">Total time</th><th class="py-2 pr-3 t-col">Best lap</th>{% endif %}<th class="py-2">Best hand</th>
+      </tr></thead>
+      <tbody><!-- j2: {% raw %}{% for r in sections.solo %}{{ field_row(r, options) }}{% if options.all_cards %}{{ drawn_row(r, (6 if options.show_times else 4)) }}{% endif %}{% endfor %}{% endraw %} -->
+{% for r in sections.solo %}        {{ m.field_row(r, options) }}{% if options.all_cards %}
+        {{ m.drawn_row(r, (6 if options.show_times else 4)) }}{% endif %}
+{% endfor %}      </tbody>
+    </table></div>
+{% endif %}  </section>
+{% endif %}
+  {{ m.footer(event) }}
+</div>
+</div>

@@ -60,6 +60,12 @@ DEFAULT_ZOOM_PERCENT = 100
 # The three ThemeMode spellings, as a tuple for membership tests.
 _THEME_SPELLINGS: tuple[str, ...] = tuple(mode.value for mode in ThemeMode)
 
+# The four WordPress post statuses the publish feature can reach, as a
+# tuple for membership tests. WordPress's "future" schedules a post
+# against a date the publish dialog never collects, so it is
+# unreachable and deliberately absent.
+_WP_STATUSES: tuple[str, ...] = ("draft", "publish", "pending", "private")
+
 # The load path's warning sink (E8.1.1 data-loss guard): a file that
 # cannot be read or decoded falls back to the defaults and is recorded
 # here, so the operator can see why the next save replaced it. Tests
@@ -123,6 +129,14 @@ class AppSettings:
     leaderboard off, full field on, all cards on), so an upgrade reads
     the same as the canvas did.
 
+    The WordPress publish feature adds the five ``wp_*`` fields: the
+    site URL, its REST username and application password, the parent
+    page a result is published under, and the post status it lands as.
+    A first launch leaves the four text fields blank and the status at
+    WordPress's own ``draft``; the loader accepts only the statuses in
+    :data:`_WP_STATUSES`, because the publish dialog collects no
+    schedule date and so ``future`` is unreachable.
+
     ``show_dns_riders`` is that row's sixth entry: the Results menu's
     "Show DNS Riders", **on** by default, so a finished ride's 0-lap
     entries appear as DNS rows unless the operator hides them. It is
@@ -159,6 +173,13 @@ class AppSettings:
     publish_time_board: bool = False
     publish_full_field: bool = True
     publish_all_cards: bool = True
+    # WordPress publish: the site, its REST credentials, the parent
+    # page and the status a published result lands as.
+    wp_url: str = ""
+    wp_username: str = ""
+    wp_password: str = ""
+    wp_parent: str = ""
+    wp_status: str = "draft"
     # The Results menu's "Show DNS Riders": unlike the publish_* pair it
     # also drives the Standings window, so it is not named publish_*.
     # Off hides a Finished ride's DNS rows -- and the DNS text they
@@ -175,7 +196,9 @@ def default_settings() -> AppSettings:
     XRC spin and behaviour defaults (G9: one short-lap rider, no
     lapped riders, no team rider stopping), G6's publish options
     (times off, laps leaderboard on, fastest-time leaderboard off,
-    full field and all cards on) and the DNS toggle on.
+    full field and all cards on), no WordPress site configured
+    (blank url, username, password and parent page, ``draft`` status),
+    and the DNS toggle on.
     """
     return AppSettings(
         appearance=ThemeMode.SYSTEM.value,
@@ -200,6 +223,11 @@ def default_settings() -> AppSettings:
         publish_time_board=False,
         publish_full_field=True,
         publish_all_cards=True,
+        wp_url="",
+        wp_username="",
+        wp_password="",
+        wp_parent="",
+        wp_status="draft",
         show_dns_riders=True,
     )
 
@@ -290,6 +318,11 @@ def save_settings(settings: AppSettings, path: Path | None = None) -> None:
         "publish_time_board": settings.publish_time_board,
         "publish_full_field": settings.publish_full_field,
         "publish_all_cards": settings.publish_all_cards,
+        "wp_url": settings.wp_url,
+        "wp_username": settings.wp_username,
+        "wp_password": settings.wp_password,
+        "wp_parent": settings.wp_parent,
+        "wp_status": settings.wp_status,
         "show_dns_riders": settings.show_dns_riders,
     }
     tmp = settings_path.with_name(settings_path.name + ".tmp")
@@ -363,6 +396,11 @@ def _settings_from_mapping(raw: Mapping[str, object]) -> AppSettings:
         publish_all_cards=_bool_or(
             raw.get("publish_all_cards"), default=defaults.publish_all_cards
         ),
+        wp_url=_str_or(raw.get("wp_url"), defaults.wp_url),
+        wp_username=_str_or(raw.get("wp_username"), defaults.wp_username),
+        wp_password=_str_or(raw.get("wp_password"), defaults.wp_password),
+        wp_parent=_str_or(raw.get("wp_parent"), defaults.wp_parent),
+        wp_status=_wp_status_or(raw.get("wp_status"), defaults.wp_status),
         show_dns_riders=_bool_or(raw.get("show_dns_riders"), default=defaults.show_dns_riders),
     )
 
@@ -386,9 +424,30 @@ def _appearance_or(value: object, default: str) -> str:
     return default
 
 
+def _wp_status_or(value: object, default: str) -> str:
+    """Return *value* when it is a whitelisted WordPress post status.
+
+    WordPress's ``future`` status is deliberately not whitelisted: it
+    publishes against a schedule date the publish dialog never
+    collects, so the app cannot reach it.
+    """
+    if isinstance(value, str) and value in _WP_STATUSES:
+        return value
+    return default
+
+
 def _bool_or(value: object, *, default: bool) -> bool:
     """Return *value* when it is a JSON bool, else *default*."""
     return value if isinstance(value, bool) else default
+
+
+def _str_or(value: object, default: str) -> str:
+    """Return *value* when it is a JSON string, else *default*.
+
+    A blank string is a valid value, not a missing one: the operator
+    clears a field by emptying it.
+    """
+    return value if isinstance(value, str) else default
 
 
 @overload

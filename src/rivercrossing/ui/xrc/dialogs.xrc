@@ -1,11 +1,13 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!--
-  The eleven small dialogs of spec.md 15b's dialogs.xrc entry:
+  The thirteen small dialogs of spec.md 15b's dialogs.xrc entry:
   set_start_dlg, resume_dlg, exit_running_dlg
   (xrc-windows.md section B),
   edit_crossing_dlg, manual_deal_dlg, dnf_confirm_dlg,
   void_card_confirm_dlg (section C), about_dlg, selftest_dlg,
-  shortcuts_dlg (section E), crossing_detail_dlg (section F, J2).
+  shortcuts_dlg (section E), crossing_detail_dlg (section F, J2),
+  crossing_number_dlg (J2 section 9) and publish_wordpress_dlg
+  (the Results publish form).
   stop_confirm_dlg (section B) retired in W5: the Stop flow now asks
   through the native confirm (ui.std_dialogs.show_confirm) instead of
   an XRC dialog.
@@ -1192,6 +1194,181 @@
           <object class="button">
             <object class="wxButton" name="wxID_OK">
               <label>Save</label>
+              <default>1</default>
+            </object>
+          </object>
+          <object class="button">
+            <object class="wxButton" name="wxID_CANCEL">
+              <label>Cancel</label>
+            </object>
+          </object>
+        </object>
+      </object>
+
+    </object>
+  </object>
+
+  <!-- Phase 4b: the Results > Publish to WordPress… form. Two labelled
+       wxStaticBoxSizer groups (Site, Page), each over a 2-column
+       caption/value wxFlexGridSizer like edit_crossing_dlg's field
+       grid; the captions are unnamed chrome, the inputs carry the
+       frozen names. wp_status_choice authors no <content>: the view
+       fills it from presenters/publish_wordpress.STATUS_CHOICES and
+       selects the stored AppSettings.wp_status (the empty-choice
+       precedent is riders.xrc's team_choice). wp_password_input is a
+       wxTE_PASSWORD field, so the Application Password is never shown
+       in clear. No <size> is declared: nothing documents a minimum,
+       so the sizer handler Fit()s the dialog and applies
+       SetSizeHints() (this file's header). Publish is the marked
+       default; the initial focus is wp_url_input, recorded in
+       views/dialogs.FORM_FIRST_FIELDS. The closing help line states
+       where the Application Password is kept and what the site account
+       needs; every input keeps its own persistent caption (UX-DESKTOP
+       section 7, never placeholder text). -->
+  <object class="wxDialog" name="publish_wordpress_dlg">
+    <title>Publish to WordPress</title>
+    <style>wxDEFAULT_DIALOG_STYLE|wxRESIZE_BORDER</style>
+
+    <object class="wxBoxSizer">
+      <orient>wxVERTICAL</orient>
+
+      <object class="sizeritem">
+        <flag>wxEXPAND|wxLEFT|wxRIGHT|wxTOP</flag>
+        <border>10</border>
+        <object class="wxStaticBoxSizer">
+          <label>Site</label>
+          <orient>wxVERTICAL</orient>
+
+          <object class="sizeritem">
+            <flag>wxEXPAND</flag>
+            <object class="wxFlexGridSizer">
+              <cols>2</cols>
+              <vgap>6</vgap>
+              <hgap>8</hgap>
+              <growablecols>1</growablecols>
+
+              <object class="sizeritem">
+                <flag>wxALIGN_CENTRE_VERTICAL</flag>
+                <object class="wxStaticText">
+                  <label>Site URL</label>
+                </object>
+              </object>
+              <object class="sizeritem">
+                <flag>wxEXPAND</flag>
+                <object class="wxTextCtrl" name="wp_url_input"/>
+              </object>
+
+              <object class="sizeritem">
+                <flag>wxALIGN_CENTRE_VERTICAL</flag>
+                <object class="wxStaticText">
+                  <label>Username</label>
+                </object>
+              </object>
+              <object class="sizeritem">
+                <flag>wxEXPAND</flag>
+                <object class="wxTextCtrl" name="wp_username_input"/>
+              </object>
+
+              <object class="sizeritem">
+                <flag>wxALIGN_CENTRE_VERTICAL</flag>
+                <object class="wxStaticText">
+                  <label>Application password</label>
+                </object>
+              </object>
+              <object class="sizeritem">
+                <flag>wxEXPAND</flag>
+                <object class="wxTextCtrl" name="wp_password_input">
+                  <style>wxTE_PASSWORD</style>
+                </object>
+              </object>
+
+            </object>
+          </object>
+
+        </object>
+      </object>
+
+      <object class="sizeritem">
+        <flag>wxEXPAND|wxLEFT|wxRIGHT|wxTOP</flag>
+        <border>10</border>
+        <object class="wxStaticBoxSizer">
+          <label>Page</label>
+          <orient>wxVERTICAL</orient>
+
+          <object class="sizeritem">
+            <flag>wxEXPAND</flag>
+            <object class="wxFlexGridSizer">
+              <cols>2</cols>
+              <vgap>6</vgap>
+              <hgap>8</hgap>
+              <growablecols>1</growablecols>
+
+              <object class="sizeritem">
+                <flag>wxALIGN_CENTRE_VERTICAL</flag>
+                <object class="wxStaticText">
+                  <label>Title</label>
+                </object>
+              </object>
+              <object class="sizeritem">
+                <flag>wxEXPAND</flag>
+                <object class="wxTextCtrl" name="wp_title_input"/>
+              </object>
+
+              <object class="sizeritem">
+                <flag>wxALIGN_CENTRE_VERTICAL</flag>
+                <object class="wxStaticText">
+                  <label>Slug</label>
+                </object>
+              </object>
+              <object class="sizeritem">
+                <flag>wxEXPAND</flag>
+                <object class="wxTextCtrl" name="wp_slug_input"/>
+              </object>
+
+              <object class="sizeritem">
+                <flag>wxALIGN_CENTRE_VERTICAL</flag>
+                <object class="wxStaticText">
+                  <label>Parent page (id or slug)</label>
+                </object>
+              </object>
+              <object class="sizeritem">
+                <flag>wxEXPAND</flag>
+                <object class="wxTextCtrl" name="wp_parent_input"/>
+              </object>
+
+              <object class="sizeritem">
+                <flag>wxALIGN_CENTRE_VERTICAL</flag>
+                <object class="wxStaticText">
+                  <label>Status</label>
+                </object>
+              </object>
+              <object class="sizeritem">
+                <flag>wxEXPAND</flag>
+                <object class="wxChoice" name="wp_status_choice"/>
+              </object>
+
+            </object>
+          </object>
+
+        </object>
+      </object>
+
+      <object class="sizeritem">
+        <flag>wxEXPAND|wxLEFT|wxRIGHT|wxTOP</flag>
+        <border>10</border>
+        <object class="wxStaticText">
+          <label>The Application Password is kept in this machine's settings file for now. A blank parent page publishes at the top level. The site account needs permission to publish pages with inline styles.</label>
+          <wrap>420</wrap>
+        </object>
+      </object>
+
+      <object class="sizeritem">
+        <flag>wxEXPAND|wxALL</flag>
+        <border>10</border>
+        <object class="wxStdDialogButtonSizer">
+          <object class="button">
+            <object class="wxButton" name="wxID_OK">
+              <label>Publish</label>
               <default>1</default>
             </object>
           </object>

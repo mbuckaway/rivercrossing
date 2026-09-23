@@ -59,6 +59,13 @@ _ALL_FIELDS = {
     "publish_time_board",
     "publish_full_field",
     "publish_all_cards",
+    # WordPress publish: site url, username, password, parent page,
+    # post status.
+    "wp_url",
+    "wp_username",
+    "wp_password",
+    "wp_parent",
+    "wp_status",
     # The Results-menu row's sixth toggle: also drives the Standings
     # window, so it is not a ``publish_*`` name.
     "show_dns_riders",
@@ -68,6 +75,15 @@ _ALL_FIELDS = {
 # (results.xrc, before the box was removed): times off, laps board on,
 # time board off, full field on, all cards on.
 _PUBLISH_DEFAULTS = (False, True, False, True, True)
+
+# WordPress publish: a first launch has no site configured, so the four
+# text fields are blank and the status is WordPress's own post default.
+_WP_DEFAULTS = ("", "", "", "", "draft")
+
+# The wp_status whitelist: WordPress's four non-date post statuses.
+# "future" is deliberately absent -- it publishes against a schedule
+# date the publish dialog never collects, so it is unreachable.
+_WP_STATUSES = ("draft", "publish", "pending", "private")
 
 # The simulator dialog's XRC spin defaults (simulation.xrc): riders
 # 175, teams 40, solo 15, laps 1, interval 45 (plan §1/§3).
@@ -214,6 +230,162 @@ def test_load_settings_non_bool_publish_values_use_the_defaults(
     loaded = load_settings(path)
 
     assert loaded.publish_show_times is False
+
+
+# --- WordPress publish fields --------------------------------------
+
+
+def test_default_settings_wp_fields_are_blank_with_a_draft_status() -> None:
+    """A first launch has no site configured and posts as a draft."""
+    settings = default_settings()
+
+    assert (
+        settings.wp_url,
+        settings.wp_username,
+        settings.wp_password,
+        settings.wp_parent,
+        settings.wp_status,
+    ) == _WP_DEFAULTS
+
+
+def test_save_then_load_round_trips_the_wp_fields(tmp_path: Path) -> None:
+    """The five WordPress fields survive a save/load round trip."""
+    path = tmp_path / "settings.json"
+    original = replace(
+        default_settings(),
+        wp_url="https://blog.example.com",
+        wp_username="race-ops",
+        wp_password="example-value",  # noqa: S106 -- a fixture value, not a credential
+        wp_parent="2026 Results",
+        wp_status="private",
+    )
+
+    save_settings(original, path)
+    loaded = load_settings(path)
+
+    assert (
+        loaded.wp_url,
+        loaded.wp_username,
+        loaded.wp_password,
+        loaded.wp_parent,
+        loaded.wp_status,
+    ) == ("https://blog.example.com", "race-ops", "example-value", "2026 Results", "private")
+
+
+def test_load_settings_missing_wp_keys_uses_the_defaults(tmp_path: Path) -> None:
+    """An older file with no wp keys seeds the blank defaults."""
+    path = tmp_path / "settings.json"
+    path.write_text('{"appearance": "dark"}', encoding="utf-8")
+
+    loaded = load_settings(path)
+
+    assert (
+        loaded.wp_url,
+        loaded.wp_username,
+        loaded.wp_password,
+        loaded.wp_parent,
+        loaded.wp_status,
+    ) == _WP_DEFAULTS
+
+
+@pytest.mark.parametrize("stored", _WP_STATUSES)
+def test_load_settings_wp_status_given_a_whitelisted_value_keeps_it(
+    tmp_path: Path, stored: str
+) -> None:
+    """Every whitelisted WordPress status round-trips unchanged."""
+    path = tmp_path / "settings.json"
+    path.write_text(json.dumps({"wp_status": stored}), encoding="utf-8")
+
+    loaded = load_settings(path)
+
+    assert loaded.wp_status == stored
+
+
+@pytest.mark.parametrize(
+    "stored",
+    [
+        pytest.param("future", id="not-whitelisted"),
+        pytest.param("published", id="misspelled"),
+        pytest.param("DRAFT", id="wrong-case"),
+        pytest.param("", id="present-but-empty"),
+        pytest.param(None, id="null"),
+        pytest.param(42, id="int"),
+        pytest.param([], id="list"),
+    ],
+)
+def test_load_settings_wp_status_given_an_unwhitelisted_value_uses_draft(
+    tmp_path: Path, stored: object
+) -> None:
+    """T-3/T-4: nothing outside the whitelist survives, "future" too.
+
+    The publish dialog collects no schedule date, so WordPress's
+    ``future`` status is unreachable from this app and must not load.
+    """
+    path = tmp_path / "settings.json"
+    path.write_text(json.dumps({"wp_status": stored}), encoding="utf-8")
+
+    loaded = load_settings(path)
+
+    assert loaded.wp_status == "draft"
+
+
+@pytest.mark.parametrize(
+    "stored",
+    [
+        pytest.param(42, id="int"),
+        pytest.param(None, id="null"),
+        pytest.param(True, id="bool"),
+        pytest.param(1.5, id="float"),
+        pytest.param([], id="list"),
+        pytest.param({}, id="object"),
+    ],
+)
+def test_load_settings_non_string_wp_url_uses_the_default(tmp_path: Path, stored: object) -> None:
+    """T-4: a non-string text field is corrupt for that field."""
+    path = tmp_path / "settings.json"
+    path.write_text(json.dumps({"wp_url": stored}), encoding="utf-8")
+
+    loaded = load_settings(path)
+
+    assert loaded.wp_url == ""
+
+
+@pytest.mark.parametrize(
+    "stored",
+    [
+        pytest.param(42, id="int"),
+        pytest.param(None, id="null"),
+        pytest.param(True, id="bool"),
+        pytest.param(1.5, id="float"),
+        pytest.param([], id="list"),
+        pytest.param({}, id="object"),
+    ],
+)
+def test_str_or_given_a_non_string_returns_the_default(stored: object) -> None:
+    """T-4: only a JSON string is a valid text value."""
+    result = settings_module._str_or(stored, "fallback")
+
+    assert result == "fallback"
+
+
+@given(st.text())
+def test_str_or_given_any_text_returns_it_unchanged(value: str) -> None:
+    """Property (T-7): the text coercer is the identity on every string.
+
+    The blank string included -- a cleared settings field is stored as
+    ``""`` and must load back as ``""``, never as the fallback.
+    """
+    result = settings_module._str_or(value, "fallback")
+
+    assert result == value
+
+
+@given(st.text())
+def test_wp_status_or_given_any_text_returns_a_whitelisted_status(value: str) -> None:
+    """Property (T-7): the coercer yields a whitelisted status only."""
+    result = settings_module._wp_status_or(value, "draft")
+
+    assert result in _WP_STATUSES
 
 
 def test_save_then_load_round_trips_the_two_time_column_flags(tmp_path: Path) -> None:
@@ -587,6 +759,11 @@ def test_load_settings_wrong_value_types_use_defaults_for_each_field(
                 "sim_lapped": True,
                 "sim_team_stop": 2.5,
                 "avg_speed_kmh": "fast",
+                "wp_url": 42,
+                "wp_username": ["ops"],
+                "wp_password": None,
+                "wp_parent": True,
+                "wp_status": "future",
             }
         ),
         encoding="utf-8",
@@ -686,6 +863,11 @@ def test_save_settings_writes_json_with_every_field(tmp_path: Path) -> None:
             publish_time_board=True,
             publish_full_field=False,
             publish_all_cards=False,
+            wp_url="https://blog.example.com",
+            wp_username="race-ops",
+            wp_password="example-value",  # noqa: S106 -- a fixture value, not a credential
+            wp_parent="2026 Results",
+            wp_status="private",
         ),
         path,
     )
@@ -708,6 +890,11 @@ def test_save_settings_writes_json_with_every_field(tmp_path: Path) -> None:
     assert raw["publish_time_board"] is True
     assert raw["publish_full_field"] is False
     assert raw["publish_all_cards"] is False
+    assert raw["wp_url"] == "https://blog.example.com"
+    assert raw["wp_username"] == "race-ops"
+    assert raw["wp_password"] == "example-value"  # noqa: S105 -- a fixture value, not a credential
+    assert raw["wp_parent"] == "2026 Results"
+    assert raw["wp_status"] == "private"
 
 
 # --- default-path wiring (path=None branches) ----------------------
@@ -822,6 +1009,11 @@ _SETTINGS_STRATEGY = st.builds(
     publish_time_board=st.booleans(),
     publish_full_field=st.booleans(),
     publish_all_cards=st.booleans(),
+    wp_url=st.text(),
+    wp_username=st.text(),
+    wp_password=st.text(),
+    wp_parent=st.text(),
+    wp_status=st.sampled_from(_WP_STATUSES),
     show_dns_riders=st.booleans(),
 )
 

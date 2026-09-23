@@ -205,6 +205,31 @@ def test_default_settings_show_dns_riders_defaults_to_true() -> None:
     assert default_settings().show_dns_riders is True
 
 
+def test_settings_dialog_collect_settings_carries_the_wordpress_fields_through(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The five wp_* fields have no dialog control: OK carries them."""
+    settings = replace(
+        default_settings(),
+        wp_url="https://blog.example.com",
+        wp_username="race-ops",
+        wp_password="example-value",  # noqa: S106 -- a fixture value, not a credential
+        wp_parent="2026 Results",
+        wp_status="publish",
+    )
+    view, _controls, _dialog = _build_view(monkeypatch, settings=settings)
+
+    collected = view.collect_settings()
+
+    assert (
+        collected.wp_url,
+        collected.wp_username,
+        collected.wp_password,
+        collected.wp_parent,
+        collected.wp_status,
+    ) == ("https://blog.example.com", "race-ops", "example-value", "2026 Results", "publish")
+
+
 def test_settings_dialog_collect_settings_carries_the_dns_riders_toggle_through(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

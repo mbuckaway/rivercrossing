@@ -694,10 +694,10 @@
   </object>
 
   <!--
-    Seven menus, 49 mi_* items and three stock ids (two on File, one on
+    Seven menus, 50 mi_* items and three stock ids (two on File, one on
     Help), mapping 1:1 onto the spec.md 15 table: File 6, Ride 9,
-    Riders 4, Cards 3, Results 15, View 9 (the 15 table's single View
-    row, expanding to its nine items) and Help 3 — 49 mi_* names in all.
+    Riders 4, Cards 3, Results 16, View 9 (the 15 table's single View
+    row, expanding to its nine items) and Help 3 — 50 mi_* names in all.
     File order follows the 15 table
     (Import CSV, Export CSV, Back Up, Simulation), not 15b's listing
     order.
@@ -708,10 +708,12 @@
     items (Part D), each gated on its own export existing, and G6
     added the five checkable publish options after them (a separator
     first, since they are a second group), plus its rename of the
-    HTML row to "Export HTML…". mi_show_dns_riders followed those five
-    (the same checkable group, no further separator): the Standings
-    window's and every export's DNS toggle — checked by default, from
-    the AppSettings default. File 6:
+    HTML row to "Export HTML…". Phase 4b adds mi_publish_wordpress,
+    the Results > Publish to WordPress… form, between the PDF preview
+    and that separator. mi_show_dns_riders followed those five (the
+    same checkable group, no further separator): the Standings window's
+    and every export's DNS toggle — checked by default, from the
+    AppSettings default. File 6:
     mi_simulation opens the Rider Simulator after Back Up Database.
 
     W14: mi_ride_setup left the Ride menu with its spec.md 15 row; the
@@ -860,6 +862,11 @@
       </object>
       <object class="wxMenuItem" name="mi_preview_pdf_browser">
         <label>Preview P&amp;DF in Browser</label>
+      </object>
+      <!-- Phase 4b: the WordPress publish form, its own action group
+           before the publish-options separator below. -->
+      <object class="wxMenuItem" name="mi_publish_wordpress">
+        <label>Publish to &amp;WordPress…</label>
       </object>
       <!--
         G6: the five publish options moved here from the results

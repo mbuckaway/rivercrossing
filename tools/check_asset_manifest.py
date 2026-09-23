@@ -35,9 +35,9 @@ Run it directly to check a tree without waiting for a build::
 ``main()`` checks all five manifests -- ``verify_assets``,
 ``verify_vectors``, ``verify_templates``, ``verify_pdf_fonts`` and
 ``verify_docs`` -- so a tree missing either the ``ui/`` assets, the
-two self-test vector CSVs, the six htmlexport template artifacts, the
-three PDF report TTFs or any of the five docs fails this direct check
-the same way it would fail the real build.
+two self-test vector CSVs, the eight htmlexport template artifacts,
+the three PDF report TTFs or any of the five docs fails this direct
+check the same way it would fail the real build.
 """
 
 import argparse
@@ -111,22 +111,28 @@ REQUIRED_VECTORS: tuple[str, ...] = ("joker_vectors.csv", "rank_sweep.csv")
 # build-time failure E1.6.1's own goal asks for (missed once here).
 VECTORS_PACKAGE_DEST = f"rivercrossing/{VECTORS_SUBDIR}"
 
-# E6.2.1: the frozen results templates and the two vendored CSS
-# artifacts (spec section 8). ``htmlexport.render`` reads the templates
-# via Jinja2's PackageLoader, and the page inlines compiled_css +
-# fonts_css, so all six must land under
+# E6.2.1: the frozen results templates and the vendored CSS artifacts
+# (spec section 8). ``htmlexport.render`` reads the templates via
+# Jinja2's PackageLoader, and the page inlines compiled_css +
+# fonts_css, so all eight must land under
 # ``rivercrossing/htmlexport/templates/`` in the bundle. The base64
 # fonts_css ships instead of the ``fonts/`` woff2 sources (they never
 # ride along); the manifest therefore names the artifacts, not the
 # font files. ``poster.html.j2`` is the podium poster's own page
-# (``htmlexport.render_poster``) beside the results page.
+# (``htmlexport.render_poster``) beside the results page, and
+# ``wordpress.html.j2`` is ``htmlexport.render_wordpress``'s content
+# fragment, which inlines ``compiled_css_wp`` -- compiled_css with
+# every selector scoped under ``.rc-results`` -- instead of the
+# unscoped artifact.
 HTMLEXPORT_TEMPLATES_SUBDIR = "htmlexport/templates"
 REQUIRED_TEMPLATES: tuple[str, ...] = (
     "base.html.j2",
     "macros.html.j2",
     "poster.html.j2",
+    "wordpress.html.j2",
     "theme.css",
     "compiled_css",
+    "compiled_css_wp",
     "fonts_css",
 )
 HTMLEXPORT_PACKAGE_DEST = f"rivercrossing/{HTMLEXPORT_TEMPLATES_SUBDIR}"

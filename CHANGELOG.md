@@ -6,6 +6,15 @@ All notable changes to RiverCrossing are recorded here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- **Publish results to WordPress** — the Results menu gains **Publish to WordPress…**, which creates
+  or updates a page on a WordPress site through its REST API (an Application Password over HTTPS).
+  The dialog collects the site URL, username, Application Password, page title and slug, an optional
+  parent "section" page, and the publish status; the connection and page defaults persist in the
+  settings file. The published content is the app's own results layout, scoped so it cannot restyle
+  the site's theme.
+
 ## [1.1.0] - 2026-09-21
 
 ### Added
