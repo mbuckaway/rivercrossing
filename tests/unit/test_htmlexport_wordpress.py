@@ -12,12 +12,17 @@ reads the record. The whole fragment is wrapped in
 stylesheet ``tools/gen_css.py`` has already scoped under that wrapper,
 so publishing it cannot restyle the site's own theme.
 
-Written FIRST: this file is red until ``wordpress.html.j2`` and
-``render_wordpress`` land.
+``htmlexport.render_poster_wordpress`` is the podium poster in that same
+fragment shape: the poster's cards and its counter header, for a page
+that already carries a document.
+
+Written FIRST: this file is red until ``wordpress.html.j2``,
+``poster_wordpress.html.j2`` and their renderers land.
 """
 
 import base64
 import re
+from dataclasses import replace
 from datetime import date
 from typing import TYPE_CHECKING
 
@@ -30,6 +35,7 @@ from rivercrossing.htmlexport import (
     SELF_TEST_NOTE,
     ExportOptions,
     render,
+    render_poster_wordpress,
     render_wordpress,
 )
 from rivercrossing.standings import EntryResult, Placed
@@ -130,6 +136,12 @@ def page() -> str:
 def fragment() -> str:
     """Render the WordPress content fragment for the same solo field."""
     return render_wordpress(_StubRide(), _solo_field(), _OPTIONS, generated=_GENERATED)
+
+
+@pytest.fixture(scope="module")
+def poster_fragment() -> str:
+    """Render the poster fragment for the same solo field."""
+    return render_poster_wordpress(_StubRide(), _solo_field(), _OPTIONS, generated=_GENERATED)
 
 
 # ------------------------------------------------- the fragment shell
@@ -254,5 +266,226 @@ def test_render_wordpress_logo_path_is_embedded_when_no_logo_src_is_given(
     encoded = base64.b64encode(logo.read_bytes()).decode("ascii")
 
     fragment = render_wordpress(_StubRide(), _solo_field(), _OPTIONS, logo_path=logo)
+
+    assert f"data:image/png;base64,{encoded}" in fragment
+
+
+# --------------------- the bragging-rights disclaimer (E1)
+
+# The disclaimer's fixed first sentence. The clause that follows names
+# the boards the options show: the Laps leaderboard gates the lap-count
+# subject exactly as show_times gates times, so with the Laps board off
+# the header must not promise lap counts are "for bragging rights".
+_DISCLAIMER = "It's not a race, it's a poker run — placings are by best poker hand."
+
+# All four flag combinations. The clause is the whole second sentence;
+# the empty string is the off/off page, whose sentence ends at the hand
+# clause.
+_DISCLAIMER_CASES: tuple[tuple[ExportOptions, str], ...] = (
+    (
+        ExportOptions(laps_board=True, show_times=True),
+        " Lap counts and times below are unofficial and shown for bragging rights only.",
+    ),
+    (
+        ExportOptions(laps_board=True, show_times=False),
+        " Lap counts below are unofficial and shown for bragging rights only.",
+    ),
+    (
+        ExportOptions(laps_board=False, show_times=True),
+        " Times below are unofficial and shown for bragging rights only.",
+    ),
+    (ExportOptions(laps_board=False, show_times=False), ""),
+)
+
+_DISCLAIMER_IDS = ["laps+times", "laps", "times", "neither"]
+
+
+@pytest.mark.parametrize(("options", "clause"), _DISCLAIMER_CASES, ids=_DISCLAIMER_IDS)
+def test_render_disclaimer_names_only_the_boards_the_options_show(
+    options: ExportOptions, clause: str
+) -> None:
+    """The subject list follows the shown boards, not a fixed line."""
+    html = render(_StubRide(), _solo_field(), options, generated=_GENERATED)
+
+    assert f"{_DISCLAIMER}{clause}</p>" in html
+
+
+def test_render_disclaimer_given_no_board_shown_omits_the_clause() -> None:
+    """With both boards off nothing is shown for bragging rights."""
+    html = render(
+        _StubRide(),
+        _solo_field(),
+        ExportOptions(laps_board=False, show_times=False),
+        generated=_GENERATED,
+    )
+
+    assert "bragging rights" not in html
+    assert "unofficial and shown for bragging rights" not in html
+
+
+@pytest.mark.parametrize(("options", "clause"), _DISCLAIMER_CASES, ids=_DISCLAIMER_IDS)
+def test_render_wordpress_disclaimer_names_only_the_boards_the_options_show(
+    options: ExportOptions, clause: str
+) -> None:
+    """The fragment's disclaimer is the page's, gated the same way."""
+    fragment = render_wordpress(_StubRide(), _solo_field(), options, generated=_GENERATED)
+
+    assert f"{_DISCLAIMER}{clause}</p>" in fragment
+
+
+def test_render_wordpress_disclaimer_given_no_board_shown_omits_the_clause() -> None:
+    """The fragment drops the clause too: one source, no drift."""
+    fragment = render_wordpress(
+        _StubRide(),
+        _solo_field(),
+        ExportOptions(laps_board=False, show_times=False),
+        generated=_GENERATED,
+    )
+
+    assert "bragging rights" not in fragment
+    assert "unofficial and shown for bragging rights" not in fragment
+
+
+# ------------------------------- the poster fragment (Part C)
+
+# ``render_poster_wordpress`` is the podium poster's content fragment:
+# the poster's own cards and header, in ``render_wordpress``'s shell.
+# The header here is the poster's ``<header class="bp">``, not the
+# results page's, so no assertion below leans on the event_header
+# macro.
+
+
+@pytest.mark.parametrize("tag", ["!doctype", "html", "head", "body"])
+def test_render_poster_wordpress_emits_no_document_scaffolding(
+    poster_fragment: str, tag: str
+) -> None:
+    """A WordPress Page supplies the document: this is inner HTML.
+
+    Tags are matched with a boundary, so the fragment's own
+    ``<header>`` element is not mistaken for a document ``<head>``.
+    """
+    assert re.search(rf"</?{tag}\b", poster_fragment, re.IGNORECASE) is None
+
+
+def test_render_poster_wordpress_wraps_the_content_in_the_scope_wrapper(
+    poster_fragment: str,
+) -> None:
+    """The wrapper class is what the scoped stylesheet matches."""
+    assert poster_fragment.startswith("<style>")
+    assert poster_fragment.count('<div class="rc-results"') == 1
+    assert poster_fragment.rstrip().endswith("</div>")
+
+
+def test_render_poster_wordpress_inlines_the_scoped_stylesheet_not_the_unscoped_one(
+    poster_fragment: str,
+) -> None:
+    """The scoped stylesheet here, never the unscoped one."""
+    assert "/* rivercrossing compiled_css_wp" in poster_fragment
+    assert "/* rivercrossing compiled_css —" not in poster_fragment
+    assert ".rc-results " in poster_fragment
+
+
+def test_render_poster_wordpress_header_carries_the_unique_riders_counter() -> None:
+    """The header's fourth counter is threaded here too (Phase 7)."""
+    fragment = render_poster_wordpress(_StubRide(), _solo_field(), _OPTIONS, riders=207)
+
+    assert "entries · laps · cards dealt · unique riders" in fragment
+    assert "2 · 21 · 10 · 207" in fragment
+
+
+def test_render_poster_wordpress_given_no_rider_count_renders_zero(
+    poster_fragment: str,
+) -> None:
+    """A caller that threads no count renders 0, never a blank cell."""
+    assert "2 · 21 · 10 · 0" in poster_fragment
+
+
+def test_render_poster_wordpress_renders_podium_cards(poster_fragment: str) -> None:
+    """The poster's cards render inside the fragment, chips and all."""
+    assert "Best poker hands" in poster_fragment
+    assert 'class="chip' in poster_fragment
+
+
+def test_render_poster_wordpress_given_a_single_solo_entry_renders_one_card() -> None:
+    """A one-entry field renders one card, not a section shell."""
+    fragment = render_poster_wordpress(
+        _StubRide(),
+        (_placed(1, _entry("88", "Moss Ridge Riders", 11)),),
+        _OPTIONS,
+        generated=_GENERATED,
+    )
+
+    assert fragment.count('<div class="bp p-5') == 1
+
+
+def test_render_poster_wordpress_given_a_non_numeric_plate_raises_value_error() -> None:
+    """The fragment rejects a non-numeric plate, as the poster does."""
+    placed = (_placed(1, _entry("ABC", "Bad Plate", 3)),)
+
+    with pytest.raises(ValueError, match=re.escape("plate 'ABC' is not numeric")):
+        render_poster_wordpress(_StubRide(), placed, _OPTIONS)
+
+
+def test_render_poster_wordpress_given_a_team_field_titles_each_kinds_section() -> None:
+    """A team field's two headings render, as the page's do."""
+    fragment = render_poster_wordpress(_StubRide(), _mixed_field(), _OPTIONS, generated=_GENERATED)
+
+    assert re.findall(r"<h3[^>]*>(.*?)</h3>", fragment) == ["Teams", "Solo riders"]
+
+
+def test_render_poster_wordpress_given_an_empty_field_renders_no_section() -> None:
+    """A field with no placed rows renders the header alone."""
+    fragment = render_poster_wordpress(_StubRide(), (), _OPTIONS, generated=_GENERATED)
+
+    assert "<section" not in fragment
+    assert "Best poker hands" in fragment
+
+
+def test_render_poster_wordpress_given_all_cards_prints_the_whole_hand_line() -> None:
+    """``options.all_cards`` reaches the fragment's cards too."""
+    options = ExportOptions(show_times=True, all_cards=True)
+
+    fragment = render_poster_wordpress(_StubRide(), _solo_field(), options, generated=_GENERATED)
+
+    assert "All 5 cards, in draw order: " in fragment
+
+
+def test_render_poster_wordpress_given_a_drawn_card_renders_the_draw_badge() -> None:
+    """R-14: a fragment card that drew shows the card it drew."""
+    result = replace(
+        _entry("88", "Moss Ridge Riders", 11), tiebreak_card=Card(Rank.ACE, Suit.HEARTS)
+    )
+    drawn = (_placed(1, result),)
+
+    fragment = render_poster_wordpress(_StubRide(), drawn, _OPTIONS, generated=_GENERATED)
+
+    assert 'draw <span class="chip r">A ♥</span>' in fragment
+
+
+def test_render_poster_wordpress_given_an_unverified_ride_carries_the_self_test_note() -> None:
+    """E6.4.3: the caption reaches the fragment too."""
+    fragment = render_poster_wordpress(
+        _StubRide(), _solo_field(), _OPTIONS, generated=_GENERATED, self_test_unverified=True
+    )
+
+    assert SELF_TEST_NOTE in fragment
+
+
+def test_render_poster_wordpress_given_a_verified_ride_carries_no_self_test_note(
+    poster_fragment: str,
+) -> None:
+    """The off-state renders no caption at all."""
+    assert SELF_TEST_NOTE not in poster_fragment
+
+
+def test_render_poster_wordpress_logo_path_is_embedded_when_no_logo_src_is_given(
+    tmp_path: Path,
+) -> None:
+    """``logo_path`` is the raw-file form of the same logo seam."""
+    logo = tmp_path / "org-logo.png"
+    logo.write_bytes(b"\x89PNG\r\n\x1a\nlogo-bytes")
+    encoded = base64.b64encode(logo.read_bytes()).decode("ascii")
+
+    fragment = render_poster_wordpress(_StubRide(), _solo_field(), _OPTIONS, logo_path=logo)
 
     assert f"data:image/png;base64,{encoded}" in fragment
