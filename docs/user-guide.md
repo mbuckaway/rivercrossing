@@ -209,7 +209,7 @@ A ⚠ badge beside a tied place gives the tie's explanation on a double-click. O
 - **Podium Poster HTML…** — the same poster as a self-contained page.
 - **Export Standings CSV…** — place, plate, entry, type, sex, laps, hand, draw, and times when shown.
 - **Preview HTML in Browser** / **Preview Podium Poster HTML in Browser** / **Preview PDF in Browser** — open this session's last export of that format in your browser. Each needs a finished ride and an export made this session. After a restart the preview is disabled until the next export.
-- **Publish to WordPress…** — create or update a page on your WordPress site from the finished ride's results. Enter the site URL, a WordPress username, and an **Application Password**, then the page title, slug, an optional parent page (the "section" it sits under), and the publish status. The page is looked up by slug: one already there is updated, and a new page is created when there is none. The connection is remembered in this machine's settings file, so you type it once.
+- **Publish to WordPress…** — create or update a page on your WordPress site from the finished ride's results. Choose **What to publish** at the top of the dialog: **Full results** (the complete results page) or **Podium results** (the top-finishers poster). The title and slug fill themselves from that choice, and you can still edit them before publishing. Then enter the site URL, a WordPress username, and an **Application Password**, the page title and slug, an optional parent page (the "section" it sits under), and the publish status. The page is looked up by slug: one already there is updated, and a new page is created when there is none. If a publish fails, a dialog reports the error with **Retry** and **Cancel** — Retry re-attempts the publish, Cancel leaves the page unpublished. The connection is remembered in this machine's settings file, so you type it once.
 - **Publish Options** — six checkable rows on the Results menu that shape every export: **Show lap & total times**, **Laps leaderboard**, **Fastest-time leaderboard**, **Full field**, **All cards drawn**, and **Show DNS Riders**. A rider or team with no recorded laps on a finished ride shows as **DNS** at the bottom of its section; unchecking **Show DNS Riders** hides those rows. With show-times off, the exports embed no time data, and the fastest-time leaderboard is cleared and disabled.
 
 ### Before you publish to WordPress {: #before-wordpress }
@@ -223,6 +223,16 @@ If that **Application Passwords** section is missing from your profile, a securi
 3. Untick **Disable WordPress application passwords** and save. The label is inverted, so it must be **empty** for Application Passwords to work.
 
 Leave it unticked — an Application Password stops authenticating the moment that option is switched back on.
+
+### Add the page to your site's menu {: #add-page-to-menu }
+
+A published page does not appear in the site's menu by itself — you add it to the menu in the WordPress dashboard. On a **block theme** (the Full-Site-Editing kind, which gorba.ca uses), the classic **Appearance → Menus** screen is empty; the menu lives in the **Site Editor**'s Navigation block instead.
+
+1. Log in to wp-admin with the account's **normal password** — an Application Password works only for the REST API, not the wp-admin login form.
+2. Open **Appearance → Editor** (the Site Editor).
+3. Open **Navigation** (a top-level item in the Site Editor's left sidebar) and pick the menu you want, such as **Main Menu**.
+4. On the submenu you want the page under, click its **⋮ (Options)** and choose **Add submenu link**, then **Page Link**, and search for and select the published page.
+5. Click **Save**, then reload the site and confirm the new item opens the page.
 
 ## How scoring works {: #poker-the-run-way }
 
