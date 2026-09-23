@@ -156,11 +156,13 @@ def userguide_drift(session):
 
 @nox.session(python=PYTHON)
 def gen_css(session):
-    """Regenerate the vendored compiled_css + fonts_css (E6.2.1).
+    """Regenerate the three vendored CSS artifacts (E6.2.1).
 
-    Needs the pinned Tailwind CLI; :func:`_ensure_node_modules` installs
-    it with the lockfile's ``npm ci`` on a clean checkout. The nox
-    ``unit`` session never needs it.
+    compiled_css, compiled_css_wp (its WordPress-scoped variant,
+    derived by the same ``--write``) and fonts_css. Needs the pinned
+    Tailwind CLI; :func:`_ensure_node_modules` installs it with the
+    lockfile's ``npm ci`` on a clean checkout. The nox ``unit`` session
+    never needs it.
     """
     _ensure_node_modules(session)
     session.install(DEV)
@@ -172,10 +174,12 @@ def css_drift(session):
     """Fail if the vendored CSS disagrees with the templates (E6.2.1).
 
     This single ``--check`` is both the CI compile and the TB-7
-    staleness gate. Passes vacuously until the templates exist, so the
-    gate can be wired into CI before they are authored. Needs the pinned
-    Tailwind CLI; :func:`_ensure_node_modules` installs it with the
-    lockfile's ``npm ci`` on a clean checkout.
+    staleness gate, for the compiled artifact and for the WordPress-
+    scoped variant derived from it. Passes vacuously until the
+    templates exist, so the gate can be wired into CI before they are
+    authored. Needs the pinned Tailwind CLI;
+    :func:`_ensure_node_modules` installs it with the lockfile's
+    ``npm ci`` on a clean checkout.
     """
     if not GEN_CSS.exists() or not any(HTMLEXPORT_TEMPLATES.glob("*.j2")):
         session.log("no htmlexport templates yet - nothing to check")

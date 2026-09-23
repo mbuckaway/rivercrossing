@@ -200,6 +200,31 @@ def test_settings_dialog_collect_settings_carries_the_publish_options_through(
     ) == (True, False, True, False, False)
 
 
+def test_settings_dialog_collect_settings_carries_the_wordpress_fields_through(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The five wp_* fields have no dialog control: OK carries them."""
+    settings = replace(
+        default_settings(),
+        wp_url="https://blog.example.com",
+        wp_username="race-ops",
+        wp_password="hunter2",  # noqa: S106 -- a fixture password, not a credential
+        wp_parent="2026 Results",
+        wp_status="publish",
+    )
+    view, _controls, _dialog = _build_view(monkeypatch, settings=settings)
+
+    collected = view.collect_settings()
+
+    assert (
+        collected.wp_url,
+        collected.wp_username,
+        collected.wp_password,
+        collected.wp_parent,
+        collected.wp_status,
+    ) == ("https://blog.example.com", "race-ops", "hunter2", "2026 Results", "publish")
+
+
 # ---------------------------------------- the appearance radio render
 
 

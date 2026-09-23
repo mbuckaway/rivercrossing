@@ -603,3 +603,21 @@ Simulated 240 of 1 800`sim_status_lbl`
 Cancel`cancel_btn`
 
 ⚠ code-side: `sim_running_dlg` is the modal progress window GO opens — the status line reads "Simulated <n> of <t> crossings" and the gauge holds `100 * completed // total`, both refreshed after every recorded crossing. The race runs on the main thread inside this dialog's own modal loop, with `wx.Yield()` after each crossing so the gauge repaints and a Cancel click is dispatched without waiting for the race to end; Cancel (or Escape, which the view points at it with SetEscapeId, since cancel_btn carries a custom id) ends the run early. The window lives in simulation.xrc (§15b).
+
+H · WordPress publish (Phase 4b)
+
+Publish to WordPress`publish_wordpress_dlg`✕
+
+▣ Site — Site URL / Username / Application password
+
+▣ Page — Title / Slug / Parent page (id or slug) / Status
+
+`wp_url_input (focused — the form's first field, recorded in views.dialogs.FORM_FIRST_FIELDS) · wp_username_input · wp_password_input (a wxTE_PASSWORD field, so the Application Password is never shown in clear) — one "Site" wxStaticBoxSizer over a 2-column caption/value wxFlexGridSizer, each input preceded by its own unnamed label (UX-DESKTOP §7: never placeholder text) · wp_title_input · wp_slug_input · wp_parent_input · wp_status_choice (authored with no `<content>`: the view fills it from `presenters/publish_wordpress.STATUS_CHOICES` — Draft / Publish / Pending / Private — and selects the stored `AppSettings.wp_status`) — the "Page" wxStaticBoxSizer over the same grid`
+
+The Application Password is kept in this machine's settings file for now. A blank parent page publishes at the top level. The site account needs permission to publish pages with inline styles. `(fixed help line, <wrap>420</wrap>)`
+
+PublishCancel
+
+`wxID_OK ("Publish", default) · wxID_CANCEL — the stock std sizer and stock ids (§13, UX-DESKTOP §3)`
+
+⚠ code-side (Phase 4b): Results ▸ Publish to WordPress… (`mi_publish_wordpress`, FINISHED-only) opens this form; `views/publish_wordpress.py`'s `PublishWordpressDialog` seeds the site fields from the live settings and the title/slug from the live ride's name (`default_title`/`default_slug`), collects one `PublishForm` on OK, and only then calls `app._publish_wordpress` — a refused form (`PublishForm.errors`: a blank field, or a site URL not beginning `https://`; the same rule the client's `InsecureURLError` enforces) shows its messages in one native error alert and leaves the dialog open, so the correction is a field edit and nothing is lost. The app persists the five `wp_*` settings first, then renders `htmlexport.render_wordpress` and publishes on a background thread (the console never blocks on the network): the parent page resolves as a numeric id or through `wordpress.find_page_by_slug` (a miss is top level), an existing page at the slug is updated in place rather than duplicated, and success posts "Published to <link>" on the status bar while a `WordPressError` — a refused Application Password, a WordPress error document, an unreachable host — arrives in its own native error alert. The window lives in dialogs.xrc (§15b).

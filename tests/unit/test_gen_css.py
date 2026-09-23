@@ -2,10 +2,13 @@
 """Unit tests for tools/gen_css.py (E6.2.1).
 
 The vendored CSS build step compiles the frozen Tailwind source
-(theme.css + the .j2 templates) once, in CI, into two committed
+(theme.css + the .j2 templates) once, in CI, into three committed
 artifacts under ``src/rivercrossing/htmlexport/templates/``:
 ``compiled_css`` (the minified Tailwind output with a provenance
-header carrying theme.css's sha256 -- the TB-7 staleness gate) and
+header carrying theme.css's sha256 -- the TB-7 staleness gate),
+``compiled_css_wp`` (that same stylesheet with every selector scoped
+under ``.rc-results`` and its cascade layers flattened: the WordPress
+content fragment's own CSS) and
 ``fonts_css`` (the five Barlow woff2 subsets as base64 ``@font-face``
 blocks). These tests are that generator's specification, written
 before ``tools/gen_css.py`` existed.
@@ -58,6 +61,7 @@ gen_css = _load_gen_css(_GEN_CSS_PATH)
 _ROOT = Path(__file__).resolve().parents[2]
 _COMMITTED_TEMPLATES_DIR = _ROOT / "src" / "rivercrossing" / "htmlexport" / "templates"
 _COMMITTED_COMPILED_CSS = _COMMITTED_TEMPLATES_DIR / "compiled_css"
+_COMMITTED_COMPILED_CSS_WP = _COMMITTED_TEMPLATES_DIR / "compiled_css_wp"
 _COMMITTED_FONTS_CSS = _COMMITTED_TEMPLATES_DIR / "fonts_css"
 _COMMITTED_FONTS_DIR = _COMMITTED_TEMPLATES_DIR / "fonts"
 
@@ -156,6 +160,26 @@ def test_build_artifacts_compiled_css_matches_committed_artifact_byte_for_byte(
     assert (tmp_path / "compiled_css").read_bytes() == committed
 
 
+def test_build_artifacts_derives_compiled_css_wp_from_the_committed_compiled_css(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """It derives from compiled_css rather than compiling twice.
+
+    The seam returns the committed artifact's own CLI bytes, so the
+    derived file can only match if the transform is exactly the one
+    that produced it -- the honesty pattern the compiled_css test above
+    uses, applied to the derivation instead of the header.
+    """
+    committed = _COMMITTED_COMPILED_CSS.read_bytes()
+    monkeypatch.setattr(
+        gen_css, "_run_tailwind_cli", _seam_writing(committed.split(b"*/\n", 1)[1])
+    )
+
+    gen_css.write_artifacts(_COMMITTED_TEMPLATES_DIR, tmp_path)
+
+    assert (tmp_path / "compiled_css_wp").read_bytes() == _COMMITTED_COMPILED_CSS_WP.read_bytes()
+
+
 def test_render_fonts_css_matches_committed_fonts_css_byte_for_byte(tmp_path: Path) -> None:
     r"""The @font-face rendering reproduces fonts_css exactly.
 
@@ -174,12 +198,14 @@ def test_build_artifacts_with_real_tailwind_cli_reproduces_committed_compiled_cs
     """The real pinned CLI (when installed) reproduces compiled_css.
 
     The honest end-to-end check: Node is present and node_modules is
-    populated, so the seam is not faked and the committed artifact is
-    the expectation. Skipped with a reason when the CLI or Node itself
-    is missing, so a machine without Node never fails the suite. The
-    Node check is load-bearing on Windows: npm's ``.cmd`` shim calls
-    ``node`` by bare name, and a missing PATH entry fails with "'node'
-    is not recognized" rather than a clean skip (measured).
+    populated, so the seam is not faked and the committed artifacts are
+    the expectation -- both the compile (compiled_css) and the
+    derivation (compiled_css_wp). Skipped with a reason when the CLI or
+    Node itself is missing, so a machine without Node never fails the
+    suite. The Node check is load-bearing on Windows: npm's ``.cmd``
+    shim calls ``node`` by bare name, and a missing PATH entry fails
+    with "'node' is not recognized" rather than a clean skip
+    (measured).
     """
     if not gen_css._tailwind_executable().is_file() or shutil.which("node") is None:
         pytest.skip(
@@ -188,11 +214,14 @@ def test_build_artifacts_with_real_tailwind_cli_reproduces_committed_compiled_cs
         )
     work_dir = Path(tempfile.mkdtemp(prefix="gen_css-itest-", dir=_ROOT / "build"))
     try:
-        compiled_css, fonts_css = gen_css.build_artifacts(_COMMITTED_TEMPLATES_DIR, work_dir)
+        compiled_css, compiled_css_wp, fonts_css = gen_css.build_artifacts(
+            _COMMITTED_TEMPLATES_DIR, work_dir
+        )
     finally:
         shutil.rmtree(work_dir, ignore_errors=True)
 
     assert compiled_css == _COMMITTED_COMPILED_CSS.read_bytes()
+    assert compiled_css_wp == _COMMITTED_COMPILED_CSS_WP.read_bytes()
     assert fonts_css == _COMMITTED_FONTS_CSS.read_bytes()
 
 
@@ -200,8 +229,9 @@ def test_build_artifacts_with_real_tailwind_cli_reproduces_committed_compiled_cs
 
 
 @pytest.mark.usefixtures("fake_tailwind_cli")
+@pytest.mark.parametrize("name", ["compiled_css", "compiled_css_wp", "fonts_css"])
 def test_write_artifacts_idempotent_two_runs_produce_byte_identical_files(
-    tmp_path: Path,
+    tmp_path: Path, name: str
 ) -> None:
     """Regeneration is idempotent: two writes match byte-for-byte."""
     fixture = _fixture_templates_dir(tmp_path / "src")
@@ -209,12 +239,7 @@ def test_write_artifacts_idempotent_two_runs_produce_byte_identical_files(
     gen_css.write_artifacts(fixture, tmp_path / "first")
     gen_css.write_artifacts(fixture, tmp_path / "second")
 
-    assert (tmp_path / "first" / "compiled_css").read_bytes() == (
-        tmp_path / "second" / "compiled_css"
-    ).read_bytes()
-    assert (tmp_path / "first" / "fonts_css").read_bytes() == (
-        tmp_path / "second" / "fonts_css"
-    ).read_bytes()
+    assert (tmp_path / "first" / name).read_bytes() == (tmp_path / "second" / name).read_bytes()
 
 
 @pytest.mark.usefixtures("fake_tailwind_cli")
@@ -231,6 +256,7 @@ def test_main_write_flag_with_path_overrides_writes_artifacts_to_out_dir(
 
     assert exit_code == 0
     assert (out_dir / "compiled_css").is_file()
+    assert (out_dir / "compiled_css_wp").is_file()
     assert (out_dir / "fonts_css").is_file()
 
 
@@ -266,7 +292,7 @@ def test_main_check_flag_returns_zero_when_artifacts_match(
 
 
 @pytest.mark.usefixtures("fake_tailwind_cli")
-@pytest.mark.parametrize("name", ["compiled_css", "fonts_css"])
+@pytest.mark.parametrize("name", ["compiled_css", "compiled_css_wp", "fonts_css"])
 def test_main_check_flag_leaves_artifact_unchanged(tmp_path: Path, name: str) -> None:
     """``--check`` never rewrites the artifact.
 
@@ -304,6 +330,30 @@ def test_main_check_flag_returns_one_with_drift_line_when_compiled_css_modified(
 
     assert exit_code == 1
     assert "drift: compiled_css" in capsys.readouterr().out
+
+
+@pytest.mark.usefixtures("fake_tailwind_cli")
+def test_main_check_flag_returns_one_with_drift_line_when_compiled_css_wp_modified(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A stale compiled_css_wp fails the build with a ``drift:`` line.
+
+    The scoped artifact is derived from compiled_css in the same
+    ``--write``, so drift here means it was edited by hand -- exactly
+    what the gate exists to catch.
+    """
+    fixture = _fixture_templates_dir(tmp_path / "templates")
+    out_dir = tmp_path / "out"
+    gen_css.main(["--write", "--templates-dir", str(fixture), "--out-dir", str(out_dir)])
+    scoped_path = out_dir / "compiled_css_wp"
+    scoped_path.write_bytes(scoped_path.read_bytes() + b"\n")
+
+    exit_code = gen_css.main(
+        ["--check", "--templates-dir", str(fixture), "--out-dir", str(out_dir)]
+    )
+
+    assert exit_code == 1
+    assert "drift: compiled_css_wp" in capsys.readouterr().out
 
 
 @pytest.mark.usefixtures("fake_tailwind_cli")
@@ -727,8 +777,8 @@ def test_fonts_css_contains_both_families_and_all_five_weights() -> None:
         assert f"font-weight: {weight};" in content
 
 
-@pytest.mark.parametrize("name", ["compiled_css", "fonts_css"])
-def test_compiled_css_and_fonts_css_have_no_url_http_references(name: str) -> None:
+@pytest.mark.parametrize("name", ["compiled_css", "compiled_css_wp", "fonts_css"])
+def test_committed_stylesheet_artifacts_have_no_url_http_references(name: str) -> None:
     """Zero external fetches: the page must work offline (R-61)."""
     content = (_COMMITTED_TEMPLATES_DIR / name).read_text(encoding="utf-8")
 
@@ -745,3 +795,235 @@ def test_data_font_uri_base64_payload_round_trips_to_original_bytes(data: bytes)
 
     payload = uri.split("base64,", 1)[1].split(") format", 1)[0]
     assert base64.b64decode(payload) == data
+
+
+# ------------------------------------ the WordPress-scoped variant
+
+# htmlexport.render_wordpress publishes this artifact -- not
+# compiled_css -- into a WordPress page's content, beside the site's
+# own theme. The transform is two things: a *selector* rewrite, never
+# an ``@scope (.rc-results) {…}`` wrapper (that cannot nest the theme's
+# ``:root,:host`` token block or the nine ``@property`` registrations
+# the minified output ends with -- measured), and the flattening of
+# the ``@layer theme``/``base``/``utilities`` wrappers, because an
+# unlayered author declaration beats every layered one regardless of
+# specificity, so a theme's plain ``table{width:60%}`` outranked the
+# fragment's own layered ``.rc-results .w-full{width:100%}`` (measured
+# in a real browser against a mock theme). These tests are the
+# transform's contract.
+
+
+@pytest.fixture(scope="module")
+def committed_css() -> str:
+    """Return the committed compiled_css artifact as text."""
+    return _COMMITTED_COMPILED_CSS.read_text(encoding="utf-8")
+
+
+@pytest.fixture(scope="module")
+def scoped_css(committed_css: str) -> str:
+    """Return the scoped transform of the committed artifact."""
+    return gen_css.render_compiled_css_wp(committed_css).decode("utf-8")
+
+
+def test_compiled_css_wp_name_constant_names_the_committed_artifact() -> None:
+    """The manifest and package-data name this artifact too."""
+    assert gen_css.COMPILED_CSS_WP_NAME == "compiled_css_wp"
+
+
+def test_render_compiled_css_wp_keeps_every_property_registration_at_top_level(
+    scoped_css: str, committed_css: str
+) -> None:
+    """``@property`` is global, so it has no selector to scope.
+
+    The fragment's utilities read the ``--tw-*`` values these nine
+    registrations establish, so all nine must survive verbatim at the
+    stylesheet's top level -- and none may gain the wrapper as a
+    prefix, which would leave the custom properties unregistered.
+    """
+    registrations = re.findall(r"@property [^{]+\{[^{}]*\}", committed_css)
+
+    assert len(registrations) == 9
+    assert [entry for entry in registrations if entry not in scoped_css] == []
+    assert ".rc-results @property" not in scoped_css
+
+
+def test_render_compiled_css_wp_moves_the_theme_tokens_onto_the_wrapper(scoped_css: str) -> None:
+    """The theme's custom properties are declared on the wrapper itself.
+
+    ``:root``/``:host`` can never match inside a page's content, so the
+    token block hangs off ``.rc-results`` -- the one element of the
+    fragment that inherits down to every element in it. It sits
+    unlayered, like every other rule of the flattened fragment.
+    """
+    assert ".rc-results{--font-sans:" in scoped_css
+    assert ":root" not in scoped_css
+
+
+@pytest.mark.parametrize(
+    ("layer", "rule"),
+    [
+        ("theme", ".rc-results{--font-sans:"),
+        ("base", ".rc-results [hidden]:where(:not([hidden=until-found])){display:none!important}"),
+        ("utilities", ".rc-results .static{position:static}"),
+    ],
+)
+def test_render_compiled_css_wp_flattens_the_layer_wrapper_and_keeps_its_rules(
+    scoped_css: str, layer: str, rule: str
+) -> None:
+    """No layer wrapper survives; the rules it held still do.
+
+    An unlayered author declaration beats a layered one whatever their
+    specificities. With the Tailwind rules still inside ``@layer
+    base``/``@layer utilities``, a publishing theme's plain unlayered
+    ``table{border:6px dashed lime;width:60%}`` therefore beat the
+    fragment's scoped ``.rc-results .w-full{width:100%}`` and the
+    fragment rendered theme-mangled (measured in a real browser against
+    a mock theme). Dropping the wrapper puts the fragment's rules back
+    on specificity -- and flattening must not drop the rules with it.
+    """
+    assert f"@layer {layer}" not in scoped_css
+    assert rule in scoped_css
+
+
+def test_render_compiled_css_wp_keeps_theme_then_base_then_utilities_in_order(
+    scoped_css: str,
+) -> None:
+    """Flattening preserves the source order the layers encoded.
+
+    Unlayered rules cascade by source position instead of by layer
+    order, so the utilities have to keep coming after preflight:
+    reorder them and preflight's own reset on every element would beat
+    ``.rc-results .mt-1{margin-top:var(--spacing)}``, emptying every
+    spacing utility in the fragment. The theme tokens stay in front of
+    both.
+    """
+    theme = scoped_css.index(".rc-results{--font-sans:")
+    base = scoped_css.index(".rc-results [hidden]:where(:not([hidden=until-found])){")
+    utilities = scoped_css.index(".rc-results .static{")
+
+    assert theme < base < utilities
+
+
+def test_render_compiled_css_wp_leaves_only_the_layers_the_flattening_spares(
+    scoped_css: str,
+) -> None:
+    """Only the two layer at-rules no flattening touches survive.
+
+    ``@layer properties`` holds the ``--tw-*`` initial values the
+    fragment's utilities read -- it is the first layer by design, so
+    everything else already outranked it, flattened or not -- and the
+    bare ``@layer components;`` statement carries no rules at all.
+    Neither mentions a selector, so neither can restyle a host site.
+    ``theme``, ``base`` and ``utilities`` are the three the transform
+    flattens, and none of them may come back.
+    """
+    assert re.findall(r"@layer\s+[-\w]+", scoped_css) == [
+        "@layer properties",
+        "@layer components",
+    ]
+
+
+@pytest.mark.parametrize(
+    "selector",
+    [".mt-1", ".mt-12", ".tabular-nums", ".text-ink", ".font-body", r".sm\:p-8"],
+)
+def test_render_compiled_css_wp_prefixes_every_utility_with_the_wrapper(
+    scoped_css: str, selector: str
+) -> None:
+    """A utility that stayed unscoped would restyle the whole site.
+
+    Both halves matter: the scoped form must exist (or the fragment
+    renders unstyled) and no rule boundary may introduce the bare
+    selector, which is the leak into the publishing site.
+    """
+    assert f".rc-results {selector}{{" in scoped_css
+    assert re.search(rf"[{{}};]{re.escape(selector)}\{{", scoped_css) is None
+
+
+def test_render_compiled_css_wp_scopes_the_custom_rules_and_the_print_block(
+    scoped_css: str,
+) -> None:
+    """theme.css's own classes and the print rule are scoped too.
+
+    ``.bp``/``.chip`` are the page's own widgets and ``.no-print`` is
+    the print rule it relies on: a site that happens to use those class
+    names inherits nothing. The print block's ``body`` background
+    becomes the wrapper's, so a printed fragment whitens as the
+    standalone page does.
+    """
+    assert ".rc-results .bp{" in scoped_css
+    assert ".rc-results .bp>i.c:before,.rc-results .bp>i.c:after{" in scoped_css
+    assert ".rc-results .chip{" in scoped_css
+    assert ".rc-results .chip.j{" in scoped_css
+    assert (
+        "@media print{.rc-results .no-print{display:none!important}"
+        ".rc-results{background:#fff!important}}" in scoped_css
+    )
+
+
+def test_render_compiled_css_wp_neutralizes_the_document_level_selectors(
+    scoped_css: str,
+) -> None:
+    """``html``/``body``/``:root``/``:host`` cannot match in a page.
+
+    Prefixing them would leave dead selectors; dropping the rules would
+    lose preflight's defaults for the fragment (line-height 1.5, the
+    print background). Each is therefore rewritten to the wrapper:
+    scoped, still in force for the fragment, invisible to the site.
+    """
+    assert re.search(r"\.rc-results\{[^{}]*line-height:1\.5", scoped_css) is not None
+    assert re.search(r"\.rc-results (?:html|body|:root|:host)\b", scoped_css) is None
+    assert ".rc-results .rc-results" not in scoped_css
+
+
+@pytest.mark.parametrize(
+    "pattern",
+    [
+        r"[{};]\.[a-z-]",  # a class selector left unscoped
+        r"[{};][a-z][-\w]*(?=[{,])",  # an element selector left unscoped
+        r"[{};](?:html|body|:root|:host)\b",  # a document-level selector left alone
+        r"(?m)^\s*\.[a-z-]",  # a class selector opening a line, with no rule boundary
+        r"(?m)^\s*(?:html|body|:root|:host)\b",  # a document-level selector opening a line
+    ],
+)
+def test_render_compiled_css_wp_leaves_no_rule_outside_the_wrapper(
+    scoped_css: str, pattern: str
+) -> None:
+    """The whole-sheet audit: nothing survives the scoping unscoped.
+
+    The wrapper class is masked out first, so a match can only be a
+    *second*, unscoped selector sitting at a rule boundary -- and one
+    rule like that is a stylesheet that restyles the publishing site's
+    theme. The last two patterns drop the boundary requirement: the
+    flattened layers put their bodies' rules straight after each
+    other's closing braces, and the first rule of a body that lost its
+    wrapper would otherwise open a line with nothing in front of it.
+    """
+    masked = scoped_css.replace(gen_css._WP_SCOPE, "@scope@")
+
+    assert re.findall(pattern, masked) == []
+
+
+def test_render_compiled_css_wp_prepends_the_scoped_provenance_header(
+    scoped_css: str, committed_css: str
+) -> None:
+    """The artifact names its variant; the source hash is the same.
+
+    The provenance line is what the TB-7 staleness gate reads, so the
+    derived artifact carries theme.css's own sha256 and the pinned
+    Tailwind version -- plus which variant it is, since two artifacts
+    now share that source.
+    """
+    header = scoped_css.split("\n", 1)[0]
+
+    assert header.startswith("/* rivercrossing compiled_css_wp — generated by tools/gen_css.py; ")
+    assert "the WordPress-scoped variant of compiled_css" in header
+    assert re.search(r"sha256:[0-9a-f]{64}; tailwindcss \d+\.\d+\.\d+ \*/$", header) is not None
+    assert re.search(r"sha256:[0-9a-f]{64}", committed_css).group(0) in header
+    assert scoped_css.count("rivercrossing compiled_css_wp") == 1
+
+
+def test_render_compiled_css_wp_raw_cli_output_without_the_header_raises_value_error() -> None:
+    """T-5 negative: raw CLI output is named, never guessed at."""
+    with pytest.raises(ValueError, match=re.escape("provenance header")):
+        gen_css.render_compiled_css_wp(".bp{position:relative}\n")

@@ -2,7 +2,7 @@
 """Headless tests for the menu route map and its rules (E1.4.1, E1.4.2).
 
 Everything here runs without ``wx`` and without a display:
-``commands.py`` imports no ``wx`` at all, so its 39-row route table,
+``commands.py`` imports no ``wx`` at all, so its 40-row route table,
 its ``route_for_id`` dispatch and its ``is_route_enabled`` rule are
 pure Python -- exactly the kind
 of logic R-71's >=90% branch-coverage gate is meant to cover, and
@@ -47,8 +47,9 @@ ROUTE_COUNTS_BY_MENU = (
     ("Riders", 4),  # Phase 2: mi_entry_detail retired
     ("Cards", 3),  # Phase 2: mi_reassign_plate + mi_void_card retired (G7: mi_edit_crossing)
     # C6: mi_tiebreak_order retired; G6: +the publish row; H: the two
-    # Podium-Poster-HTML rows (the export and its preview).
-    ("Results", 10),
+    # Podium-Poster-HTML rows (the export and its preview); Phase 4b:
+    # +the WordPress publish form.
+    ("Results", 11),
     ("View", 1),
     ("Help", 4),
 )
@@ -96,6 +97,9 @@ ROUTE_TARGETS = (
     # H: the poster page's own preview row, beside the HTML one.
     (commands.TargetKind.COMMAND, None),  # Preview Podium Poster HTML in Browser
     (commands.TargetKind.COMMAND, None),  # Preview PDF in Browser: external browser
+    # Phase 4b: the WordPress publish form (a DIALOG row: it opens
+    # publish_wordpress_dlg).
+    (commands.TargetKind.DIALOG, ids.PUBLISH_WORDPRESS_DLG),  # Publish to WordPress…
     (commands.TargetKind.COMMAND, None),  # Publish options (G6): direct commands
     (commands.TargetKind.COMMAND, None),  # Times / Zoom: direct commands (W13)
     (commands.TargetKind.COMMAND, None),  # User Guide: external browser
@@ -114,25 +118,25 @@ TARGET_CASE_IDS = [f"{route.menu}:{route.label}" for route, _target in TARGET_CA
 ALL_ROUTE_IDS = tuple(item_id for route in commands.ROUTE_TABLE for item_id in route.ids)
 
 
-def test_route_table_declares_exactly_the_thirty_nine_spec_15_rows() -> None:
+def test_route_table_declares_exactly_the_forty_spec_15_rows() -> None:
     """A lost route shrinks this count, not the suite (spec.md §15)."""
-    assert len(commands.ROUTE_TABLE) == 39
+    assert len(commands.ROUTE_TABLE) == 40
 
 
 @pytest.mark.parametrize(("menu", "expected_rows"), ROUTE_COUNTS_BY_MENU)
 def test_route_table_menu_breakdown_matches_spec_15(menu: str, expected_rows: int) -> None:
-    """File 8, Ride 9, Riders 4, Cards 3, Results 10, View 1, Help 4."""
+    """File 8, Ride 9, Riders 4, Cards 3, Results 11, View 1, Help 4."""
     rows = [route for route in commands.ROUTE_TABLE if route.menu == menu]
 
     assert len(rows) == expected_rows
 
 
-def test_route_table_covers_all_fifty_one_real_menu_item_ids_once_each() -> None:
-    """48 mi_* + 3 stock ids (main.xrc's own header), none repeated."""
+def test_route_table_covers_all_fifty_two_real_menu_item_ids_once_each() -> None:
+    """49 mi_* + 3 stock ids (main.xrc's own header), none repeated."""
     flat_ids = [item_id for route in commands.ROUTE_TABLE for item_id in route.ids]
 
-    assert len(flat_ids) == 51
-    assert len(set(flat_ids)) == 51
+    assert len(flat_ids) == 52
+    assert len(set(flat_ids)) == 52
 
 
 @pytest.mark.parametrize(("route", "expected_kind"), KIND_CASES, ids=KIND_CASE_IDS)
@@ -441,6 +445,7 @@ ALLOWED_STATES = (
     frozenset({RideStatus.FINISHED}),  # Results > Preview HTML in Browser
     frozenset({RideStatus.FINISHED}),  # Results > Preview Podium Poster HTML in Browser (H)
     frozenset({RideStatus.FINISHED}),  # Results > Preview PDF in Browser
+    frozenset({RideStatus.FINISHED}),  # Results > Publish to WordPress… (Phase 4b)
     None,  # Results > Publish Options (G6): "always" -- direct commands
     None,  # View > Times / Zoom: "always"
     None,  # Help > User Guide: "always"

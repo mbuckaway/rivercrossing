@@ -106,11 +106,13 @@ class SettingsDialog(DialogFindMixin):  # _find: ui.views._support
         ``avg_speed_kmh`` reads the entry's own float (``GetValue`` on
         a ``wx.SpinCtrlDouble``); the control's <min> floors it at
         1 km/h, mirroring the presenter's ``_MIN_AVG_SPEED_KMH``. The
-        zoom, the two layout fields and G6's five publish options
+        zoom, the two layout fields, G6's five publish options and the
+        five WordPress-publish fields
         (``zoom_percent``/``splitter_sash``/``window_geometry``/
-        ``publish_*``) have no dialog control, so the current values
-        carry over unchanged -- OK must never reset the Results menu's
-        export options.
+        ``publish_*``/``wp_*``) have no control here, so the current
+        values carry over unchanged -- OK must never reset the Results
+        menu's export options or the WordPress site the operator
+        configured in the publish dialog.
         """
         return AppSettings(
             appearance=appearance_for_radio(
@@ -130,6 +132,11 @@ class SettingsDialog(DialogFindMixin):  # _find: ui.views._support
             publish_time_board=self._settings.publish_time_board,
             publish_full_field=self._settings.publish_full_field,
             publish_all_cards=self._settings.publish_all_cards,
+            wp_url=self._settings.wp_url,
+            wp_username=self._settings.wp_username,
+            wp_password=self._settings.wp_password,
+            wp_parent=self._settings.wp_parent,
+            wp_status=self._settings.wp_status,
         )
 
     # wx handler signature; EndModal is explicit, no Skip needed

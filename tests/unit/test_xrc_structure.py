@@ -125,7 +125,8 @@ CARDS_MENU_ITEMS = (
 # Part D: the single Preview in Browser row split per format -- each
 # new item gates on its own export existing (HTML / PDF), and the
 # poster page gained its own pair (mi_export_poster_html and
-# mi_preview_poster_html_browser). G6: the five checkable publish
+# mi_preview_poster_html_browser). Phase 4b adds the WordPress publish
+# row after the PDF preview. G6: the five checkable publish
 # options follow a separator, after the Preview rows.
 RESULTS_MENU_ITEMS = (
     "mi_standings",
@@ -137,6 +138,7 @@ RESULTS_MENU_ITEMS = (
     "mi_preview_html_browser",
     "mi_preview_poster_html_browser",
     "mi_preview_pdf_browser",
+    "mi_publish_wordpress",
     "mi_show_times",
     "mi_laps_board",
     "mi_time_board",
@@ -229,7 +231,8 @@ MENU_LABELS = ("&File", "&Ride", "Ri&ders", "&Cards", "Re&sults", "&View", "&Hel
 # mi_void_card, G7 retired mi_edit_crossing, and the removals batch
 # retired mi_review_held and authored the two Podium-Poster-HTML
 # rows): File 8 (mi_simulation added), Ride 9, Riders 4, Cards 3,
-# Results 14, View 1, Help 4. The single
+# Results 15 (Phase 4b adds the WordPress publish row), View 1, Help 4.
+# The single
 # View row expands into the 9 items section 15b names for it (W13: the
 # two time-column check items + the seven zoom radios; the theme trio
 # left the View menu).
@@ -238,7 +241,7 @@ MENU_ITEM_COUNTS = (
     ("&Ride", 9),
     ("Ri&ders", 4),
     ("&Cards", 3),
-    ("Re&sults", 14),
+    ("Re&sults", 15),
     ("&View", 9),
     ("&Help", 4),
 )
@@ -525,20 +528,20 @@ def test_menu_declares_the_expected_item_count(menu_label: str, expected_items: 
     assert len(items) == expected_items
 
 
-def test_main_menubar_declares_forty_eight_menu_item_names() -> None:
-    """The removals batch leaves 48 ``mi_*`` names in main.xrc."""
+def test_main_menubar_declares_forty_nine_menu_item_names() -> None:
+    """The removals batch plus Phase 4b leaves 49 ``mi_*`` names."""
     names = _control_names_in(_window("main_menubar"))
 
     menu_item_names = [name for name in names if name.startswith("mi_")]
 
-    assert len(menu_item_names) == 48
+    assert len(menu_item_names) == 49
 
 
 def test_main_menubar_item_names_are_exactly_the_routed_item_set() -> None:
     """No orphaned menu item: every authored name is routed, and back.
 
     ``commands.ROUTE_TABLE`` is the section 15 route map the menubar
-    is driven from, so its 51 ids and the authored item names must be
+    is driven from, so its 52 ids and the authored item names must be
     one set. A row that outlives its route, or a route with no item,
     would leave an item the enablement walk can never reach.
     """
@@ -590,14 +593,15 @@ def test_results_menu_given_the_publish_group_leaves_one_radio_free_run() -> Non
 def test_results_menu_given_the_publish_group_separates_it_from_the_previews() -> None:
     """G6: a separator opens the publish group.
 
-    The separator sits directly after the nine export/preview rows
-    (the removals batch authored the two Podium-Poster-HTML rows among
-    them), so its child index moved with them.
+    The separator sits directly after the export/preview rows and
+    Phase 4b's WordPress publish row (the removals batch authored the
+    two Podium-Poster-HTML rows among them), so its child index moved
+    with them.
     """
     results_menu = _menus()[4]
     children = [child for child in results_menu if child.tag == "object"]
 
-    assert children[9].attrib["class"] == "separator"
+    assert children[10].attrib["class"] == "separator"
 
 
 @pytest.mark.parametrize(

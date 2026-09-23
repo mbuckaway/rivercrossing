@@ -60,7 +60,7 @@ from datetime import UTC, date, datetime, time
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
-from rivercrossing import __version__, csvio, htmlexport, pdfexport
+from rivercrossing import __version__, csvio, htmlexport, pdfexport, wordpress
 from rivercrossing.cards import Shoe, ShoeClosedError
 from rivercrossing.htmlexport import ExportOptions
 from rivercrossing.ride import (
@@ -121,6 +121,7 @@ if TYPE_CHECKING:
     from rivercrossing.hands import SelfTestReport
     from rivercrossing.ride import Crossing, Event
     from rivercrossing.ui.presenters.data_source import FeedRow
+    from rivercrossing.ui.presenters.publish_wordpress import PublishForm
     from rivercrossing.ui.presenters.settings import AppSettings
 
 __all__ = ["build_app", "build_main_window", "main"]
@@ -1891,6 +1892,34 @@ def _decorate_audit(context: _RouteContext, window: Any) -> None:  # noqa: ANN40
     AuditDialog(window, data_source=_audit_source(context), roster=context.roster)
 
 
+# wx ships no stubs
+def _decorate_publish_wordpress(context: _RouteContext, window: Any) -> None:  # noqa: ANN401
+    """Bind ``publish_wordpress_dlg`` to the settings and the live ride.
+
+    Phase 4b: the site fields open on the context's live settings and
+    the title/slug on the live ride's name, so a re-publish is one
+    click. OK collects the dialog's :class:`PublishForm` and hands it
+    to :func:`_publish_wordpress`, which persists the site and starts
+    the off-loop render + POST. With no ride threaded (a route-level
+    open) the form opens on a blank ride name, and
+    :func:`_publish_wordpress`'s own guard is what refuses to publish
+    it.
+    """
+    # deferred, see module docstring
+    from rivercrossing.ui.views.publish_wordpress import (  # noqa: PLC0415
+        PublishWordpressDialog,
+    )
+
+    engine = _export_engine(context)
+    ride_name = engine.config.name if engine else ""
+    PublishWordpressDialog(
+        window,
+        settings=context.settings,
+        ride_name=ride_name,
+        on_publish=functools.partial(_publish_wordpress, context),
+    )
+
+
 # One decorator per ``ui/ids.py`` target that has a code-side view
 # class, so _decorate is a table lookup rather than a twelve-branch
 # chain. A target with no entry (the plain XRC correction dialogs)
@@ -1898,6 +1927,7 @@ def _decorate_audit(context: _RouteContext, window: Any) -> None:  # noqa: ANN40
 _DECORATORS: dict[str, Callable[[_RouteContext, Any], Any]] = {
     ids.ABOUT_DLG: _decorate_about,
     ids.AUDIT_DLG: _decorate_audit,
+    ids.PUBLISH_WORDPRESS_DLG: _decorate_publish_wordpress,
     ids.RESULTS_DLG: _decorate_results,
     ids.RIDE_LIBRARY_DLG: _decorate_ride_library,
     ids.RIDE_SETUP_DLG: _decorate_ride_setup,
@@ -2549,6 +2579,174 @@ def _handle_preview_pdf_browser(context: _RouteContext) -> None:
 def _handle_preview_poster_html_browser(context: _RouteContext) -> None:
     """Results ▸ Preview Podium Poster HTML in Browser: the page."""
     _handle_preview_browser(context, context.poster_html_export_path)
+
+
+def _publish_wordpress(context: _RouteContext, form: PublishForm) -> None:
+    """Persist the site, then publish the results off-loop (Phase 4b).
+
+    Results ▸ Publish to WordPress…'s action, called by
+    ``PublishWordpressDialog`` once its form passes validation. The
+    five site fields are written back to the settings file first --
+    through the same write-discard-warn idiom every other settings
+    write uses, since this runs in a wx event handler where an
+    unguarded raise is swallowed with zero signal -- so the next
+    publish opens on what the operator just typed. The context's
+    settings are advanced either way; a refused file write costs the
+    persistence, not the publish.
+
+    The wx-touching render inputs are read here, on the main thread,
+    exactly as :func:`_handle_export_command` reads them; the worker
+    only renders and talks HTTP.
+    """
+    updated = replace(
+        context.settings,
+        wp_url=form.base_url,
+        wp_username=form.username,
+        wp_password=form.password,
+        wp_parent=form.parent,
+        wp_status=form.status,
+    )
+    try:
+        settings_store.save_settings(updated, context.settings_path)
+    except OSError as exc:
+        _log_warn(context, f"Could not save settings: {exc}")
+        context.frame.SetStatusText(f"Could not save settings: {exc}")
+    context.settings = updated
+
+    engine = _export_engine(context)
+    if engine is None:
+        context.frame.SetStatusText("No ride to publish")
+        return
+    teams, solo = _placed_for_export(context)
+    _run_publish_offloop(
+        context,
+        form,
+        config=engine.config,
+        teams=teams,
+        solo=solo,
+        opts=_export_options(context),
+        team_logos=_team_logo_srcs(context.roster),
+        self_test_unverified=engine.self_test_unverified,
+    )
+
+
+def _resolve_parent(base_url: str, auth: wordpress.BasicAuth, parent: str) -> int:
+    """Return the WordPress parent page id *parent* names.
+
+    The dialog's caption promises either form -- the parent page's
+    numeric id or its slug -- so a digits-only value is used as an id
+    and anything else is resolved through the site
+    (:func:`wordpress.find_page_by_slug`). A blank value, or a slug the
+    site does not have, becomes WordPress's own 0: the page publishes at
+    the top level rather than failing over an optional field.
+    """
+    value = parent.strip()
+    if value.isdigit():
+        return int(value)
+    if not value:
+        return 0
+    found = wordpress.find_page_by_slug(base_url, auth, value)
+    return 0 if found is None else found
+
+
+def _publish_page(  # noqa: PLR0913, PLR0917 -- the form + its render inputs
+    form: PublishForm,
+    config: RideConfig,
+    placed: tuple[Placed, ...],
+    opts: ExportOptions,
+    *,
+    team_logos: dict[str, str] | None = None,
+    self_test_unverified: bool = False,
+) -> wordpress.PublishedPage:
+    """Render the results fragment and publish it to the form's site.
+
+    Pure -- no wx, no context: it runs on the publish worker, so it must
+    never touch wx (measured: a wx call from the worker thread
+    bus-errors the process). Its render inputs are the ones
+    :func:`_write_export` takes, captured on the main thread first;
+    ``htmlexport.render_wordpress`` is the WordPress content fragment --
+    the results page without its document scaffold, its stylesheet
+    scoped under the fragment's own wrapper, so publishing cannot
+    restyle the site.
+
+    Both lookups and the POST carry the form's credentials, so whatever
+    the site reports -- a refused Application Password, a WordPress
+    error document, an unreachable host -- reaches the caller as a
+    :class:`~rivercrossing.wordpress.WordPressError`. The slug decides
+    create versus update: a page already at that slug is updated in
+    place.
+    """
+    html = htmlexport.render_wordpress(
+        config,
+        placed,
+        opts,
+        logo_path=config.logo_path,
+        team_logos=team_logos,
+        self_test_unverified=self_test_unverified,
+    )
+    auth = wordpress.BasicAuth(username=form.username, password=form.password)
+    return wordpress.publish_page(
+        form.base_url,
+        auth,
+        title=form.title,
+        slug=form.slug,
+        content=html,
+        status=form.status,
+        parent=_resolve_parent(form.base_url, auth, form.parent),
+        page_id=wordpress.find_page_by_slug(form.base_url, auth, form.slug),
+    )
+
+
+def _run_publish_offloop(  # noqa: PLR0913 -- context + the captured publish inputs
+    context: _RouteContext,
+    form: PublishForm,
+    *,
+    config: RideConfig,
+    teams: tuple[Placed, ...],
+    solo: tuple[Placed, ...],
+    opts: ExportOptions,
+    team_logos: dict[str, str] | None = None,
+    self_test_unverified: bool = False,
+) -> None:
+    """Publish on a background thread; notice through ``CallAfter``.
+
+    R-02's off-loop rule, applied to the network: the worker renders and
+    talks HTTP, and every wx touch stays on the main thread through
+    ``wx.CallAfter`` (measured: a wx call from the worker bus-errors the
+    process). A publish therefore never stalls the console.
+
+    A successful publish posts the page's own link on the status bar and
+    records it in the launch's log -- the always-on record, because a
+    page that reached the internet has to be traceable from the log
+    alone. A failure shows the site's own message in one native error
+    alert and records it the same way, so a publish never fails
+    silently.
+    """
+    from rivercrossing.ui import std_dialogs  # noqa: PLC0415 -- deferred, see module docstring
+
+    def publish() -> None:
+        try:
+            page = _publish_page(
+                form,
+                config,
+                (*teams, *solo),
+                opts,
+                team_logos=team_logos,
+                self_test_unverified=self_test_unverified,
+            )
+        except Exception as exc:  # noqa: BLE001 -- a failed publish is a notice, not a crash
+            _log_warn(context, f"Publish failed: {exc}")
+            # The message is str()d here, not in the callback: `exc` is
+            # unbound by the time CallAfter runs (Python deletes an
+            # except target at the end of its block).
+            wx = require_wx()
+            wx.CallAfter(std_dialogs.show_error, context.frame, "Publish Failed", str(exc))
+            return
+        _log_warn(context, f"Published to {page.link}")
+        wx = require_wx()
+        wx.CallAfter(context.frame.SetStatusText, f"Published to {page.link}")
+
+    threading.Thread(target=publish, daemon=True).start()
 
 
 def _active_top_level_window(wx: Any) -> Any:  # noqa: ANN401 -- wx ships no stubs

@@ -85,15 +85,20 @@ rivercrossing = [
     "ui/assets/cards/*.png",
     "ui/assets/sounds/*.wav",
     "vectors/*.csv",
-    # E6.2.1: the frozen results templates plus the two vendored CSS
+    # E6.2.1: the frozen results templates plus the vendored CSS
     # artifacts. Explicit per-file entries (no glob, no fonts/) -- the
     # base64 fonts_css ships instead of the woff2 sources.
     "htmlexport/templates/base.html.j2",
     "htmlexport/templates/macros.html.j2",
     # The podium poster's own page (htmlexport.render_poster).
     "htmlexport/templates/poster.html.j2",
+    # The WordPress content fragment (htmlexport.render_wordpress) and
+    # the stylesheet it inlines: compiled_css with every selector the
+    # fragment renders already scoped under its .rc-results wrapper.
+    "htmlexport/templates/wordpress.html.j2",
     "htmlexport/templates/theme.css",
     "htmlexport/templates/compiled_css",
+    "htmlexport/templates/compiled_css_wp",
     "htmlexport/templates/fonts_css",
     # P7 (E6.3.1): the PDF report's three TTF faces. fpdf2 reads them
     # from the package at render time and embeds them into the PDF
@@ -138,6 +143,11 @@ ignore = [
 [tool.ruff.lint.per-file-ignores]
 # Tests assert with bare `assert` and use literal expected values on purpose.
 "tests/**" = ["S101", "PLR2004", "INP001", "ANN201", "D100", "D103", "SLF001"]
+# The generated frozen-name registry: its constants are the XRC `name`
+# attributes, so `WP_PASSWORD_INPUT = "wp_password_input"` names a wx control,
+# not a credential (an S105 false positive). It is regenerated wholesale by
+# tools/gen_ids.py -- `nox -s gen_ids` -- so an inline noqa would be wiped.
+"src/rivercrossing/ui/ids.py" = ["S105"]
 # Developer tooling is a script, not library code, and prints its progress.
 # PLC0415: the probes import wx *inside* each function on purpose -- the driver
 # process must stay importable when wx is broken, which is the case it reports.
@@ -264,5 +274,8 @@ source_modules = [
     "rivercrossing.csvio",
     "rivercrossing.standings",
     "rivercrossing.store",
+    # The WordPress publish client (topic/wordpress-publish): stdlib
+    # urllib only, and no wx.
+    "rivercrossing.wordpress",
 ]
 forbidden_modules = ["wx"]

@@ -22,7 +22,11 @@ vendored templates, the ``racejson`` filter that escapes every
 ``</``, and a self-contained production page with CSS/fonts inlined
 and the record embedded. :func:`render_poster` is that environment's
 second page: the one-page podium poster ([5d]) the PDF exporter also
-writes, from the same shared model.
+writes, from the same shared model. :func:`render_wordpress` is the
+third rendering of it: the same macros' inner HTML for a WordPress
+Page's ``content``, wrapped in ``.rc-results`` and inlining the
+stylesheet ``tools/gen_css.py`` has scoped under that wrapper, so
+publishing a result cannot restyle the site it lands in.
 """
 
 import base64
@@ -59,6 +63,7 @@ __all__ = [
     "racejson",
     "render",
     "render_poster",
+    "render_wordpress",
     "sections",
 ]
 
@@ -487,15 +492,16 @@ def _make_environment() -> Environment:
     return env
 
 
-def _template_context(  # noqa: PLR0913 -- the five context inputs the template contract names
+def _template_context(  # noqa: PLR0913 -- the six context inputs the templates name
     payload: RacePayload,
     *,
     dev: bool,
     logo_src: str | None,
     generated: str | None,
     placed: Sequence[Placed] | None = None,
+    stylesheet: str = "compiled_css",
 ) -> dict[str, object]:
-    """Build the ``base.html.j2`` context from *payload* (Spec §8).
+    """Build one page's template context from *payload* (Spec §8).
 
     ``generated`` overrides the payload's own event timestamp in both
     the footer and the embedded JSON record (D15's freeze seam);
@@ -516,6 +522,12 @@ def _template_context(  # noqa: PLR0913 -- the five context inputs the template 
     team-size note) still lead with "TEAM", hence the prefix match;
     the renderer's own rows are exactly "TEAM"/"SOLO"
     (``_result_row_from_placed``).
+
+    *stylesheet* names the vendored CSS artifact the page inlines:
+    ``compiled_css`` for the standalone page, ``compiled_css_wp`` for
+    the WordPress fragment, whose selectors ``tools/gen_css.py`` has
+    already scoped under the fragment's wrapper. The key carries that
+    artifact's name, so neither template can inline the other's.
     """
     if generated is not None:
         payload = replace(payload, event=replace(payload.event, generated=generated))
@@ -530,7 +542,7 @@ def _template_context(  # noqa: PLR0913 -- the five context inputs the template 
         "logo_alt": payload.event.organizer,
         "payload": payload,
         "dev": dev,
-        "compiled_css": _asset_text("compiled_css"),
+        stylesheet: _asset_text(stylesheet),
         "fonts_css": _asset_text("fonts_css"),
     }
 
@@ -935,6 +947,86 @@ def render(  # noqa: PLR0913
         self_test_unverified=self_test_unverified,
     )
     return _render_payload(payload, logo_src=logo_src, placed=placed)
+
+
+# ======================================== WordPress fragment (R-61)
+
+# The vendored artifact the fragment inlines: the compiled stylesheet
+# with every selector already scoped under the ``.rc-results`` class
+# wordpress.html.j2 wraps the fragment in (tools/gen_css.py). Published
+# as a page's ``content``, those rules match only inside that wrapper,
+# so nothing in them can restyle the site they land in.
+_WP_STYLESHEET = "compiled_css_wp"
+
+
+def render_wordpress(  # noqa: PLR0913 -- render()'s own signature, for a swap-in call site
+    ride: _RideLike,
+    placed: Sequence[Placed],
+    opts: ExportOptions,
+    *,
+    logo_src: str | None = None,
+    generated: str | None = None,
+    logo_path: Path | str | None = None,
+    team_logos: Mapping[str, str] | None = None,
+    self_test_unverified: bool = False,
+) -> str:
+    """Render one finished ride as a WordPress page-content fragment.
+
+    :func:`render`'s inputs and :func:`render`'s output, in the shape a
+    WordPress Page's ``content`` takes: the same payload
+    (:func:`build_payload`), the same :func:`sections` plan and the
+    same macros, but no document scaffold -- no ``<!DOCTYPE>``,
+    ``<html>``, ``<head>`` or ``<body>``, which the publishing site
+    already has -- and no ``race-data`` record, which nothing on the
+    site reads. Everything is wrapped in ``<div class="rc-results">``,
+    and the fragment inlines ``compiled_css_wp``: the vendored
+    stylesheet with every selector scoped under that wrapper
+    (``tools/gen_css.py``), so publishing these results cannot restyle
+    the site's own theme.
+
+    Callers publish the returned string as-is
+    (``rivercrossing.wordpress.publish_page(content=…)``).
+
+    Args:
+        ride: Ride-like object exposing ``name``/``event_date``/
+            ``venue``/``lap_km``/``organizer``/``scorer``;
+            ``RideConfig`` satisfies it structurally.
+        placed: Ranked standings, one per entry.
+        opts: Export flags (times/boards/full-field/all-cards).
+        logo_src: Base64 logo data URI; transparent fallback when None.
+        generated: Footer timestamp; defaults to now, samples' style.
+        logo_path: Raw PNG path, base64-embedded when *logo_src* is
+            None (R-61's logo-base64 rule).
+        team_logos: Plate -> logo data URI for the entries that carry
+            one; rows without a mapping render no logo.
+        self_test_unverified: Whether the ride was finished over a
+            failed evaluator self-test.
+
+    Returns:
+        The HTML fragment as a string.
+
+    Raises:
+        ValueError: An entry's plate is not numeric.
+    """
+    if logo_src is None and logo_path is not None:
+        logo_src = _logo_data_uri(logo_path)
+    payload = build_payload(
+        ride,
+        placed,
+        opts,
+        generated,
+        team_logos=team_logos,
+        self_test_unverified=self_test_unverified,
+    )
+    context = _template_context(
+        payload,
+        dev=False,
+        logo_src=logo_src,
+        generated=generated,
+        placed=placed,
+        stylesheet=_WP_STYLESHEET,
+    )
+    return _make_environment().get_template("wordpress.html.j2").render(**context)
 
 
 # ============================================ poster renderer ([5d])
