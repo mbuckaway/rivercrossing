@@ -107,12 +107,13 @@ class SettingsDialog(DialogFindMixin):  # _find: ui.views._support
         a ``wx.SpinCtrlDouble``); the control's <min> floors it at
         1 km/h, mirroring the presenter's ``_MIN_AVG_SPEED_KMH``. The
         zoom, the two layout fields, G6's five publish options, the DNS
-        toggle and the five WordPress-publish fields
+        toggle and the six WordPress-publish fields
         (``zoom_percent``/``splitter_sash``/``window_geometry``/
         ``publish_*``/``show_dns_riders``/``wp_*``) have no control
         here, so the current values carry over unchanged -- OK must
         never reset the Results menu's export options or the WordPress
-        site the operator configured in the publish dialog.
+        site (and page kind) the operator configured in the publish
+        dialog.
         """
         return AppSettings(
             appearance=appearance_for_radio(
@@ -137,6 +138,7 @@ class SettingsDialog(DialogFindMixin):  # _find: ui.views._support
             wp_password=self._settings.wp_password,
             wp_parent=self._settings.wp_parent,
             wp_status=self._settings.wp_status,
+            wp_kind=self._settings.wp_kind,
             show_dns_riders=self._settings.show_dns_riders,
         )
 

@@ -267,16 +267,19 @@ def test_asset_key_given_the_retired_t_ten_code_raises_unknown_card_code_error()
 def test_required_templates_declares_the_poster_and_wordpress_pages() -> None:
     """A template disappearing must shrink this, not the suite.
 
-    ``poster.html.j2`` is ``htmlexport.render_poster``'s own page and
-    ``wordpress.html.j2`` is ``render_wordpress``'s content fragment: a
-    bundle without either exports straight into ``TemplateNotFound``.
-    ``compiled_css_wp`` is the fragment's scoped stylesheet, derived
+    ``poster.html.j2`` is ``htmlexport.render_poster``'s own page,
+    ``poster_wordpress.html.j2`` is the same poster as a fragment
+    (``render_poster_wordpress``) and ``wordpress.html.j2`` is
+    ``render_wordpress``'s content fragment: a bundle without any of
+    them exports straight into ``TemplateNotFound``.
+    ``compiled_css_wp`` is the fragments' scoped stylesheet, derived
     from ``compiled_css`` by the same generator.
     """
     assert set(manifest.REQUIRED_TEMPLATES) == {
         "base.html.j2",
         "macros.html.j2",
         "poster.html.j2",
+        "poster_wordpress.html.j2",
         "wordpress.html.j2",
         "theme.css",
         "compiled_css",

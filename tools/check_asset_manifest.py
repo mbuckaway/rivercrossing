@@ -114,21 +114,23 @@ VECTORS_PACKAGE_DEST = f"rivercrossing/{VECTORS_SUBDIR}"
 # E6.2.1: the frozen results templates and the vendored CSS artifacts
 # (spec section 8). ``htmlexport.render`` reads the templates via
 # Jinja2's PackageLoader, and the page inlines compiled_css +
-# fonts_css, so all eight must land under
+# fonts_css, so all nine must land under
 # ``rivercrossing/htmlexport/templates/`` in the bundle. The base64
 # fonts_css ships instead of the ``fonts/`` woff2 sources (they never
 # ride along); the manifest therefore names the artifacts, not the
 # font files. ``poster.html.j2`` is the podium poster's own page
-# (``htmlexport.render_poster``) beside the results page, and
-# ``wordpress.html.j2`` is ``htmlexport.render_wordpress``'s content
-# fragment, which inlines ``compiled_css_wp`` -- compiled_css with
-# every selector scoped under ``.rc-results`` -- instead of the
-# unscoped artifact.
+# (``htmlexport.render_poster``) beside the results page,
+# ``poster_wordpress.html.j2`` is the same poster as a content fragment
+# (``render_poster_wordpress``), and ``wordpress.html.j2`` is
+# ``htmlexport.render_wordpress``'s content fragment, which inlines
+# ``compiled_css_wp`` -- compiled_css with every selector scoped under
+# ``.rc-results`` -- instead of the unscoped artifact.
 HTMLEXPORT_TEMPLATES_SUBDIR = "htmlexport/templates"
 REQUIRED_TEMPLATES: tuple[str, ...] = (
     "base.html.j2",
     "macros.html.j2",
     "poster.html.j2",
+    "poster_wordpress.html.j2",
     "wordpress.html.j2",
     "theme.css",
     "compiled_css",

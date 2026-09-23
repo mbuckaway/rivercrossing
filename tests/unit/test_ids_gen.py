@@ -345,6 +345,13 @@ def test_scan_xrc_directory_real_tree_registers_the_needs_review_checkbox() -> N
     assert "show_held_only_chk" in result.names
 
 
+def test_scan_xrc_directory_real_tree_registers_the_publish_kind_choice() -> None:
+    """Part C: the publish dialog's "What to publish" is frozen."""
+    result = gen_ids.scan_xrc_directory(gen_ids.DEFAULT_XRC_DIR)
+
+    assert "wp_kind_choice" in result.names
+
+
 def test_write_ids_module_regeneration_matches_committed_ids_byte_for_byte(
     tmp_path: Path,
 ) -> None:

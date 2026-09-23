@@ -1543,3 +1543,58 @@ def test_rider_issues_card_check_label_precedes_the_issue_summary() -> None:
     names = _control_names_in(_rider_issues_dialog())
 
     assert names.index("card_check_lbl") < names.index("issues_summary_lbl")
+
+
+# --------------------------------------------------------------------
+# Part C: the publish dialog's "What to publish" dropdown (dialogs.xrc).
+
+PUBLISH_DLG = "publish_wordpress_dlg"
+# The dialog's controls in the order the operator meets them: the
+# publish-kind dropdown first (it decides the page, and the view derives
+# the title/slug from it), then the Site box's three fields, the Page
+# box's four, and finally the stock button row. The captions are
+# unnamed chrome.
+PUBLISH_DLG_CONTROLS = (
+    "wp_kind_choice",
+    "wp_url_input",
+    "wp_username_input",
+    "wp_password_input",
+    "wp_title_input",
+    "wp_slug_input",
+    "wp_parent_input",
+    "wp_status_choice",
+    "wxID_OK",
+    "wxID_CANCEL",
+)
+# The dropdown's frozen caption (UX-DESKTOP section 7: a persistent
+# label, never placeholder text).
+WHAT_TO_PUBLISH_CAPTION = "What to publish"
+
+
+def _publish_dialog() -> Element:
+    """Return dialogs.xrc's ``publish_wordpress_dlg`` element."""
+    return _top_level_windows("dialogs.xrc")[PUBLISH_DLG]
+
+
+def test_publish_wordpress_dlg_declares_its_controls_in_form_order() -> None:
+    """Part C: the kind dropdown leads the form, above the Site box."""
+    names = _control_names_in(_publish_dialog())
+
+    assert names == list(PUBLISH_DLG_CONTROLS)
+
+
+def test_publish_wordpress_dlg_kind_choice_authors_no_content() -> None:
+    """The view fills the items, exactly as wp_status_choice's own."""
+    control = _objects_by_name(_publish_dialog())["wp_kind_choice"]
+
+    assert (control.attrib["class"], control.find("content")) == ("wxChoice", None)
+
+
+def test_publish_wordpress_dlg_kind_choice_sits_in_a_two_column_caption_row() -> None:
+    """The dropdown mirrors the dialog's other caption/value rows."""
+    row = _nearest_sizer(_publish_dialog(), "wp_kind_choice")
+    captions = [
+        _param(obj, "label") for obj in row.iter("object") if obj.attrib["class"] == "wxStaticText"
+    ]
+
+    assert (_param(row, "cols"), captions) == ("2", [WHAT_TO_PUBLISH_CAPTION])

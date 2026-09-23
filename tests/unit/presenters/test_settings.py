@@ -66,6 +66,8 @@ _ALL_FIELDS = {
     "wp_password",
     "wp_parent",
     "wp_status",
+    # The publish dialog's chosen page kind: full results or podium.
+    "wp_kind",
     # The Results-menu row's sixth toggle: also drives the Standings
     # window, so it is not a ``publish_*`` name.
     "show_dns_riders",
@@ -77,13 +79,17 @@ _ALL_FIELDS = {
 _PUBLISH_DEFAULTS = (False, True, False, True, True)
 
 # WordPress publish: a first launch has no site configured, so the four
-# text fields are blank and the status is WordPress's own post default.
-_WP_DEFAULTS = ("", "", "", "", "draft")
+# text fields are blank, the status is WordPress's own post default and
+# the page carries the full results.
+_WP_DEFAULTS = ("", "", "", "", "draft", "full")
 
 # The wp_status whitelist: WordPress's four non-date post statuses.
 # "future" is deliberately absent -- it publishes against a schedule
 # date the publish dialog never collects, so it is unreachable.
 _WP_STATUSES = ("draft", "publish", "pending", "private")
+
+# The wp_kind whitelist: the two page kinds the publish dialog offers.
+_WP_KINDS = ("full", "podium")
 
 # The simulator dialog's XRC spin defaults (simulation.xrc): riders
 # 175, teams 40, solo 15, laps 1, interval 45 (plan §1/§3).
@@ -235,8 +241,8 @@ def test_load_settings_non_bool_publish_values_use_the_defaults(
 # --- WordPress publish fields --------------------------------------
 
 
-def test_default_settings_wp_fields_are_blank_with_a_draft_status() -> None:
-    """A first launch has no site configured and posts as a draft."""
+def test_default_settings_wp_fields_are_the_first_launch_defaults() -> None:
+    """A first launch has no site: draft status, full results page."""
     settings = default_settings()
 
     assert (
@@ -245,11 +251,12 @@ def test_default_settings_wp_fields_are_blank_with_a_draft_status() -> None:
         settings.wp_password,
         settings.wp_parent,
         settings.wp_status,
+        settings.wp_kind,
     ) == _WP_DEFAULTS
 
 
 def test_save_then_load_round_trips_the_wp_fields(tmp_path: Path) -> None:
-    """The five WordPress fields survive a save/load round trip."""
+    """The six WordPress fields survive a save/load round trip."""
     path = tmp_path / "settings.json"
     original = replace(
         default_settings(),
@@ -258,6 +265,7 @@ def test_save_then_load_round_trips_the_wp_fields(tmp_path: Path) -> None:
         wp_password="example-value",  # noqa: S106 -- a fixture value, not a credential
         wp_parent="2026 Results",
         wp_status="private",
+        wp_kind="podium",
     )
 
     save_settings(original, path)
@@ -269,7 +277,15 @@ def test_save_then_load_round_trips_the_wp_fields(tmp_path: Path) -> None:
         loaded.wp_password,
         loaded.wp_parent,
         loaded.wp_status,
-    ) == ("https://blog.example.com", "race-ops", "example-value", "2026 Results", "private")
+        loaded.wp_kind,
+    ) == (
+        "https://blog.example.com",
+        "race-ops",
+        "example-value",
+        "2026 Results",
+        "private",
+        "podium",
+    )
 
 
 def test_load_settings_missing_wp_keys_uses_the_defaults(tmp_path: Path) -> None:
@@ -285,6 +301,7 @@ def test_load_settings_missing_wp_keys_uses_the_defaults(tmp_path: Path) -> None
         loaded.wp_password,
         loaded.wp_parent,
         loaded.wp_status,
+        loaded.wp_kind,
     ) == _WP_DEFAULTS
 
 
@@ -327,6 +344,55 @@ def test_load_settings_wp_status_given_an_unwhitelisted_value_uses_draft(
     loaded = load_settings(path)
 
     assert loaded.wp_status == "draft"
+
+
+@pytest.mark.parametrize("stored", _WP_KINDS)
+def test_load_settings_wp_kind_given_a_whitelisted_value_keeps_it(
+    tmp_path: Path, stored: str
+) -> None:
+    """Each whitelisted publish kind round-trips unchanged."""
+    path = tmp_path / "settings.json"
+    path.write_text(json.dumps({"wp_kind": stored}), encoding="utf-8")
+
+    loaded = load_settings(path)
+
+    assert loaded.wp_kind == stored
+
+
+@pytest.mark.parametrize(
+    "stored",
+    [
+        pytest.param("bogus", id="not-whitelisted"),
+        pytest.param("FULL", id="wrong-case"),
+        pytest.param("full-results", id="misspelled"),
+        pytest.param("", id="present-but-empty"),
+        pytest.param(None, id="null"),
+        pytest.param(42, id="int"),
+        pytest.param([], id="list"),
+    ],
+)
+def test_load_settings_wp_kind_given_an_unwhitelisted_value_uses_full(
+    tmp_path: Path, stored: object
+) -> None:
+    """T-3/T-4: nothing outside the whitelist survives as a kind.
+
+    A stranger must never decide which page gets published, so it falls
+    back to the full-results default the dialog opens on.
+    """
+    path = tmp_path / "settings.json"
+    path.write_text(json.dumps({"wp_kind": stored}), encoding="utf-8")
+
+    loaded = load_settings(path)
+
+    assert loaded.wp_kind == "full"
+
+
+@given(st.text())
+def test_wp_kind_or_given_any_text_returns_a_whitelisted_kind(value: str) -> None:
+    """Property (T-7): the coercer yields a whitelisted kind only."""
+    result = settings_module._wp_kind_or(value, "full")
+
+    assert result in _WP_KINDS
 
 
 @pytest.mark.parametrize(
@@ -764,6 +830,7 @@ def test_load_settings_wrong_value_types_use_defaults_for_each_field(
                 "wp_password": None,
                 "wp_parent": True,
                 "wp_status": "future",
+                "wp_kind": "bogus",
             }
         ),
         encoding="utf-8",
@@ -868,6 +935,7 @@ def test_save_settings_writes_json_with_every_field(tmp_path: Path) -> None:
             wp_password="example-value",  # noqa: S106 -- a fixture value, not a credential
             wp_parent="2026 Results",
             wp_status="private",
+            wp_kind="podium",
         ),
         path,
     )
@@ -895,6 +963,7 @@ def test_save_settings_writes_json_with_every_field(tmp_path: Path) -> None:
     assert raw["wp_password"] == "example-value"  # noqa: S105 -- a fixture value, not a credential
     assert raw["wp_parent"] == "2026 Results"
     assert raw["wp_status"] == "private"
+    assert raw["wp_kind"] == "podium"
 
 
 # --- default-path wiring (path=None branches) ----------------------
@@ -1014,6 +1083,7 @@ _SETTINGS_STRATEGY = st.builds(
     wp_password=st.text(),
     wp_parent=st.text(),
     wp_status=st.sampled_from(_WP_STATUSES),
+    wp_kind=st.sampled_from(_WP_KINDS),
     show_dns_riders=st.booleans(),
 )
 

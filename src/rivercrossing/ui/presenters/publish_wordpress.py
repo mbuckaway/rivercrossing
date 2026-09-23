@@ -4,15 +4,15 @@
 Pure Python -- no ``wx`` import may ever land here (R-71), and no
 I/O either: the dialog's view collects the text and forwards it, and
 this module supplies everything else the dialog decides -- the values
-it opens with, the label-to-value map its status choice renders, and
-the rules the operator's input has to pass before a publish is even
-attempted. The HTTP work (discovery, the slug lookup, the create or
-update POST) belongs to :mod:`rivercrossing.wordpress`; nothing here
-talks to a site.
+it opens with, the label-to-value maps its status and publish-kind
+choices render, and the rules the operator's input has to pass before
+a publish is even attempted. The HTTP work (discovery, the slug
+lookup, the create or update POST) belongs to
+:mod:`rivercrossing.wordpress`; nothing here talks to a site.
 
 No state is held between calls, so this module is functions plus one
 frozen form snapshot (SIMPLECODE Rule 5). :class:`PublishForm` is that
-snapshot: the seven field values at one instant, with
+snapshot: the eight field values at one instant, with
 :meth:`~PublishForm.is_valid` and :meth:`~PublishForm.errors` reading
 straight through to :func:`validate`.
 
@@ -36,10 +36,12 @@ import re
 from dataclasses import dataclass
 
 __all__ = [
+    "PUBLISH_KIND_CHOICES",
     "STATUS_CHOICES",
     "PublishForm",
     "default_slug",
     "default_title",
+    "kind_value",
     "slugify",
     "status_value",
     "validate",
@@ -64,6 +66,27 @@ _DEFAULT_STATUS = "draft"
 # The label -> value map status_value looks up, derived from the
 # choice's own items so the two can never drift apart.
 _STATUS_BY_LABEL: dict[str, str] = dict(STATUS_CHOICES)
+
+# The publish_kind choice's items, label -> value, in render order: the
+# published page either carries every entry ("full") or just the
+# podium ("podium").
+PUBLISH_KIND_CHOICES: tuple[tuple[str, str], ...] = (
+    ("Full results", "full"),
+    ("Podium results", "podium"),
+)
+
+# The kind an unrecognised label resolves to: the full results page is
+# what this dialog has always published, so a blank or unexpected
+# control value never narrows a page to the podium by accident. Full is
+# also the dialog's own opening choice (settings.AppSettings.wp_kind).
+_DEFAULT_KIND = "full"
+
+# The label -> value map kind_value looks up, derived from the choice's
+# own items so the two can never drift apart.
+_KIND_BY_LABEL: dict[str, str] = dict(PUBLISH_KIND_CHOICES)
+
+# The choice's values, for the value-or-label test _resolved_kind runs.
+_KIND_VALUES: tuple[str, ...] = tuple(value for _label, value in PUBLISH_KIND_CHOICES)
 
 # A slug is mandatory, so the transform's fallback is the same word the
 # export filenames use when a ride has no name at all.
@@ -95,28 +118,67 @@ def slugify(name: str) -> str:
     return collapsed or _FALLBACK_SLUG
 
 
-def default_title(ride_name: str) -> str:
+def _resolved_kind(kind: str) -> str:
+    """Return *kind* as one of :data:`PUBLISH_KIND_CHOICES`' values.
+
+    Accepts a choice's value (``"full"``/``"podium"``) or a rendered
+    label; anything else -- a blank or unexpected control value --
+    lands on the full kind through :func:`kind_value`, so a page is
+    never narrowed to the podium by accident.
+    """
+    if kind in _KIND_VALUES:
+        return kind
+    return kind_value(kind)
+
+
+def default_title(name: str, kind: str = "full") -> str:
     """Return the page title the dialog opens with.
 
     Args:
-        ride_name: The live ride's name.
+        name: The live ride's name.
+        kind: The publish kind, one of :data:`PUBLISH_KIND_CHOICES`'
+            values; any other kind opens on the full form.
 
     Returns:
-        ``"<ride_name> — Results"``.
+        ``"<name> — Full Results"``, or ``"<name> — Podium Results"``
+        for the podium kind.
     """
-    return f"{ride_name} — Results"
+    suffix = "Podium Results" if _resolved_kind(kind) == "podium" else "Full Results"
+    return f"{name} — {suffix}"
 
 
-def default_slug(ride_name: str) -> str:
+def default_slug(name: str, kind: str = "full") -> str:
     """Return the page slug the dialog opens with.
 
     Args:
-        ride_name: The live ride's name.
+        name: The live ride's name.
+        kind: The publish kind, one of :data:`PUBLISH_KIND_CHOICES`'
+            values; any other kind opens on the full form.
 
     Returns:
-        :func:`slugify` of ``"<ride_name> results"``.
+        :func:`slugify` of ``"<name> full results"``, or of ``"<name>
+        podium results"`` for the podium kind -- a nameless ride still
+        yields a non-empty slug, e.g. ``"full-results"``.
     """
-    return slugify(f"{ride_name} results")
+    tail = "podium results" if _resolved_kind(kind) == "podium" else "full results"
+    return slugify(f"{name} {tail}")
+
+
+def kind_value(label: str) -> str:
+    """Return the publish kind a choice label carries.
+
+    The labels are :data:`PUBLISH_KIND_CHOICES`' own items, so the
+    dialog's choice and this map can never drift apart.
+
+    Args:
+        label: One of the choice's rendered labels.
+
+    Returns:
+        The label's value, or ``"full"`` for any other label -- an
+        unknown or blank control value must never narrow a page to the
+        podium by accident.
+    """
+    return _KIND_BY_LABEL.get(label, _DEFAULT_KIND)
 
 
 def status_value(label: str) -> str:
@@ -194,6 +256,9 @@ class PublishForm:
             level, which the publish path turns into WordPress's 0.
         status: The WordPress status to ask for, one of
             :data:`STATUS_CHOICES`' values.
+        kind: The page the results carry, one of
+            :data:`PUBLISH_KIND_CHOICES`' values. It is the last
+            field, so the frozen dataclass can default it.
     """
 
     base_url: str
@@ -203,6 +268,7 @@ class PublishForm:
     slug: str
     parent: str
     status: str
+    kind: str = "full"
 
     def is_valid(self) -> bool:
         """Return whether every field passes :func:`validate`."""

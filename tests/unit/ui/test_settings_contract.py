@@ -208,7 +208,7 @@ def test_default_settings_show_dns_riders_defaults_to_true() -> None:
 def test_settings_dialog_collect_settings_carries_the_wordpress_fields_through(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The five wp_* fields have no dialog control: OK carries them."""
+    """Part C: the six wp_* fields have no control: OK carries them."""
     settings = replace(
         default_settings(),
         wp_url="https://blog.example.com",
@@ -216,6 +216,7 @@ def test_settings_dialog_collect_settings_carries_the_wordpress_fields_through(
         wp_password="example-value",  # noqa: S106 -- a fixture value, not a credential
         wp_parent="2026 Results",
         wp_status="publish",
+        wp_kind="podium",
     )
     view, _controls, _dialog = _build_view(monkeypatch, settings=settings)
 
@@ -227,7 +228,33 @@ def test_settings_dialog_collect_settings_carries_the_wordpress_fields_through(
         collected.wp_password,
         collected.wp_parent,
         collected.wp_status,
-    ) == ("https://blog.example.com", "race-ops", "example-value", "2026 Results", "publish")
+        collected.wp_kind,
+    ) == (
+        "https://blog.example.com",
+        "race-ops",
+        "example-value",
+        "2026 Results",
+        "publish",
+        "podium",
+    )
+
+
+@pytest.mark.parametrize("kind", ["full", "podium", ""])
+def test_settings_dialog_collect_settings_given_a_publish_kind_carries_it_through(
+    monkeypatch: pytest.MonkeyPatch, kind: str
+) -> None:
+    """Part C: OK hands back whatever kind the publish dialog stored.
+
+    The empty row is the boundary -- the settings dialog has no control
+    to repair a stored value with, so it carries one through unchanged
+    rather than inventing the ``full`` default.
+    """
+    settings = replace(default_settings(), wp_kind=kind)
+    view, _controls, _dialog = _build_view(monkeypatch, settings=settings)
+
+    collected = view.collect_settings()
+
+    assert collected.wp_kind == kind
 
 
 def test_settings_dialog_collect_settings_carries_the_dns_riders_toggle_through(

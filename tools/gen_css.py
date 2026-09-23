@@ -60,7 +60,8 @@ _ARTIFACT_NAMES: tuple[str, ...] = (COMPILED_CSS_NAME, COMPILED_CSS_WP_NAME, FON
 # markup duplicates macros' classes), and the WordPress fragment
 # renders the same macros into a wrapper div -- so a new utility in
 # either must be added here, and the artifacts regenerated, or the
-# class renders unstyled.
+# class renders unstyled. poster_wordpress.html.j2 is that same
+# arrangement twice over: the poster's cards in the fragment's wrapper.
 INPUT_TEMPLATE_FILES: tuple[str, ...] = ("base.html.j2", "macros.html.j2", "theme.css")
 
 # Pinned CLI, matching package.json's devDependencies (@tailwindcss/cli
