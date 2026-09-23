@@ -218,7 +218,7 @@ def test_save_then_load_round_trips_the_wp_fields(tmp_path: Path) -> None:
         default_settings(),
         wp_url="https://blog.example.com",
         wp_username="race-ops",
-        wp_password="hunter2",  # noqa: S106 -- a fixture password, not a credential
+        wp_password="example-value",  # noqa: S106 -- a fixture value, not a credential
         wp_parent="2026 Results",
         wp_status="private",
     )
@@ -232,7 +232,7 @@ def test_save_then_load_round_trips_the_wp_fields(tmp_path: Path) -> None:
         loaded.wp_password,
         loaded.wp_parent,
         loaded.wp_status,
-    ) == ("https://blog.example.com", "race-ops", "hunter2", "2026 Results", "private")
+    ) == ("https://blog.example.com", "race-ops", "example-value", "2026 Results", "private")
 
 
 def test_load_settings_missing_wp_keys_uses_the_defaults(tmp_path: Path) -> None:
@@ -828,7 +828,7 @@ def test_save_settings_writes_json_with_every_field(tmp_path: Path) -> None:
             publish_all_cards=False,
             wp_url="https://blog.example.com",
             wp_username="race-ops",
-            wp_password="hunter2",  # noqa: S106 -- a fixture password, not a credential
+            wp_password="example-value",  # noqa: S106 -- a fixture value, not a credential
             wp_parent="2026 Results",
             wp_status="private",
         ),
@@ -855,7 +855,7 @@ def test_save_settings_writes_json_with_every_field(tmp_path: Path) -> None:
     assert raw["publish_all_cards"] is False
     assert raw["wp_url"] == "https://blog.example.com"
     assert raw["wp_username"] == "race-ops"
-    assert raw["wp_password"] == "hunter2"  # noqa: S105 -- a fixture password
+    assert raw["wp_password"] == "example-value"  # noqa: S105 -- a fixture value, not a credential
     assert raw["wp_parent"] == "2026 Results"
     assert raw["wp_status"] == "private"
 

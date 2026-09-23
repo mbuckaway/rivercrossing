@@ -208,7 +208,7 @@ def test_settings_dialog_collect_settings_carries_the_wordpress_fields_through(
         default_settings(),
         wp_url="https://blog.example.com",
         wp_username="race-ops",
-        wp_password="hunter2",  # noqa: S106 -- a fixture password, not a credential
+        wp_password="example-value",  # noqa: S106 -- a fixture value, not a credential
         wp_parent="2026 Results",
         wp_status="publish",
     )
@@ -222,7 +222,7 @@ def test_settings_dialog_collect_settings_carries_the_wordpress_fields_through(
         collected.wp_password,
         collected.wp_parent,
         collected.wp_status,
-    ) == ("https://blog.example.com", "race-ops", "hunter2", "2026 Results", "publish")
+    ) == ("https://blog.example.com", "race-ops", "example-value", "2026 Results", "publish")
 
 
 # ---------------------------------------- the appearance radio render

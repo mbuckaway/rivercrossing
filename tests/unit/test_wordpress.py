@@ -17,7 +17,7 @@ The contract under test:
   carries the WordPress Application Password.
 - ``BasicAuth.header_value`` is ``Basic <base64(user:password)>``
   with the display chunking's spaces removed, because wp-admin shows
-  an Application Password as "abcd efgh ijkl".
+  an Application Password as "exam ple-value".
 - ``discover`` reads the REST index's ``namespaces`` and whether its
   ``authentication`` mapping offers ``application-passwords``.
 - ``find_page_by_slug`` asks
@@ -71,12 +71,17 @@ if TYPE_CHECKING:
     from typing import Self
 
 _BASE = "https://example.test"
-_USER = "mark"
-_CHUNKED = "abcd efgh ijkl"
-_SOLID = "abcdefghijkl"
-# base64("mark:abcdefghijkl") -- the chunked form must give the same.
-_AUTH_HEADER = "Basic bWFyazphYmNkZWZnaGlqa2w="
+_USER = "example-user"
+_CHUNKED = "exam ple-value"  # a WordPress-style chunked application password
+_SOLID = "example-value"  # the same value without the chunking spaces
 _AUTH = BasicAuth(username=_USER, password=_CHUNKED)
+
+
+def _basic_header(username: str, password: str) -> str:
+    """Return the header for ``username:password`` from base64."""
+    token = base64.b64encode(f"{username}:{password}".encode("ascii")).decode("ascii")
+    return f"Basic {token}"
+
 
 # logic-coverage-exempt: T-7 -- AGENTS.md's TDD section permits unit
 # tests only; a property/functional suite needs expressed permission.
@@ -198,10 +203,10 @@ def _http_error(status: int, body: bytes) -> urllib.error.HTTPError:
 @pytest.mark.parametrize(
     ("username", "password", "expected"),
     [
-        (_USER, _SOLID, _AUTH_HEADER),
-        (_USER, _CHUNKED, _AUTH_HEADER),
-        (_USER, "abcd  efgh   ijkl", _AUTH_HEADER),
-        ("", "", "Basic Og=="),
+        (_USER, _SOLID, _basic_header(_USER, _SOLID)),
+        (_USER, _CHUNKED, _basic_header(_USER, _SOLID)),
+        (_USER, "exam  ple-value", _basic_header(_USER, _SOLID)),
+        ("", "", _basic_header("", "")),
     ],
 )
 def test_basic_auth_header_value_encodes_credentials_without_chunk_spaces(
@@ -221,7 +226,8 @@ def test_basic_auth_header_value_matches_an_independent_base64_encoding() -> Non
 
     header = auth.header_value
 
-    assert header == f"Basic {base64.b64encode(b'mark:abcdefghijkl').decode('ascii')}"
+    expected = "Basic " + base64.b64encode(f"{_USER}:{_SOLID}".encode("ascii")).decode("ascii")
+    assert header == expected
 
 
 def test_basic_auth_is_immutable() -> None:
@@ -286,7 +292,7 @@ def test_discover_requests_the_rest_index_as_a_get_with_credentials(
     request = call.request
     assert request.full_url == "https://example.test/wp-json/"
     assert request.get_method() == "GET"
-    assert request.get_header("Authorization") == _AUTH_HEADER
+    assert request.get_header("Authorization") == _basic_header(_USER, _SOLID)
     assert request.get_header("Accept") == "application/json"
     assert request.data is None
     assert call.timeout == rivercrossing.wordpress._TIMEOUT_S
@@ -526,7 +532,7 @@ def test_find_page_by_slug_returns_the_first_matching_page_id(
     assert page_id == 42
     assert request.full_url == ("https://example.test/wp-json/wp/v2/pages?slug=about&context=edit")
     assert request.get_method() == "GET"
-    assert request.get_header("Authorization") == _AUTH_HEADER
+    assert request.get_header("Authorization") == _basic_header(_USER, _SOLID)
 
 
 @pytest.mark.parametrize(
@@ -611,7 +617,7 @@ def test_publish_page_creates_a_page_when_no_page_id_is_given(
     assert request.get_method() == "POST"
     # urllib capitalizes only the first letter of a header name.
     assert request.get_header("Content-type") == "application/json; charset=utf-8"
-    assert request.get_header("Authorization") == _AUTH_HEADER
+    assert request.get_header("Authorization") == _basic_header(_USER, _SOLID)
     assert _json_body(request) == {
         "title": "Results",
         "slug": "results",

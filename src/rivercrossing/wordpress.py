@@ -104,8 +104,8 @@ class BasicAuth:
         """Return the HTTP ``Authorization`` header value.
 
         The Application Password's display chunking spaces are
-        removed first: wp-admin shows "abcd efgh ijkl" for the
-        password WordPress stores as "abcdefghijkl".
+        removed first: wp-admin shows "exam ple-value" for the
+        password WordPress stores as "example-value".
         """
         token = f"{self.username}:{self.password.replace(' ', '')}"
         return f"Basic {base64.b64encode(token.encode('utf-8')).decode('ascii')}"

@@ -38,8 +38,8 @@ from rivercrossing.ui.presenters.publish_wordpress import (
 # WordPress user, and the title/slug the dialog derives from a ride.
 _VALID: dict[str, str] = {
     "base_url": "https://example.test",
-    "username": "mark",
-    "password": "abcd efgh ijkl",
+    "username": "example-user",
+    "password": "example-value",
     "title": "GORBA Test Ride #1 — Results",
     "slug": "gorba-test-ride-1-results",
 }
