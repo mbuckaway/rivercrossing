@@ -66,6 +66,9 @@ _ALL_FIELDS = {
     "wp_password",
     "wp_parent",
     "wp_status",
+    # The Results-menu row's sixth toggle: also drives the Standings
+    # window, so it is not a ``publish_*`` name.
+    "show_dns_riders",
 }
 
 # G6: the defaults the results dialog's five checkboxes used to declare
@@ -142,6 +145,39 @@ def test_default_settings_publish_flags_are_the_retired_xrc_checkbox_defaults() 
     ) == _PUBLISH_DEFAULTS
 
 
+def test_default_settings_show_dns_riders_is_on() -> None:
+    """The Results menu's "Show DNS Riders" ships checked."""
+    assert default_settings().show_dns_riders is True
+
+
+@pytest.mark.parametrize("stored", [True, False])
+def test_save_then_load_round_trips_the_dns_riders_toggle(
+    tmp_path: Path,
+    stored: bool,  # noqa: FBT001 -- a parametrize row's value, not a call-site bool
+) -> None:
+    """The Results menu row's sixth toggle survives a round trip."""
+    path = tmp_path / "settings.json"
+    original = replace(default_settings(), show_dns_riders=stored)
+
+    save_settings(original, path)
+    loaded = load_settings(path)
+
+    assert loaded.show_dns_riders is stored
+
+
+@pytest.mark.parametrize("stored", ["yes", 1, None, [], {}])
+def test_load_settings_non_bool_dns_riders_value_uses_the_default(
+    tmp_path: Path, stored: object
+) -> None:
+    """T-4: a non-bool DNS-toggle value is corrupt for its field."""
+    path = tmp_path / "settings.json"
+    path.write_text(json.dumps({"show_dns_riders": stored}), encoding="utf-8")
+
+    loaded = load_settings(path)
+
+    assert loaded.show_dns_riders is True
+
+
 def test_save_then_load_round_trips_the_publish_flags(tmp_path: Path) -> None:
     """G6: every publish flag survives a save/load round trip."""
     path = tmp_path / "settings.json"
@@ -180,6 +216,7 @@ def test_load_settings_missing_the_publish_keys_uses_the_defaults(tmp_path: Path
         loaded.publish_full_field,
         loaded.publish_all_cards,
     ) == _PUBLISH_DEFAULTS
+    assert loaded.show_dns_riders is True
 
 
 @pytest.mark.parametrize("stored", ["yes", 1, None, [], {}])
@@ -977,6 +1014,7 @@ _SETTINGS_STRATEGY = st.builds(
     wp_password=st.text(),
     wp_parent=st.text(),
     wp_status=st.sampled_from(_WP_STATUSES),
+    show_dns_riders=st.booleans(),
 )
 
 

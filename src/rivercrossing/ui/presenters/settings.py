@@ -136,6 +136,12 @@ class AppSettings:
     WordPress's own ``draft``; the loader accepts only the statuses in
     :data:`_WP_STATUSES`, because the publish dialog collects no
     schedule date and so ``future`` is unreachable.
+
+    ``show_dns_riders`` is that row's sixth entry: the Results menu's
+    "Show DNS Riders", **on** by default, so a finished ride's 0-lap
+    entries appear as DNS rows unless the operator hides them. It is
+    deliberately not a ``publish_*`` name -- it also drives the
+    Standings window, so it is not an export-only option.
     """
 
     appearance: str
@@ -174,6 +180,11 @@ class AppSettings:
     wp_password: str = ""
     wp_parent: str = ""
     wp_status: str = "draft"
+    # The Results menu's "Show DNS Riders": unlike the publish_* pair it
+    # also drives the Standings window, so it is not named publish_*.
+    # Off hides a Finished ride's DNS rows -- and the DNS text they
+    # carry in the exports; a live ride always shows everyone.
+    show_dns_riders: bool = True
 
 
 def default_settings() -> AppSettings:
@@ -185,8 +196,9 @@ def default_settings() -> AppSettings:
     XRC spin and behaviour defaults (G9: one short-lap rider, no
     lapped riders, no team rider stopping), G6's publish options
     (times off, laps leaderboard on, fastest-time leaderboard off,
-    full field and all cards on), and no WordPress site configured
-    (blank url, username, password and parent page, ``draft`` status).
+    full field and all cards on), no WordPress site configured
+    (blank url, username, password and parent page, ``draft`` status),
+    and the DNS toggle on.
     """
     return AppSettings(
         appearance=ThemeMode.SYSTEM.value,
@@ -216,6 +228,7 @@ def default_settings() -> AppSettings:
         wp_password="",
         wp_parent="",
         wp_status="draft",
+        show_dns_riders=True,
     )
 
 
@@ -310,6 +323,7 @@ def save_settings(settings: AppSettings, path: Path | None = None) -> None:
         "wp_password": settings.wp_password,
         "wp_parent": settings.wp_parent,
         "wp_status": settings.wp_status,
+        "show_dns_riders": settings.show_dns_riders,
     }
     tmp = settings_path.with_name(settings_path.name + ".tmp")
     tmp.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
@@ -387,6 +401,7 @@ def _settings_from_mapping(raw: Mapping[str, object]) -> AppSettings:
         wp_password=_str_or(raw.get("wp_password"), defaults.wp_password),
         wp_parent=_str_or(raw.get("wp_parent"), defaults.wp_parent),
         wp_status=_wp_status_or(raw.get("wp_status"), defaults.wp_status),
+        show_dns_riders=_bool_or(raw.get("show_dns_riders"), default=defaults.show_dns_riders),
     )
 
 

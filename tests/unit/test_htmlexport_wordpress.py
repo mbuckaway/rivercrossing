@@ -208,6 +208,20 @@ def test_render_wordpress_headings_match_the_standalone_page(page: str, fragment
     assert headings == ["Best hands — top 3", "Top ten", "Most laps", "Full field"]
 
 
+def test_render_wordpress_given_a_rider_count_renders_it_in_the_header() -> None:
+    """``riders`` is the header's fourth counter here too (Phase 7)."""
+    fragment = render_wordpress(_StubRide(), _solo_field(), _OPTIONS, riders=207)
+
+    assert "2 · 21 · 10 · 207" in fragment
+
+
+def test_render_wordpress_omitted_rider_count_renders_zero_in_the_header(
+    fragment: str,
+) -> None:
+    """A caller that threads no count renders 0, never a blank cell."""
+    assert "2 · 21 · 10 · 0" in fragment
+
+
 # --------------------------------------------------- the render seams
 
 

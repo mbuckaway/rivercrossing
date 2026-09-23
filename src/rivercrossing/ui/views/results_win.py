@@ -137,6 +137,7 @@ __all__ = [
     "format_best5",
     "format_card",
     "format_draw",
+    "format_laps",
     "format_place",
 ]
 
@@ -260,10 +261,29 @@ def format_place(standing: StandingsRow) -> str:
     ⚠ badge ahead of its place -- ``"⚠ 2"`` -- the E6.4.1 reading of
     the footnote's "⚠ badge column" (module docstring); every other
     row is the bare place number.
+
+    A DNS row (Phase 7) has no place at all -- it is listed at the
+    bottom of its section -- so its cell is blank; the ``dns`` gate
+    must come first, since the row's ``place`` is only the placeholder
+    0 that no renderer reads.
     """
+    if standing.dns:
+        return ""
     if standing.draw_required:
         return f"{TIE_BADGE} {standing.place}"
     return str(standing.place)
+
+
+def format_laps(standing: StandingsRow) -> str:
+    """Return the Laps cell text for *standing* (Phase 7).
+
+    A DNS row names its missing start ("DNS") rather than the number 0
+    a live board shows for an entry that has not crossed yet; every
+    other row renders its lap count.
+    """
+    if standing.dns:
+        return "DNS"
+    return str(standing.laps)
 
 
 def format_draw(standing: StandingsRow) -> str:
@@ -295,7 +315,7 @@ _TEXT_ACCESSORS: tuple[Callable[[StandingsRow], str], ...] = (
     format_place,
     lambda standing: standing.plate,
     lambda standing: standing.entry,
-    lambda standing: str(standing.laps),
+    format_laps,
     lambda standing: format_best5(standing.best5),
     lambda standing: standing.hand,
     format_draw,
@@ -329,11 +349,14 @@ def _draw_sort_key(standing: StandingsRow) -> int:
 # The native header sort's per-column key, in ``COLUMN_LABELS`` order:
 # Place and Laps are ints, the strings sort as text -- except the Draw
 # column, which keys on the parsed card (:func:`_draw_sort_key`).
+# Place and Laps both lead with the ``dns`` flag, so a DNS row sorts
+# after every placed row on either column instead of onto its
+# placeholder place 0 or its 0 laps.
 _STANDINGS_SORT_KEYS: tuple[Callable[[StandingsRow], Any], ...] = (
-    lambda standing: standing.place,
+    lambda standing: (standing.dns, standing.place),
     lambda standing: standing.plate,
     lambda standing: standing.entry,
-    lambda standing: standing.laps,
+    lambda standing: (standing.dns, standing.laps),
     lambda standing: format_best5(standing.best5),
     lambda standing: standing.hand,
     _draw_sort_key,
@@ -424,7 +447,7 @@ class ResultsWindow(DialogFindMixin):  # _find: ui.views._support
     """
 
     # (dialog, data_source) + the tie-break order, export-watermark,
-    # entry-mode and plate-model seams
+    # entry-mode, plate-model and DNS-display seams
     def __init__(  # noqa: PLR0913
         self,
         dialog: wx.Dialog,
@@ -434,6 +457,7 @@ class ResultsWindow(DialogFindMixin):  # _find: ui.views._support
         export_watermark: int | None = None,
         entry_mode: EntryMode = EntryMode.SOLO,
         plate_model: PlateModel = PlateModel.RIDER_POOLED,
+        show_dns_riders: bool = True,
     ) -> None:
         """Decorate an already-loaded ``results_dlg`` window.
 
@@ -461,6 +485,9 @@ class ResultsWindow(DialogFindMixin):  # _find: ui.views._support
                 member's plate and the Entry column is the team's
                 identity. Under ``TEAM_RELAY`` the entry's own plate is
                 the identity, so the column stays.
+            show_dns_riders: The Results menu's "Show DNS Riders"
+                (``AppSettings.show_dns_riders``), forwarded to the
+                presenter.
         """
         self.dialog = dialog
         self.data_source = data_source
@@ -490,6 +517,7 @@ class ResultsWindow(DialogFindMixin):  # _find: ui.views._support
             data_source,
             tiebreak_order=tiebreak_order,
             export_watermark=export_watermark,
+            show_dns_riders=show_dns_riders,
         )
         # E7.3.2: app.py's export completion (and E6.4.2's own
         # ``_export_options``) finds the open window's presenter through

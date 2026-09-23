@@ -131,12 +131,12 @@ def test_route_table_menu_breakdown_matches_spec_15(menu: str, expected_rows: in
     assert len(rows) == expected_rows
 
 
-def test_route_table_covers_all_fifty_two_real_menu_item_ids_once_each() -> None:
-    """49 mi_* + 3 stock ids (main.xrc's own header), none repeated."""
+def test_route_table_covers_all_fifty_three_real_menu_item_ids_once_each() -> None:
+    """50 mi_* + 3 stock ids (main.xrc's own header), none repeated."""
     flat_ids = [item_id for route in commands.ROUTE_TABLE for item_id in route.ids]
 
-    assert len(flat_ids) == 52
-    assert len(set(flat_ids)) == 52
+    assert len(flat_ids) == 53
+    assert len(set(flat_ids)) == 53
 
 
 @pytest.mark.parametrize(("route", "expected_kind"), KIND_CASES, ids=KIND_CASE_IDS)
@@ -275,8 +275,8 @@ def test_standings_route_is_always_enabled_after_part_d() -> None:
     assert route.enabled_when == commands.Enablement()
 
 
-def test_results_publish_route_given_the_five_ids_is_one_always_on_command() -> None:
-    """G6: five publish items, one always-on COMMAND row."""
+def test_results_publish_route_given_the_six_ids_is_one_always_on_command() -> None:
+    """G6: six Results-menu options, one always-on COMMAND row."""
     route = commands.route_for_id("mi_show_times")
 
     assert (route.menu, route.kind, route.target) == (
@@ -290,6 +290,7 @@ def test_results_publish_route_given_the_five_ids_is_one_always_on_command() -> 
         "mi_time_board",
         "mi_full_field",
         "mi_all_cards",
+        "mi_show_dns_riders",
     )
     assert route.enabled_when == commands.Enablement()
 

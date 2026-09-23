@@ -81,7 +81,16 @@ def _snake_to_camel(name: str) -> str:
 
 @dataclass(frozen=True, slots=True)
 class EventInfo:
-    """Header facts for the page and its JSON record (Spec §8)."""
+    """Header facts for the page and its JSON record (Spec §8).
+
+    ``riders`` is render-only, exactly like
+    :attr:`ExportOptions.lap_km`: it is the full-results header's fourth
+    counter (every individual rider -- a team member counts, not the
+    team), tallied from the roster rather than from ``placed``. It is
+    deliberately *not* a :meth:`to_record` key -- the golden
+    ``race-data`` event block carries nine -- so a page rendered
+    without a count still renders a 0.
+    """
 
     kicker: str
     title: str
@@ -92,9 +101,10 @@ class EventInfo:
     entries: int
     laps: int
     cards: int
+    riders: int = 0
 
     def to_record(self) -> dict[str, str | int]:
-        """Return this event's JSON-record view."""
+        """Return this event's JSON-record view (``riders`` omitted)."""
         return {
             "kicker": self.kicker,
             "title": self.title,
@@ -138,17 +148,23 @@ class ResultRow:
 
     ``total``/``best_lap`` are the only fields whose presence in
     ``to_record()`` depends on ``ExportOptions.show_times`` (R-63).
-    ``tie``/``draw``/``dnf``/``logo``/``sex`` are sparse -- emitted only
-    when set, never as a ``false``/``null`` key, matching the golden
-    pages' shape exactly. ``draw`` is the card the entry drew for the
-    venue's high-card tie-break (R-14), a ``(rank, suit)`` pair or
-    ``None`` when the entry drew nothing: it is deliberately *not*
+    ``tie``/``draw``/``dnf``/``dns``/``logo``/``sex`` are sparse --
+    emitted only when set, never as a ``false``/``null`` key, matching
+    the golden pages' shape exactly. ``draw`` is the card the entry drew
+    for the venue's high-card tie-break (R-14), a ``(rank, suit)`` pair
+    or ``None`` when the entry drew nothing: it is deliberately *not*
     ``tie``, which means the residual tie a configured order could not
     separate. ``sex`` is a solo rider's ``"M"``/``"F"`` and None
     for a team (no single sex), so a team row renders no marker. The
     field is named ``entry_type`` rather than ``type`` to avoid
     shadowing the builtin; it maps to the JSON key ``"type"``, and
     the templates read it through the :attr:`type` alias (D6).
+
+    ``dns`` (Phase 7) marks a 0-lap entry on a FINISHED ride: the
+    human surfaces print ``"DNS"`` where its laps would be and leave
+    its Place cell blank, while the record keeps the numeric ``laps``
+    (0) beside the sparse flag so the JSON schema does not change
+    shape per row.
     """
 
     place: int
@@ -164,6 +180,9 @@ class ResultRow:
     sex: str | None = None
     tie: bool = False
     dnf: bool = False
+    # Phase 7's DNS marker: a 0-lap entry that never started. Sparse in
+    # the record, and never true on a row the page placed.
+    dns: bool = False
     cards: tuple[CardPair, ...] = ()
     drawn: tuple[CardPair, ...] = ()
     # R-14's drawn tie-break card: the entry's own card, present only
@@ -185,7 +204,9 @@ class ResultRow:
         """Return the JSON-record view for one results row.
 
         ``total``/``bestLap`` are included only when ``show_times``;
-        ``sex``/``tie``/``dnf``/``draw`` are included only when set.
+        ``sex``/``tie``/``dnf``/``dns``/``draw`` are included only when
+        set. ``laps`` stays numeric (0 for a DNS row): the flag is the
+        marker, and the record's shape never depends on it.
         """
         record: dict[str, object] = {
             "place": self.place,
@@ -204,6 +225,8 @@ class ResultRow:
             record["tie"] = True
         if self.dnf:
             record["dnf"] = True
+        if self.dns:
+            record["dns"] = True
         record["cards"] = [list(pair) for pair in self.cards]
         record["drawn"] = [list(pair) for pair in self.drawn]
         if self.draw is not None:
@@ -660,9 +683,19 @@ def _result_row_from_placed(placed: Placed, *, logo: str | None = None) -> Resul
     holds the placed plate -- ``None`` renders no logo image. ``sex``
     (E7) is the solo rider's "M"/"F", None for a team. ``draw`` (R-14)
     is the card the entry drew for the venue's tie-break, absent for
-    every entry that drew none.
+    every entry that drew none -- and for every DNS row: a 0-lap entry
+    ties on its empty hand, so the finish's own draw records a card
+    against it that the row (never placed, never started) must not
+    carry. ``dns`` (Phase 7) carries the placed row's own marker, so
+    the page and the record can render the word "DNS" for a 0-lap
+    entry while the record keeps ``laps: 0``. Its times are null for
+    the same reason: a DNS entry never started, so ``total`` and
+    ``best_lap`` carry no reading at all -- the machine record's null
+    where the human surfaces show a blank cell, never the 0 a real
+    zero-second reading would print.
     """
     result = placed.result
+    draw = None if placed.dns else result.tiebreak_card
     return ResultRow(
         place=placed.place,
         plate=_parse_plate(result.plate),
@@ -670,14 +703,15 @@ def _result_row_from_placed(placed: Placed, *, logo: str | None = None) -> Resul
         entry_type=result.kind.upper(),
         laps=result.laps,
         hand=_hand_label(result.hand),
-        total=_format_duration(result.total_time),
-        best_lap=_format_duration(result.best_lap),
+        total=None if placed.dns else _format_duration(result.total_time),
+        best_lap=None if placed.dns else _format_duration(result.best_lap),
         sex=result.sex,
         tie=placed.draw_required,
         dnf=result.dnf,
+        dns=placed.dns,
         cards=tuple(_card_pair(card) for card in result.hand.best5),
         drawn=tuple(_card_pair(card) for card in result.cards),
-        draw=_card_pair(result.tiebreak_card) if result.tiebreak_card is not None else None,
+        draw=_card_pair(draw) if draw is not None else None,
         logo=logo,
     )
 
@@ -698,8 +732,12 @@ def _is_team_kind(kind: str) -> bool:
 def _laps_rows(  # noqa: PLR0913 -- (placed, kind, top, opts): one board's own inputs
     placed: Sequence[Placed], *, kind: str, top: int, opts: ExportOptions
 ) -> tuple[LapsBoardRow, ...]:
-    """Build one kind's laps board from *placed* (standings' rules)."""
-    results = [entry.result for entry in placed if entry.result.kind == kind]
+    """Build one kind's laps board from *placed* (standings' rules).
+
+    A DNS row (Phase 7) never reaches a board: it was never placed, so
+    it is filtered out before ``laps_leaderboard`` ranks what is left.
+    """
+    results = [entry.result for entry in placed if entry.result.kind == kind and not entry.dns]
     return tuple(
         LapsBoardRow(
             plate=_parse_plate(entry.result.plate),
@@ -738,9 +776,10 @@ def _boards_from_placed(
     and stays one flat top ten (most laps, then shortest total time);
     it is built only when times are shown -- a time board is nothing
     but time data, so ``show_times`` off leaves it empty however
-    ``opts.time_board`` is set (R-63).
+    ``opts.time_board`` is set (R-63). A DNS row (Phase 7) is left out
+    of both boards: it was never placed, so it belongs to no board.
     """
-    results = [p.result for p in placed]
+    results = [p.result for p in placed if not p.dns]
     laps = _laps_record_board(placed, opts) if opts.laps_board else ()
     times = (
         tuple(
@@ -767,15 +806,26 @@ def _sections_from_payload(payload: RacePayload) -> Sections:
     The record-only path -- the golden generator renders a payload with
     no placed standings -- so the laps boards come from the payload's
     own per-kind ``laps_board`` rows, capped per kind defensively.
+
+    ``teams``/``solo`` are the full-field partitions and keep every
+    row, DNS ones included (they still appear in the results). The
+    podiums and top lists are slices of the *ranked* rows only: a DNS
+    row was never placed, so it is not a top-three finisher and must
+    not appear on a card or a top list. The solo cap reads the same
+    team partition :func:`sections` lays the page out with -- a field
+    whose teams are all DNS is still a team event, so its solo list
+    keeps the mixed event's five.
     """
     teams = tuple(row for row in payload.results if _is_team_kind(row.entry_type))
     solo = tuple(row for row in payload.results if not _is_team_kind(row.entry_type))
+    ranked_teams = tuple(row for row in teams if not row.dns)
+    ranked_solo = tuple(row for row in solo if not row.dns)
     top_solo = _TOP_SOLO_ROWS if teams else _TOP_SOLO_ONLY_ROWS
     return Sections(
-        podium_teams=teams[:_PODIUM_ROWS],
-        podium_solo=solo[:_PODIUM_ROWS],
-        top_teams=teams[:_TOP_TEAM_ROWS],
-        top_solo=solo[:top_solo],
+        podium_teams=ranked_teams[:_PODIUM_ROWS],
+        podium_solo=ranked_solo[:_PODIUM_ROWS],
+        top_teams=ranked_teams[:_TOP_TEAM_ROWS],
+        top_solo=ranked_solo[:top_solo],
         laps_teams=tuple(row for row in payload.laps_board if _is_team_kind(row.type))[
             :_TOP_TEAM_ROWS
         ],
@@ -829,6 +879,7 @@ def build_payload(  # noqa: PLR0913, PLR0917
     team_logos: Mapping[str, str] | None = None,
     *,
     self_test_unverified: bool = False,
+    riders: int = 0,
 ) -> RacePayload:
     """Build the export payload from a ride and its placed standings.
 
@@ -839,7 +890,10 @@ def build_payload(  # noqa: PLR0913, PLR0917
     entry's plate to its logo data URI -- the roster-entry lookup seam
     the app supplies. *self_test_unverified* (E6.4.3) is the engine's
     flag: when set, the payload carries :data:`SELF_TEST_NOTE` as
-    ``self_test_note``, the caption both exporters render.
+    ``self_test_note``, the caption both exporters render. *riders* is
+    the header's unique-rider count, which the caller tallies from the
+    roster -- it cannot be derived from *placed*, whose entry count is
+    a count of entries, not people.
 
     Args:
         ride: Ride-like object exposing the six read fields.
@@ -850,6 +904,8 @@ def build_payload(  # noqa: PLR0913, PLR0917
             one; rows without a mapping render no logo.
         self_test_unverified: Whether the ride was finished over a
             failed evaluator self-test.
+        riders: The number of individual riders in the ride's roster;
+            0 when the caller supplies no count.
 
     Returns:
         The payload the page embeds and both exporters render from.
@@ -867,6 +923,7 @@ def build_payload(  # noqa: PLR0913, PLR0917
         entries=len(placed),
         laps=sum(p.result.laps for p in placed),
         cards=sum(len(p.result.cards) for p in placed),
+        riders=riders,
     )
     return RacePayload(
         event=event,
@@ -897,6 +954,7 @@ def render(  # noqa: PLR0913
     logo_path: Path | str | None = None,
     team_logos: Mapping[str, str] | None = None,
     self_test_unverified: bool = False,
+    riders: int = 0,
 ) -> str:
     """Render one finished ride's results as a self-contained HTML page.
 
@@ -914,6 +972,8 @@ def render(  # noqa: PLR0913
     bitmap), rendered as a small image in the team's Top teams and
     Full field rows; absent entries render nothing.
     ``self_test_unverified`` (E6.4.3) publishes the self-test note.
+    ``riders`` is the header's unique-rider count (the roster's own
+    total, never ``placed``'s entry count).
 
     Args:
         ride: Ride-like object exposing ``name``/``event_date``/
@@ -929,6 +989,7 @@ def render(  # noqa: PLR0913
             one; rows without a mapping render no logo.
         self_test_unverified: Whether the ride was finished over a
             failed evaluator self-test.
+        riders: The number of individual riders the header counts.
 
     Returns:
         The full HTML page as a string.
@@ -945,6 +1006,7 @@ def render(  # noqa: PLR0913
         generated,
         team_logos=team_logos,
         self_test_unverified=self_test_unverified,
+        riders=riders,
     )
     return _render_payload(payload, logo_src=logo_src, placed=placed)
 
@@ -969,6 +1031,7 @@ def render_wordpress(  # noqa: PLR0913 -- render()'s own signature, for a swap-i
     logo_path: Path | str | None = None,
     team_logos: Mapping[str, str] | None = None,
     self_test_unverified: bool = False,
+    riders: int = 0,
 ) -> str:
     """Render one finished ride as a WordPress page-content fragment.
 
@@ -1001,6 +1064,7 @@ def render_wordpress(  # noqa: PLR0913 -- render()'s own signature, for a swap-i
             one; rows without a mapping render no logo.
         self_test_unverified: Whether the ride was finished over a
             failed evaluator self-test.
+        riders: The number of individual riders the header counts.
 
     Returns:
         The HTML fragment as a string.
@@ -1017,6 +1081,7 @@ def render_wordpress(  # noqa: PLR0913 -- render()'s own signature, for a swap-i
         generated,
         team_logos=team_logos,
         self_test_unverified=self_test_unverified,
+        riders=riders,
     )
     context = _template_context(
         payload,
@@ -1047,14 +1112,22 @@ def _poster_sections(payload: RacePayload) -> tuple[tuple[str, tuple[ResultRow, 
     untitled section (its heading cell is empty) of its top five. A
     kind with no rows still yields its section -- the template skips an
     empty row tuple -- so a team-only event renders "Teams" alone.
+
+    The cards come from the RANKED rows: a DNS row (Phase 7) was never
+    placed, so it is not a top-three finisher and must not appear on a
+    card -- exactly the rule the page's own podium and top slices
+    follow. The team-event decision still reads the whole partition, so
+    a field whose teams are all DNS is still a team event.
     """
     teams = tuple(row for row in payload.results if _is_team_kind(row.entry_type))
     solo = tuple(row for row in payload.results if not _is_team_kind(row.entry_type))
+    ranked_teams = tuple(row for row in teams if not row.dns)
+    ranked_solo = tuple(row for row in solo if not row.dns)
     if not teams:
-        return (("", solo[:_POSTER_SOLO_ONLY_ROWS]),)
+        return (("", ranked_solo[:_POSTER_SOLO_ONLY_ROWS]),)
     return (
-        ("Teams", teams[:_POSTER_PODIUM_ROWS]),
-        ("Solo riders", solo[:_POSTER_PODIUM_ROWS]),
+        ("Teams", ranked_teams[:_POSTER_PODIUM_ROWS]),
+        ("Solo riders", ranked_solo[:_POSTER_PODIUM_ROWS]),
     )
 
 
@@ -1171,6 +1244,7 @@ def _result_row_from_record(row: Mapping[str, object]) -> ResultRow:
         sex=cast("str | None", row.get("sex")),
         tie=cast("bool", row.get("tie", False)),
         dnf=cast("bool", row.get("dnf", False)),
+        dns=cast("bool", row.get("dns", False)),
         cards=_card_pairs(row.get("cards", [])),
         drawn=_card_pairs(row.get("drawn", [])),
         draw=_optional_card_pair(row.get("draw")),

@@ -25,7 +25,7 @@ from rivercrossing.cards import Card
 from rivercrossing.hands import best_hand
 from rivercrossing.htmlexport import ExportOptions
 from rivercrossing.ride import RideStatus
-from rivercrossing.roster import EntryMode, PlateModel, Roster
+from rivercrossing.roster import EntryMode, PlateModel, Rider, Roster
 from rivercrossing.standings import EntryResult, Placed
 from rivercrossing.ui import app as app_module
 from rivercrossing.ui import std_dialogs
@@ -150,11 +150,16 @@ def _unpack_groups(groups: object) -> tuple[object, object]:
 
 
 def _context(*, engine: _StubEngine | None, menubar: object = None) -> app_module._RouteContext:
-    """Build a route context with an optional engine and menubar."""
+    """Build a route context with an optional engine and menubar.
+
+    The roster is empty rather than None: the export handler's Phase 7
+    rider tally walks it (``_unique_rider_count``), and a test that
+    cares about the count assigns its own roster.
+    """
     return app_module._RouteContext(
         frame=_StubFrame(menubar),
         resource=None,
-        roster=None,  # type: ignore[arg-type]
+        roster=Roster(),
         app=None,
         theme_controller=None,  # type: ignore[arg-type]
         presenter=None if engine is None else _presenter(engine),
@@ -531,6 +536,7 @@ def test_handle_export_command_picks_writes_and_records(
         solo: object,
         opts: object,
         watermark: int,
+        riders: int = 0,
         team_logos: object = None,
         self_test_unverified: bool = False,
     ) -> None:
@@ -541,6 +547,7 @@ def test_handle_export_command_picks_writes_and_records(
             opts,
             target,
             path,
+            riders,
             team_logos=team_logos,
             self_test_unverified=self_test_unverified,
         )
@@ -581,6 +588,7 @@ def test_handle_export_command_captures_the_self_test_flag(
         solo: object,  # noqa: ARG001 -- mirrors the frozen signature
         opts: object,  # noqa: ARG001 -- mirrors the frozen signature
         watermark: int,  # noqa: ARG001 -- mirrors the frozen signature
+        riders: int = 0,  # noqa: ARG001 -- mirrors the frozen signature
         team_logos: object = None,  # noqa: ARG001 -- mirrors the frozen signature
         self_test_unverified: bool = False,
     ) -> None:
@@ -619,6 +627,7 @@ def test_handle_export_command_advances_the_export_watermark_to_the_event_count(
         solo: object,
         opts: object,
         watermark: int,
+        riders: int = 0,
         team_logos: object = None,
         self_test_unverified: bool = False,
     ) -> None:
@@ -629,6 +638,7 @@ def test_handle_export_command_advances_the_export_watermark_to_the_event_count(
             opts,
             target,
             path,
+            riders,
             team_logos=team_logos,
             self_test_unverified=self_test_unverified,
         )
@@ -687,6 +697,230 @@ def test_handle_export_command_given_the_csv_target_records_no_preview_path(
 
     assert (context.html_export_path, context.pdf_export_path) == (None, None)
     assert context.export_watermark == 0
+
+
+# --- the unique-rider count and the DNS display on the export path ---
+
+
+def _roster_of(*plates: str) -> Roster:
+    """Build a MIXED solo roster keyed by each entry's own plate.
+
+    The stub snapshot names every result by its plate (``_result``'s
+    ``entry_id``), so the roster's stable keys are aligned with it --
+    exactly what the real engine does when it files a crossing under
+    the entry's key.
+    """
+    roster = Roster(entry_mode=EntryMode.SOLO, plate_model=PlateModel.RIDER_POOLED)
+    for plate in plates:
+        entry = roster.create_solo_entry(first_name="Rider", last_name=plate, plate=plate)
+        entry.key = plate
+    return roster
+
+
+def _team_roster(*, key: str) -> Roster:
+    """Build one two-rider team whose key is the snapshot's own."""
+    roster = Roster(entry_mode=EntryMode.MIXED, plate_model=PlateModel.RIDER_POOLED)
+    entry = roster.create_team_entry(
+        display_name="Trail Blazers",
+        riders=[Rider(first_name="A.", plate="77"), Rider(first_name="K.", plate="78")],
+    )
+    entry.key = key
+    return roster
+
+
+def _finished_engine_with_a_zero_lap_entry() -> _StubEngine:
+    """Build a FINISHED stub engine: a 4-lap entry and a 0-lap one."""
+    return _StubEngine(
+        (
+            _result("88", "9S 9D 9C 9H 2C", laps=4, total_time=1_000.0),
+            _result("7", "AS KS QS JS 10S", laps=0, total_time=1_200.0),
+        )
+    )
+
+
+def test_handle_export_command_counts_only_the_riders_who_started(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The header's unique-rider count excludes the DNS entries' riders.
+
+    ``riders`` counts individual people, so it comes from the roster --
+    never from the placed rows, whose entry count is a count of entries
+    (a two-rider team is one entry and two riders) -- and only the
+    riders on an entry with at least one recorded lap.
+    """
+    context = _context(engine=_StubEngine(_snapshot()))
+    context.roster = _roster_of("88", "7", "12")
+    monkeypatch.setattr(app_module, "_pick_export_path", lambda _name: tmp_path / "results.html")
+    captured: list[int] = []
+    _capture_offloop(monkeypatch, captured)
+
+    app_module._handle_export_command(context, "export_html")
+
+    assert captured == [2]
+
+
+def test_handle_export_command_counts_every_member_of_a_started_team(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A team member counts individually: riders, not entries."""
+    context = _context(engine=_StubEngine(_snapshot()))
+    context.roster = _team_roster(key="88")
+    monkeypatch.setattr(app_module, "_pick_export_path", lambda _name: tmp_path / "results.html")
+    captured: list[int] = []
+    _capture_offloop(monkeypatch, captured)
+
+    app_module._handle_export_command(context, "export_html")
+
+    assert captured == [2]
+
+
+def test_handle_export_command_given_only_dns_entries_counts_no_riders(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """T-4 boundary: an all-DNS field contributes zero unique riders."""
+    context = _context(
+        engine=_StubEngine((_result("12", "9S 9D 9C 9H 2C", laps=0, total_time=0.0),))
+    )
+    context.roster = _roster_of("12")
+    monkeypatch.setattr(app_module, "_pick_export_path", lambda _name: tmp_path / "results.html")
+    captured: list[int] = []
+    _capture_offloop(monkeypatch, captured)
+
+    app_module._handle_export_command(context, "export_html")
+
+    assert captured == [0]
+
+
+def _capture_offloop(monkeypatch: pytest.MonkeyPatch, captured: list[int]) -> None:
+    """Patch ``_run_export_offloop`` with a rider-count recorder."""
+
+    def record(  # noqa: PLR0913 -- mirrors _run_export_offloop's signature
+        context: object,  # noqa: ARG001 -- mirrors the frozen signature
+        target: object,  # noqa: ARG001 -- mirrors the frozen signature
+        path: object,  # noqa: ARG001 -- mirrors the frozen signature
+        *,
+        config: object,  # noqa: ARG001 -- mirrors the frozen signature
+        teams: object,  # noqa: ARG001 -- mirrors the frozen signature
+        solo: object,  # noqa: ARG001 -- mirrors the frozen signature
+        opts: object,  # noqa: ARG001 -- mirrors the frozen signature
+        watermark: object,  # noqa: ARG001 -- mirrors the frozen signature
+        riders: int,
+        team_logos: object = None,  # noqa: ARG001 -- mirrors the frozen signature
+        self_test_unverified: bool = False,  # noqa: ARG001 -- mirrors it
+    ) -> None:
+        captured.append(riders)
+
+    monkeypatch.setattr(app_module, "_run_export_offloop", record)
+
+
+def test_write_export_given_a_rider_count_puts_it_on_the_html_header(
+    tmp_path: Path,
+) -> None:
+    """The count threads through to the HTML writer."""
+    teams, solo = _unpack_groups(app_module._placed_for_export(_context(engine=None)))
+
+    app_module._write_export(
+        _StubConfig(),
+        teams,
+        solo,
+        ExportOptions(),
+        "export_html",
+        tmp_path / "results.html",
+        riders=207,
+    )
+
+    assert "· 207" in (tmp_path / "results.html").read_text(encoding="utf-8")
+
+
+def test_placed_for_export_given_dns_riders_on_keeps_the_dns_entry() -> None:
+    """Checked: the 0-lap entry stays, unplaced and marked DNS."""
+    context = _context(engine=_finished_engine_with_a_zero_lap_entry())
+
+    teams, solo = app_module._placed_for_export(context)
+
+    assert [(p.result.plate, p.place, p.dns) for p in (*teams, *solo)] == [
+        ("88", 1, False),
+        ("7", 0, True),
+    ]
+
+
+def test_placed_for_export_given_dns_riders_off_drops_the_dns_entry() -> None:
+    """Unchecked: the same export hides the 0-lap entry entirely."""
+    context = _context(engine=_finished_engine_with_a_zero_lap_entry())
+    context.settings = replace(default_settings(), show_dns_riders=False)
+
+    teams, solo = app_module._placed_for_export(context)
+
+    assert [(p.result.plate, p.dns) for p in (*teams, *solo)] == [("88", False)]
+
+
+def test_write_export_given_a_dns_entry_renders_the_dns_cells(
+    tmp_path: Path,
+) -> None:
+    """The Results-menu toggle's own reading reaches the page.
+
+    Window and exports read the same ``AppSettings.show_dns_riders``
+    through ``_placed_for_export``, so the two can never disagree: the
+    checked default renders the DNS row's Laps cell as the word "DNS".
+    """
+    context = _context(engine=_finished_engine_with_a_zero_lap_entry())
+
+    teams, solo = _unpack_groups(app_module._placed_for_export(context))
+    app_module._write_export(
+        _StubConfig(), teams, solo, ExportOptions(), "export_html", tmp_path / "results.html"
+    )
+
+    assert ">DNS</td>" in (tmp_path / "results.html").read_text(encoding="utf-8")
+
+
+def test_write_export_given_dns_riders_off_omits_the_dns_entry(
+    tmp_path: Path,
+) -> None:
+    """Unchecked: the dropped 0-lap entry never reaches the page.
+
+    The embedded record is read rather than a raw plate search: the
+    page's inlined CSS carries ``#7...`` colour literals, so the plate
+    as a bare substring would match those.
+    """
+    context = _context(engine=_finished_engine_with_a_zero_lap_entry())
+    context.settings = replace(default_settings(), show_dns_riders=False)
+
+    teams, solo = _unpack_groups(app_module._placed_for_export(context))
+    app_module._write_export(
+        _StubConfig(), teams, solo, ExportOptions(), "export_html", tmp_path / "results.html"
+    )
+
+    html = (tmp_path / "results.html").read_text(encoding="utf-8")
+    assert '"plate": 88,' in html
+    assert '"plate": 7,' not in html
+    assert ">DNS</td>" not in html
+
+
+@pytest.mark.parametrize(
+    "state",
+    [RideStatus.DRAFT, RideStatus.RUNNING, RideStatus.REOPENED],
+    ids=lambda state: state.value,
+)
+def test_placed_for_export_given_a_live_engine_keeps_zero_lap_entries_ranked(
+    state: RideStatus,
+) -> None:
+    """Phase 7: the DNS filter is FINISHED-only.
+
+    The Results menu only offers its exports once the ride is FINISHED,
+    but this helper is the ranking seam itself: a route-level or future
+    direct caller must never turn a live ride's 0-lap entry into an
+    unplaced DNS row (``EngineDataSource.standings`` gates the same
+    way, so window and export can never disagree).
+    """
+    context = _context(engine=_finished_engine_with_a_zero_lap_entry())
+    context.presenter.engine.state = state
+
+    teams, solo = app_module._placed_for_export(context)
+
+    assert [(p.result.plate, p.place, p.dns) for p in (*teams, *solo)] == [
+        ("7", 1, False),
+        ("88", 2, False),
+    ]
 
 
 def test_handle_preview_html_browser_opens_the_html_export(

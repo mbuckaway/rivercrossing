@@ -32,6 +32,7 @@ from rivercrossing.standings import (
     DEFAULT_TIEBREAK_ORDER,
     LIVE_TIEBREAK_ORDER,
     TieBreak,
+    ZeroLapMode,
     hand_name,
     rank_by_kind,
 )
@@ -234,6 +235,13 @@ class StandingsRow:
     to the rendered ``total``/``best_lap`` text, so each time column's
     native header sort orders by time rather than by its ``h:mm:ss``
     string.
+
+    ``dns`` (Phase 7) marks a 0-lap entry on a FINISHED ride: the row
+    renders last, with a blank Place cell and the word "DNS" where its
+    laps would be. Its ``place`` is the :class:`~rivercrossing.
+    standings.Placed` placeholder 0, which no place renderer reads
+    (every one gates on ``dns`` first) and which the Place sort key
+    pairs with the flag so DNS rows sort after every placed row.
     """
 
     place: int
@@ -249,6 +257,7 @@ class StandingsRow:
     best_lap: str = ""
     best_lap_seconds: float = 0.0
     tiebreak_card: str = ""
+    dns: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -308,7 +317,10 @@ class DataSource(Protocol):
         ...
 
     def standings(
-        self, order: tuple[TieBreak, ...] = DEFAULT_TIEBREAK_ORDER
+        self,
+        order: tuple[TieBreak, ...] = DEFAULT_TIEBREAK_ORDER,
+        *,
+        show_dns_riders: bool = True,
     ) -> tuple[list[StandingsRow], list[StandingsRow]]:
         """Return the results standings as (teams, solo) row lists.
 
@@ -316,7 +328,10 @@ class DataSource(Protocol):
         solo section are each ranked under *order* from 1 -- a MIXED
         ride never interleaves the two kinds' places. A solo-only ride
         returns an empty teams list; a team-only ride an empty solo
-        list.
+        list. *show_dns_riders* is the Results menu's "Show DNS
+        Riders": on a FINISHED ride it decides whether a 0-lap entry
+        renders as an unplaced DNS row or is hidden; a live ride always
+        ranks everyone.
         """
         ...
 
@@ -1001,18 +1016,31 @@ class EngineDataSource:
         return rows
 
     def standings(
-        self, order: tuple[TieBreak, ...] = DEFAULT_TIEBREAK_ORDER
+        self,
+        order: tuple[TieBreak, ...] = DEFAULT_TIEBREAK_ORDER,
+        *,
+        show_dns_riders: bool = True,
     ) -> tuple[list[StandingsRow], list[StandingsRow]]:
         """Return the results standings as (teams, solo) row lists.
 
         ``rank_by_kind`` runs over the engine's current snapshot, so a
-        MIXED ride's teams and solos each rank from 1 (Phase 3).
-        *order* -- the ride's stored tie-break criteria -- applies only
-        once the ride is FINISHED; while it is live (DRAFT, RUNNING or
-        REOPENED) the board ranks by
+        MIXED ride's teams and solos each rank from 1 (Phase 3), and
+        each keeps its own 0-lap tail (Phase 7). *order* -- the ride's
+        stored tie-break criteria -- applies only once the ride is
+        FINISHED; while it is live (DRAFT, RUNNING or REOPENED) the
+        board ranks by
         :data:`~rivercrossing.standings.LIVE_TIEBREAK_ORDER` (most
         laps, then shortest total time), so a hand tie never leaves the
-        live board as an unresolved draw. ``hand`` is the human prose
+        live board as an unresolved draw. *show_dns_riders* -- the
+        Results menu's "Show DNS Riders" -- decides what a FINISHED
+        ride does with its 0-lap ACTIVE entries: checked
+        (:attr:`~rivercrossing.standings.ZeroLapMode.DNS`) lists them
+        unplaced at the end of their section, unchecked
+        (:attr:`~rivercrossing.standings.ZeroLapMode.HIDE`) drops them.
+        A live board always ranks the whole field
+        (:attr:`~rivercrossing.standings.ZeroLapMode.RANK`), so the
+        operator never watches rows vanish mid-ride.
+        ``hand`` is the human prose
         name (``standings.hand_name``), with the 0-card guard from the
         class docstring: an entry that never credited a card has no
         rank to name and renders ``""`` instead of crashing.
@@ -1020,11 +1048,17 @@ class EngineDataSource:
         dialog's body -- and ``best_lap`` renders the snapshot's
         quickest lap beside its numeric seconds. ``tiebreak_card`` is
         the entry's recorded draw as its card code (``""`` while the
-        draw has not happened), which the window's Draw column renders.
+        draw has not happened), which the window's Draw column renders
+        -- and ``""`` for a DNS row: a 0-lap entry's empty hand ties
+        the others, so the finish records a card against it that a row
+        unplaced and never started must not show.
         """
-        if self._engine.state is not RideStatus.FINISHED:
+        if self._engine.state is RideStatus.FINISHED:
+            zero_laps = ZeroLapMode.DNS if show_dns_riders else ZeroLapMode.HIDE
+        else:
             order = LIVE_TIEBREAK_ORDER
-        teams, solo = rank_by_kind(self._engine.snapshot(), order)
+            zero_laps = ZeroLapMode.RANK  # a live board shows everyone
+        teams, solo = rank_by_kind(self._engine.snapshot(), order, zero_laps=zero_laps)
 
         def rows(placed: Sequence[Placed]) -> list[StandingsRow]:
             built: list[StandingsRow] = []
@@ -1033,6 +1067,11 @@ class EngineDataSource:
                     hand = hand_name(item.result.hand)
                 except ValueError:
                     hand = ""  # 0-card entry -- no rank to name (P1 contract)
+                draw = (
+                    ""
+                    if item.dns or item.result.tiebreak_card is None
+                    else item.result.tiebreak_card.code()
+                )
                 built.append(
                     StandingsRow(
                         place=item.place,
@@ -1047,11 +1086,8 @@ class EngineDataSource:
                         tie_note=item.tie_note,
                         best_lap=format_duration(item.result.best_lap),
                         best_lap_seconds=item.result.best_lap,
-                        tiebreak_card=(
-                            item.result.tiebreak_card.code()
-                            if item.result.tiebreak_card is not None
-                            else ""
-                        ),
+                        tiebreak_card=draw,
+                        dns=item.dns,
                     )
                 )
             return built
@@ -1147,6 +1183,8 @@ class EmptyDataSource:
         self,
         # DataSource's signature; empty state returns no rows
         order: tuple[TieBreak, ...] = DEFAULT_TIEBREAK_ORDER,  # noqa: ARG002
+        *,
+        show_dns_riders: bool = True,  # noqa: ARG002 -- DataSource's signature
     ) -> tuple[list[StandingsRow], list[StandingsRow]]:
         """Return empty teams and solo standings sections."""
         return [], []

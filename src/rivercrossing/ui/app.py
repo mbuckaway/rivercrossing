@@ -74,7 +74,12 @@ from rivercrossing.ride import (
     UnknownPlateError,
 )
 from rivercrossing.roster import EntryMode, EntryType, PlateModel, Roster
-from rivercrossing.standings import Placed, rank_by_kind, tiebreak_order_from_spellings
+from rivercrossing.standings import (
+    Placed,
+    ZeroLapMode,
+    rank_by_kind,
+    tiebreak_order_from_spellings,
+)
 from rivercrossing.store import (
     PreviousSession,
     RideNameMismatchError,
@@ -160,19 +165,22 @@ _TIME_COLUMN_MENU_IDS: dict[str, str] = {
     "show_lap_time": ids.MI_SHOW_LAP_TIME,
 }
 
-# G6: the Results row's own commands.py target. Its five ids share one
+# G6: the Results row's own commands.py target. Its six ids share one
 # route, dispatched further by event id below -- the five publish
-# options that moved off the results dialog onto the Results menu.
+# options that moved off the results dialog onto the Results menu, plus
+# its DNS toggle.
 _RESULTS_PUBLISH_ROUTE_TARGET = "results_publish"
 
 # G6: each results publish setting and the Results-menu check item that
-# mirrors it (the retired dialog checkboxes' namesake rows).
+# mirrors it (the retired dialog checkboxes' namesake rows, plus the
+# DNS toggle the same row owns).
 _RESULTS_PUBLISH_MENU_IDS: dict[str, str] = {
     "publish_show_times": ids.MI_SHOW_TIMES,
     "publish_laps_board": ids.MI_LAPS_BOARD,
     "publish_time_board": ids.MI_TIME_BOARD,
     "publish_full_field": ids.MI_FULL_FIELD,
     "publish_all_cards": ids.MI_ALL_CARDS,
+    "show_dns_riders": ids.MI_SHOW_DNS_RIDERS,
 }
 
 # E9.1.1's launch seam: the env var that points the bundled binary at
@@ -655,7 +663,7 @@ def _check_loaded_publish_options(
     menubar: Any,  # noqa: ANN401 -- wx ships no stubs
     settings: AppSettings,
 ) -> None:
-    """Set the five publish check items to their stored flags (G6).
+    """Set the six Results-menu check items to their stored flags (G6).
 
     Called at startup after ``LoadMenuBar`` (the fresh check items are
     unchecked, so a ``False`` flag is a no-op) and whenever the settings
@@ -665,7 +673,7 @@ def _check_loaded_publish_options(
     auto-toggle check items on this pin (measured for the radio items;
     the check items need the same explicit set).
 
-    The R-63 gate is applied after the five.
+    The R-63 gate is applied after the six.
     """
     require_wx()
     import wx.xrc  # noqa: PLC0415 -- submodule, not loaded by plain `import wx`
@@ -794,8 +802,8 @@ def _toggle_publish_option(context: _RouteContext, *, key: str) -> None:
     import wx.xrc  # noqa: PLC0415 -- submodule, not loaded by plain `import wx`
 
     flipped = not getattr(context.settings, key)
-    # Any-typed: the field is resolved by name (one of the five
-    # ``publish_*`` booleans), the same getattr/replace-by-key shape
+    # Any-typed: the field is resolved by name (one of the six
+    # Results-menu booleans), the same getattr/replace-by-key shape
     # :func:`_toggle_time_column` uses.
     changes: dict[str, Any] = {key: flipped}
     if key == "publish_show_times" and not flipped:
@@ -819,11 +827,11 @@ def _handle_results_publish_row(
 ) -> None:
     """Dispatch the Results publish row by *event*'s own id (G6).
 
-    The five ``results_publish`` ids share one row (commands.py), so the
+    The six ``results_publish`` ids share one row (commands.py), so the
     fired id -- and not the row alone -- decides which setting flips;
     each id maps 1:1 onto its own check item
     (:data:`_RESULTS_PUBLISH_MENU_IDS`). The trailing notice covers a
-    sixth id bound to this row by mistake, mirroring
+    seventh id bound to this row by mistake, mirroring
     :func:`_handle_view_row`'s own fallback.
     """
     require_wx()
@@ -1804,7 +1812,10 @@ def _decorate_results(context: _RouteContext, window: Any) -> None:  # noqa: ANN
     list; ``plate_model`` decides whether the Team list carries its
     Plate column (Phase 5, Part 2). The E5.4.2 empty state stays for
     the no-presenter path (route-level tests), where the dialog's one
-    action is the Results menu's own exports.
+    action is the Results menu's own exports. Phase 7: the Results
+    menu's "Show DNS Riders" check reaches the standings through
+    ``show_dns_riders``, so the window shows or hides a finished
+    ride's DNS rows exactly as the exports do.
     """
     from rivercrossing.ui.views.results_win import ResultsWindow  # noqa: PLC0415 -- deferred
 
@@ -1819,6 +1830,7 @@ def _decorate_results(context: _RouteContext, window: Any) -> None:  # noqa: ANN
         export_watermark=context.export_watermark,
         entry_mode=presenter.engine.config.entry_mode,
         plate_model=presenter.engine.config.plate_model,
+        show_dns_riders=context.settings.show_dns_riders,
     )
 
 
@@ -2229,12 +2241,29 @@ def _placed_for_export(
     surfaces (htmlexport/pdfexport render the two full-field sections
     by partitioning on ``result.kind``; the standings CSV carries the
     ``type`` column). With no ride threaded both groups are empty.
+
+    Phase 7: the Results menu's ``show_dns_riders`` toggle reaches the
+    ranking here too -- checked keeps a finished ride's 0-lap entries
+    as unplaced DNS rows, unchecked drops them -- so the Standings
+    window and the exported file can never disagree about one.
+
+    The mode is applied only once the ride is FINISHED, exactly as
+    ``EngineDataSource.standings`` gates it: the menu only offers these
+    exports on a closed ride, but this helper is the ranking seam
+    itself, so a route-level or future direct caller can never turn a
+    live ride's 0-lap entry into an unplaced DNS row. A live (or
+    reopened) board ranks its whole field
+    (:attr:`~rivercrossing.standings.ZeroLapMode.RANK`).
     """
     engine = _export_engine(context)
     if engine is None:
         return (), ()
     order = tiebreak_order_from_spellings(engine.config.tiebreak_order)
-    teams, solo = rank_by_kind(engine.snapshot(), order)
+    if engine.state is RideStatus.FINISHED:
+        zero_laps = ZeroLapMode.DNS if context.settings.show_dns_riders else ZeroLapMode.HIDE
+    else:
+        zero_laps = ZeroLapMode.RANK  # a live ride keeps its whole field
+    teams, solo = rank_by_kind(engine.snapshot(), order, zero_laps=zero_laps)
     return tuple(teams), tuple(solo)
 
 
@@ -2306,7 +2335,7 @@ def _team_logo_srcs(roster: Roster | None) -> dict[str, str]:
     return srcs
 
 
-# (config, teams, solo, opts, target, path, team_logos,
+# (config, teams, solo, opts, target, path, riders, team_logos,
 # self_test_unverified): the pure writer's inputs
 def _write_export(  # noqa: PLR0913, PLR0917
     config: RideConfig,
@@ -2315,6 +2344,7 @@ def _write_export(  # noqa: PLR0913, PLR0917
     opts: ExportOptions,
     target: str,
     path: Path,
+    riders: int = 0,
     team_logos: dict[str, str] | None = None,
     *,
     self_test_unverified: bool = False,
@@ -2324,18 +2354,21 @@ def _write_export(  # noqa: PLR0913, PLR0917
     Pure -- no wx, no context: it runs on the off-loop thread, so it
     must never touch wx (measured: a wx call from the worker thread
     bus-errors the process). The handler captures *config*/*teams*/
-    *solo*/*opts*/*team_logos*/*self_test_unverified* on the main
-    thread first.
+    *solo*/*opts*/*riders*/*team_logos*/*self_test_unverified* on the
+    main thread first.
 
     Phase 3 (team/solo results split): the two groups merge
     Teams-then-Solo into the single ``placed`` sequence each frozen
     writer takes -- the HTML/PDF full fields partition it back into the
     two sections on ``result.kind``, and the standings CSV emits the
-    ``type`` column. W8: *team_logos* (the :func:`_team_logo_srcs`
-    map) reaches the HTML renderer only -- the PDF report keeps no
-    team logos (W8 scope note). E6.4.3: *self_test_unverified* reaches
-    every published surface that renders the note -- the HTML page, the
-    PDF report and both posters; the standings CSV carries no note.
+    ``type`` column. *riders* is the header's unique-rider count, which
+    only the HTML page and the PDF report carry: the poster targets and
+    the standings CSV have no header, so they ignore it. W8:
+    *team_logos* (the :func:`_team_logo_srcs` map) reaches the HTML
+    renderer only -- the PDF report keeps no team logos (W8 scope
+    note). E6.4.3: *self_test_unverified* reaches every published
+    surface that renders the note -- the HTML page, the PDF report and
+    both posters; the standings CSV carries no note.
 
     R-52: the HTML page lands atomically like the PDF and CSV ones --
     staged in a same-directory temp sibling and swapped over *path* --
@@ -2350,6 +2383,7 @@ def _write_export(  # noqa: PLR0913, PLR0917
             logo_path=config.logo_path,
             team_logos=team_logos,
             self_test_unverified=self_test_unverified,
+            riders=riders,
         )
         # R-52: the page is staged in a same-directory temp sibling and
         # swapped in, the atomic write the PDF/CSV siblings already use
@@ -2366,6 +2400,7 @@ def _write_export(  # noqa: PLR0913, PLR0917
             path,
             logo_path=config.logo_path,
             self_test_unverified=self_test_unverified,
+            riders=riders,
         )
     elif target == "export_poster":
         pdfexport.podium_poster(
@@ -2407,6 +2442,7 @@ def _run_export_offloop(  # noqa: PLR0913 -- context + the captured export input
     solo: tuple[Placed, ...],
     opts: ExportOptions,
     watermark: int,
+    riders: int = 0,
     team_logos: dict[str, str] | None = None,
     self_test_unverified: bool = False,
 ) -> None:
@@ -2441,6 +2477,7 @@ def _run_export_offloop(  # noqa: PLR0913 -- context + the captured export input
                 opts,
                 target,
                 path,
+                riders,
                 team_logos=team_logos,
                 self_test_unverified=self_test_unverified,
             )
@@ -2521,6 +2558,12 @@ def _handle_export_command(context: _RouteContext, target: str) -> None:
     the state the rendered file captures -- is read alongside the
     snapshot and stored on success, so a correction after this instant
     makes the results window render the stale banner.
+
+    Phase 7: the header's unique-rider count is tallied here too, from
+    the roster and the snapshot's lap counts -- only the riders on an
+    entry that actually started (>= 1 lap) count, so a DNS entry's
+    riders are excluded. It has to be computed on this thread: the
+    off-loop writer never touches the live roster.
     """
     engine = _export_engine(context)
     if engine is None:
@@ -2534,6 +2577,7 @@ def _handle_export_command(context: _RouteContext, target: str) -> None:
     teams, solo = _placed_for_export(context)
     opts = _export_options(context)
     watermark = len(engine.events)
+    riders = _unique_rider_count(context.roster, engine)
     # W8: the roster's team logos are captured on the main thread like
     # every other export input (the off-loop writer never touches the
     # live context). E6.4.3: so is the engine's self-test flag.
@@ -2547,9 +2591,25 @@ def _handle_export_command(context: _RouteContext, target: str) -> None:
         solo=solo,
         opts=opts,
         watermark=watermark,
+        riders=riders,
         team_logos=team_logos,
         self_test_unverified=engine.self_test_unverified,
     )
+
+
+def _unique_rider_count(roster: Roster, engine: RideEngine) -> int:
+    """Return the roster's rider total, DNS entries' riders excluded.
+
+    Phase 7's header tally: ``EventInfo.riders`` counts individual
+    people (a pooled team's member counts, not the team), but only on
+    an entry that recorded at least one lap -- an entry that never
+    crossed is a DNS row, and its riders did not appear in the results.
+    The engine's snapshot names each result by its entry key, which is
+    how the roster's own :attr:`~rivercrossing.roster.Entry.key`
+    resolves an entry's laps (E3.1.2's stable identity).
+    """
+    laps_by_key = {result.entry_id: result.laps for result in engine.snapshot()}
+    return sum(len(entry.riders) for entry in roster.entries if laps_by_key.get(entry.key, 0) > 0)
 
 
 def _handle_preview_browser(context: _RouteContext, path: Path | None) -> None:
@@ -2625,6 +2685,7 @@ def _publish_wordpress(context: _RouteContext, form: PublishForm) -> None:
         teams=teams,
         solo=solo,
         opts=_export_options(context),
+        riders=_unique_rider_count(context.roster, engine),
         team_logos=_team_logo_srcs(context.roster),
         self_test_unverified=engine.self_test_unverified,
     )
@@ -2655,6 +2716,7 @@ def _publish_page(  # noqa: PLR0913, PLR0917 -- the form + its render inputs
     placed: tuple[Placed, ...],
     opts: ExportOptions,
     *,
+    riders: int = 0,
     team_logos: dict[str, str] | None = None,
     self_test_unverified: bool = False,
 ) -> wordpress.PublishedPage:
@@ -2667,7 +2729,8 @@ def _publish_page(  # noqa: PLR0913, PLR0917 -- the form + its render inputs
     ``htmlexport.render_wordpress`` is the WordPress content fragment --
     the results page without its document scaffold, its stylesheet
     scoped under the fragment's own wrapper, so publishing cannot
-    restyle the site.
+    restyle the site. *riders* is the header's unique-rider count, the
+    same tally the HTML and PDF exports carry.
 
     Both lookups and the POST carry the form's credentials, so whatever
     the site reports -- a refused Application Password, a WordPress
@@ -2683,6 +2746,7 @@ def _publish_page(  # noqa: PLR0913, PLR0917 -- the form + its render inputs
         logo_path=config.logo_path,
         team_logos=team_logos,
         self_test_unverified=self_test_unverified,
+        riders=riders,
     )
     auth = wordpress.BasicAuth(username=form.username, password=form.password)
     return wordpress.publish_page(
@@ -2705,6 +2769,7 @@ def _run_publish_offloop(  # noqa: PLR0913 -- context + the captured publish inp
     teams: tuple[Placed, ...],
     solo: tuple[Placed, ...],
     opts: ExportOptions,
+    riders: int = 0,
     team_logos: dict[str, str] | None = None,
     self_test_unverified: bool = False,
 ) -> None:
@@ -2731,6 +2796,7 @@ def _run_publish_offloop(  # noqa: PLR0913 -- context + the captured publish inp
                 config,
                 (*teams, *solo),
                 opts,
+                riders=riders,
                 team_logos=team_logos,
                 self_test_unverified=self_test_unverified,
             )
