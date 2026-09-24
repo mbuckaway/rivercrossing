@@ -833,6 +833,54 @@ def test_render_given_a_rider_count_puts_it_on_the_cover_counter_row(tmp_path: P
     assert "50 · 347 · 349 · 1,207" in _text(out)
 
 
+# ------------------- the cover's bragging-rights disclaimer (E1)
+
+# The disclaimer's fixed first sentence. The clause that follows names
+# the boards the options show: the Laps leaderboard gates the lap-count
+# subject exactly as show_times gates times, so with the Laps board off
+# the cover must not promise lap counts are "for bragging rights".
+_DISCLAIMER = "It's not a race, it's a poker run — placings are by best poker hand."
+
+
+@pytest.mark.parametrize(
+    ("options", "clause"),
+    [
+        (
+            ExportOptions(laps_board=True, show_times=True),
+            " Lap counts and times below are unofficial and shown for bragging rights only.",
+        ),
+        (
+            ExportOptions(laps_board=True, show_times=False),
+            " Lap counts below are unofficial and shown for bragging rights only.",
+        ),
+        (
+            ExportOptions(laps_board=False, show_times=True),
+            " Times below are unofficial and shown for bragging rights only.",
+        ),
+        (ExportOptions(laps_board=False, show_times=False), ""),
+    ],
+    ids=["laps+times", "laps", "times", "neither"],
+)
+def test_render_cover_disclaimer_names_only_the_boards_the_options_show(
+    tmp_path: Path, options: ExportOptions, clause: str
+) -> None:
+    """The cover's subject list follows the shown boards."""
+    text = _text(_render(tmp_path, _placed_three(), options))
+
+    assert f"{_DISCLAIMER}{clause}" in text
+
+
+def test_render_cover_disclaimer_given_no_board_shown_omits_the_clause(tmp_path: Path) -> None:
+    """With both boards off nothing is shown for bragging rights."""
+    opts = ExportOptions(laps_board=False, show_times=False)
+
+    text = _text(_render(tmp_path, _placed_three(), opts))
+
+    assert "bragging rights" not in text
+    assert "unofficial and shown for bragging rights" not in text
+    assert _DISCLAIMER in text
+
+
 # --------------------------------------------- DNS rows (Phase 7)
 # A DNS row is a 0-lap ACTIVE entry on a FINISHED ride. It keeps its
 # row at the bottom of the Full field, with a blank Place cell and the

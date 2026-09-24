@@ -1212,25 +1212,63 @@
        wxStaticBoxSizer groups (Site, Page), each over a 2-column
        caption/value wxFlexGridSizer like edit_crossing_dlg's field
        grid; the captions are unnamed chrome, the inputs carry the
-       frozen names. wp_status_choice authors no <content>: the view
-       fills it from presenters/publish_wordpress.STATUS_CHOICES and
-       selects the stored AppSettings.wp_status (the empty-choice
-       precedent is riders.xrc's team_choice). wp_password_input is a
-       wxTE_PASSWORD field, so the Application Password is never shown
-       in clear. No <size> is declared: nothing documents a minimum,
-       so the sizer handler Fit()s the dialog and applies
-       SetSizeHints() (this file's header). Publish is the marked
-       default; the initial focus is wp_url_input, recorded in
-       views/dialogs.FORM_FIRST_FIELDS. The closing help line states
-       where the Application Password is kept and what the site account
-       needs; every input keeps its own persistent caption (UX-DESKTOP
-       section 7, never placeholder text). -->
+       frozen names. Part C leads with a third, box-less caption/value
+       row: wp_kind_choice, "What to publish", because the kind decides
+       the page (and the view's derived default title/slug) before any
+       site detail is read. It and wp_status_choice author no
+       <content>: the view fills both from
+       presenters/publish_wordpress's choice tuples (STATUS_CHOICES,
+       PUBLISH_KIND_CHOICES) and selects the stored AppSettings.wp_status
+       / wp_kind (the empty-choice precedent is riders.xrc's
+       team_choice). wp_password_input is a wxTE_PASSWORD field, so the
+       Application Password is never shown in clear. No <size> is
+       declared: nothing documents a minimum, so the sizer handler
+       Fit()s the dialog and applies SetSizeHints() (this file's
+       header). Publish is the marked default; the initial focus stays
+       wp_url_input, recorded in views/dialogs.FORM_FIRST_FIELDS, even
+       though the dropdown now renders above it. The closing help line
+       states where the Application Password is kept and what the site
+       account needs; every input keeps its own persistent caption
+       (UX-DESKTOP section 7, never placeholder text). -->
   <object class="wxDialog" name="publish_wordpress_dlg">
     <title>Publish to WordPress</title>
     <style>wxDEFAULT_DIALOG_STYLE|wxRESIZE_BORDER</style>
 
     <object class="wxBoxSizer">
       <orient>wxVERTICAL</orient>
+
+      <!-- Part C: "What to publish", the publish kind (the full
+           results, or just the podium). It leads the form because it
+           decides the page, and the view re-derives the default title
+           and slug from it, so it is read before the site details
+           below. Authored exactly like the dialog's other fields: its
+           own 2-column caption/value wxFlexGridSizer row. The dropdown
+           authors no <content>: the view fills it from
+           presenters/publish_wordpress.PUBLISH_KIND_CHOICES and
+           selects the stored AppSettings.wp_kind, mirroring
+           wp_status_choice. -->
+      <object class="sizeritem">
+        <flag>wxEXPAND|wxLEFT|wxRIGHT|wxTOP</flag>
+        <border>10</border>
+        <object class="wxFlexGridSizer">
+          <cols>2</cols>
+          <vgap>6</vgap>
+          <hgap>8</hgap>
+          <growablecols>1</growablecols>
+
+          <object class="sizeritem">
+            <flag>wxALIGN_CENTRE_VERTICAL</flag>
+            <object class="wxStaticText">
+              <label>What to publish</label>
+            </object>
+          </object>
+          <object class="sizeritem">
+            <flag>wxEXPAND</flag>
+            <object class="wxChoice" name="wp_kind_choice"/>
+          </object>
+
+        </object>
+      </object>
 
       <object class="sizeritem">
         <flag>wxEXPAND|wxLEFT|wxRIGHT|wxTOP</flag>

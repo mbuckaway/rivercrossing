@@ -27,6 +27,9 @@ third rendering of it: the same macros' inner HTML for a WordPress
 Page's ``content``, wrapped in ``.rc-results`` and inlining the
 stylesheet ``tools/gen_css.py`` has scoped under that wrapper, so
 publishing a result cannot restyle the site it lands in.
+:func:`render_poster_wordpress` is the poster in that same fragment
+shape: the poster's cards and counter header, for a page that already
+has a document.
 """
 
 import base64
@@ -63,6 +66,7 @@ __all__ = [
     "racejson",
     "render",
     "render_poster",
+    "render_poster_wordpress",
     "render_wordpress",
     "sections",
 ]
@@ -1141,6 +1145,7 @@ def render_poster(  # noqa: PLR0913
     logo_path: Path | str | None = None,
     generated: str | None = None,
     self_test_unverified: bool = False,
+    riders: int = 0,
 ) -> str:
     """Render one ride's podium poster as a self-contained page.
 
@@ -1168,6 +1173,12 @@ def render_poster(  # noqa: PLR0913
         generated: The pinned footer stamp; None stamps the local now.
         self_test_unverified: Whether the ride was finished over a
             failed evaluator self-test (E6.4.3).
+        riders: The number of individual riders in the ride's roster.
+            The poster's own page renders no rider counter, so this
+            only reaches ``event.riders`` and leaves the page
+            byte-identical; it is accepted so one call site can thread
+            its count through both :func:`render_poster` and
+            :func:`render_poster_wordpress`.
 
     Returns:
         The full poster page as a string.
@@ -1176,7 +1187,12 @@ def render_poster(  # noqa: PLR0913
         ValueError: An entry's plate is not numeric.
     """
     payload = build_payload(
-        ride, placed, opts, generated, self_test_unverified=self_test_unverified
+        ride,
+        placed,
+        opts,
+        generated,
+        self_test_unverified=self_test_unverified,
+        riders=riders,
     )
     context = {
         "event": payload.event,
@@ -1189,6 +1205,75 @@ def render_poster(  # noqa: PLR0913
         "fonts_css": _asset_text("fonts_css"),
     }
     return _make_environment().get_template("poster.html.j2").render(**context)
+
+
+def render_poster_wordpress(  # noqa: PLR0913
+    ride: _RideLike,
+    placed: Sequence[Placed],
+    opts: ExportOptions,
+    *,
+    logo_path: Path | str | None = None,
+    generated: str | None = None,
+    self_test_unverified: bool = False,
+    riders: int = 0,
+) -> str:
+    """Render the podium poster as a WordPress content fragment.
+
+    :func:`render_poster`'s cards in :func:`render_wordpress`'s shell:
+    the same payload (:func:`build_payload`), the same
+    :func:`_poster_sections` plan and the same card markup, but no
+    document scaffold -- no ``<!DOCTYPE>``, ``<html>``, ``<head>`` or
+    ``<body>``, which the publishing site already has -- wrapped in
+    ``<div class="rc-results">`` and inlining ``compiled_css_wp``, the
+    vendored stylesheet with every selector scoped under that wrapper
+    (``tools/gen_css.py``), so publishing a poster cannot restyle the
+    site's own theme. The poster's own header carries the full-results
+    counter line, which is why *riders* -- the roster's unique-rider
+    count -- is a parameter here rather than a page-only one.
+
+    Callers publish the returned string as-is
+    (``rivercrossing.wordpress.publish_page(content=…)``).
+
+    Args:
+        ride: Ride-like object exposing ``name``/``event_date``/
+            ``venue``/``lap_km``/``organizer``/``scorer``;
+            ``RideConfig`` satisfies it structurally.
+        placed: Ranked standings, one per entry (teams and solo riders
+            may share the sequence; the kind partitions it).
+        opts: Export flags; only ``show_times`` reaches the poster, as
+            the card's trailing total time.
+        logo_path: Raw PNG path, base64-embedded; None falls back to
+            the transparent 1x1 URI (D8).
+        generated: The pinned footer stamp; None stamps the local now.
+        self_test_unverified: Whether the ride was finished over a
+            failed evaluator self-test (E6.4.3).
+        riders: The number of individual riders the header counts.
+
+    Returns:
+        The HTML fragment as a string.
+
+    Raises:
+        ValueError: An entry's plate is not numeric.
+    """
+    payload = build_payload(
+        ride,
+        placed,
+        opts,
+        generated,
+        self_test_unverified=self_test_unverified,
+        riders=riders,
+    )
+    context = {
+        "event": payload.event,
+        "options": payload.options,
+        "poster_sections": _poster_sections(payload),
+        "logo_src": _logo_data_uri(logo_path) if logo_path is not None else _TRANSPARENT_PNG,
+        "logo_alt": payload.event.organizer,
+        "self_test_note": payload.self_test_note,
+        "compiled_css_wp": _asset_text(_WP_STYLESHEET),
+        "fonts_css": _asset_text("fonts_css"),
+    }
+    return _make_environment().get_template("poster_wordpress.html.j2").render(**context)
 
 
 # ============================================ record -> payload (TB-5)

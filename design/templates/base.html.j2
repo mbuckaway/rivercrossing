@@ -76,7 +76,7 @@
 
   {{ m.event_header(event, options, logo_src, logo_alt) }}
 
-  <p class="mt-4 text-sm text-ink/60 max-w-2xl">It's not a race, it's a poker run — placings are by best poker hand. Lap counts{% if options.show_times %} and times{% endif %} below are unofficial and shown for bragging rights only.</p>
+{# "Times" is capitalized here because it opens the sentence when the laps board is off -- its only other subject is the lower-case "times" it follows. #}{% set bragging = [] %}{% if options.laps_board %}{% set _ = bragging.append('Lap counts') %}{% endif %}{% if options.show_times %}{% set _ = bragging.append('times' if bragging else 'Times') %}{% endif %}  <p class="mt-4 text-sm text-ink/60 max-w-2xl">It's not a race, it's a poker run — placings are by best poker hand.{% if bragging %} {{ bragging | join(' and ') }} below are unofficial and shown for bragging rights only.{% endif %}</p>
 
   <div class="mt-4 text-xs text-ink/50">{% if options.show_times %}Published with times — the organizer's export setting decides; there is no toggle on the page.{% else %}Published without times — the organizer's export setting decides; there is no toggle on the page, and no time data is embedded in it.{% endif %}</div>{% if self_test_note %}
   <p class="mt-2 text-xs font-semibold text-steel-700">{{ self_test_note }}</p>{% endif %}

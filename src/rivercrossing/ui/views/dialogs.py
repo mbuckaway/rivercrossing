@@ -131,8 +131,10 @@ DEFAULT_BUTTON_DECISIONS: tuple[tuple[str, str], ...] = (
 # starts on its name field, like team_editor_dlg. dnf_confirm_dlg
 # (Phase 3) became a form when it gained its plate_input: the operator
 # types the rider plate there, so that is where the caret starts.
-# publish_wordpress_dlg (Phase 4b) starts on its site URL field, the
-# first input of the form's own top-to-bottom order.
+# publish_wordpress_dlg (Phase 4b) starts on its site URL field. Part C
+# put wp_kind_choice above it in the form's top-to-bottom order, but the
+# caret still starts where the operator types a value rather than on a
+# dropdown whose opening item is already the stored choice.
 FORM_FIRST_FIELDS: tuple[tuple[str, str], ...] = (
     (ids.SET_START_DLG, ids.START_DATE_PICKER),
     (ids.EDIT_CROSSING_DLG, ids.PLATE_INPUT),

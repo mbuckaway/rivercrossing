@@ -217,7 +217,7 @@ h2, h3 { scroll-margin-top: 1rem; }
 <li><strong>Podium Poster HTML…</strong> — the same poster as a self-contained page.</li>
 <li><strong>Export Standings CSV…</strong> — place, plate, entry, type, sex, laps, hand, draw, and times when shown.</li>
 <li><strong>Preview HTML in Browser</strong> / <strong>Preview Podium Poster HTML in Browser</strong> / <strong>Preview PDF in Browser</strong> — open this session's last export of that format in your browser. Each needs a finished ride and an export made this session. After a restart the preview is disabled until the next export.</li>
-<li><strong>Publish to WordPress…</strong> — create or update a page on your WordPress site from the finished ride's results. Enter the site URL, a WordPress username, and an <strong>Application Password</strong>, then the page title, slug, an optional parent page (the "section" it sits under), and the publish status. The page is looked up by slug: one already there is updated, and a new page is created when there is none. The connection is remembered in this machine's settings file, so you type it once.</li>
+<li><strong>Publish to WordPress…</strong> — create or update a page on your WordPress site from the finished ride's results. Choose <strong>What to publish</strong> at the top of the dialog: <strong>Full results</strong> (the complete results page) or <strong>Podium results</strong> (the top-finishers poster). The title and slug fill themselves from that choice, and you can still edit them before publishing. Then enter the site URL, a WordPress username, and an <strong>Application Password</strong>, the page title and slug, an optional parent page (the "section" it sits under), and the publish status. The page is looked up by slug: one already there is updated, and a new page is created when there is none. If a publish fails, a dialog reports the error with <strong>Retry</strong> and <strong>Cancel</strong> — Retry re-attempts the publish, Cancel leaves the page unpublished. The connection is remembered in this machine's settings file, so you type it once.</li>
 <li><strong>Publish Options</strong> — six checkable rows on the Results menu that shape every export: <strong>Show lap &amp; total times</strong>, <strong>Laps leaderboard</strong>, <strong>Fastest-time leaderboard</strong>, <strong>Full field</strong>, <strong>All cards drawn</strong>, and <strong>Show DNS Riders</strong>. A rider or team with no recorded laps on a finished ride shows as <strong>DNS</strong> at the bottom of its section; unchecking <strong>Show DNS Riders</strong> hides those rows. With show-times off, the exports embed no time data, and the fastest-time leaderboard is cleared and disabled.</li>
 </ul>
 <h3 id="before-wordpress">Before you publish to WordPress</h3>
@@ -229,6 +229,15 @@ h2, h3 { scroll-margin-top: 1rem; }
 <li>Untick <strong>Disable WordPress application passwords</strong> and save. The label is inverted, so it must be <strong>empty</strong> for Application Passwords to work.</li>
 </ol>
 <p>Leave it unticked — an Application Password stops authenticating the moment that option is switched back on.</p>
+<h3 id="add-page-to-menu">Add the page to your site's menu</h3>
+<p>A published page does not appear in the site's menu by itself — you add it to the menu in the WordPress dashboard. On a <strong>block theme</strong> (the Full-Site-Editing kind, which gorba.ca uses), the classic <strong>Appearance → Menus</strong> screen is empty; the menu lives in the <strong>Site Editor</strong>'s Navigation block instead.</p>
+<ol>
+<li>Log in to wp-admin with the account's <strong>normal password</strong> — an Application Password works only for the REST API, not the wp-admin login form.</li>
+<li>Open <strong>Appearance → Editor</strong> (the Site Editor).</li>
+<li>Open <strong>Navigation</strong> (a top-level item in the Site Editor's left sidebar) and pick the menu you want, such as <strong>Main Menu</strong>.</li>
+<li>On the submenu you want the page under, click its <strong>⋮ (Options)</strong> and choose <strong>Add submenu link</strong>, then <strong>Page Link</strong>, and search for and select the published page.</li>
+<li>Click <strong>Save</strong>, then reload the site and confirm the new item opens the page.</li>
+</ol>
 <h2 id="poker-the-run-way">How scoring works</h2>
 <p>It is not a race. It is a poker run. Each completed lap deals one card. At the finish, every entry's <strong>best 5-card hand from all cards drawn</strong> is scored. Jokers are wild: a joker plays as any card you need, but only when it actually improves the hand. A spare joker that does not improve it is left unused.</p>
 <h3>How a card is selected on a crossing</h3>

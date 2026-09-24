@@ -1908,12 +1908,13 @@ def _decorate_audit(context: _RouteContext, window: Any) -> None:  # noqa: ANN40
 def _decorate_publish_wordpress(context: _RouteContext, window: Any) -> None:  # noqa: ANN401
     """Bind ``publish_wordpress_dlg`` to the settings and the live ride.
 
-    Phase 4b: the site fields open on the context's live settings and
-    the title/slug on the live ride's name, so a re-publish is one
-    click. OK collects the dialog's :class:`PublishForm` and hands it
-    to :func:`_publish_wordpress`, which persists the site and starts
-    the off-loop render + POST. With no ride threaded (a route-level
-    open) the form opens on a blank ride name, and
+    Phase 4b: the site fields and the page kind open on the context's
+    live settings, and the title/slug on the live ride's name through
+    the selected kind, so a re-publish is one click. OK collects the
+    dialog's :class:`PublishForm` and hands it to
+    :func:`_publish_wordpress`, which persists the site and starts the
+    off-loop render + POST. With no ride threaded (a route-level open)
+    the form opens on a blank ride name, and
     :func:`_publish_wordpress`'s own guard is what refuses to publish
     it.
     """
@@ -2646,13 +2647,14 @@ def _publish_wordpress(context: _RouteContext, form: PublishForm) -> None:
 
     Results ▸ Publish to WordPress…'s action, called by
     ``PublishWordpressDialog`` once its form passes validation. The
-    five site fields are written back to the settings file first --
-    through the same write-discard-warn idiom every other settings
+    six site/page settings are written back to the settings file first
+    -- through the same write-discard-warn idiom every other settings
     write uses, since this runs in a wx event handler where an
     unguarded raise is swallowed with zero signal -- so the next
-    publish opens on what the operator just typed. The context's
-    settings are advanced either way; a refused file write costs the
-    persistence, not the publish.
+    publish opens on what the operator just typed (the full results or
+    the podium, whichever the dialog's ``wp_kind_choice`` carried).
+    The context's settings are advanced either way; a refused file
+    write costs the persistence, not the publish.
 
     The wx-touching render inputs are read here, on the main thread,
     exactly as :func:`_handle_export_command` reads them; the worker
@@ -2665,6 +2667,7 @@ def _publish_wordpress(context: _RouteContext, form: PublishForm) -> None:
         wp_password=form.password,
         wp_parent=form.parent,
         wp_status=form.status,
+        wp_kind=form.kind,
     )
     try:
         settings_store.save_settings(updated, context.settings_path)
@@ -2725,12 +2728,18 @@ def _publish_page(  # noqa: PLR0913, PLR0917 -- the form + its render inputs
     Pure -- no wx, no context: it runs on the publish worker, so it must
     never touch wx (measured: a wx call from the worker thread
     bus-errors the process). Its render inputs are the ones
-    :func:`_write_export` takes, captured on the main thread first;
-    ``htmlexport.render_wordpress`` is the WordPress content fragment --
-    the results page without its document scaffold, its stylesheet
-    scoped under the fragment's own wrapper, so publishing cannot
-    restyle the site. *riders* is the header's unique-rider count, the
-    same tally the HTML and PDF exports carry.
+    :func:`_write_export` takes, captured on the main thread first.
+
+    The form's kind picks the fragment, and both fragments are the
+    WordPress content shape -- the page without its document scaffold,
+    its stylesheet scoped under the fragment's own wrapper, so
+    publishing cannot restyle the site. The full kind publishes
+    ``htmlexport.render_wordpress``: the whole results page, team logos
+    included. The podium kind publishes
+    ``htmlexport.render_poster_wordpress`` instead, which takes no
+    ``team_logos`` (the poster draws no per-team marks). *riders* is the
+    header's unique-rider count, the same tally the HTML and PDF
+    exports carry and both fragments render.
 
     Both lookups and the POST carry the form's credentials, so whatever
     the site reports -- a refused Application Password, a WordPress
@@ -2739,15 +2748,25 @@ def _publish_page(  # noqa: PLR0913, PLR0917 -- the form + its render inputs
     create versus update: a page already at that slug is updated in
     place.
     """
-    html = htmlexport.render_wordpress(
-        config,
-        placed,
-        opts,
-        logo_path=config.logo_path,
-        team_logos=team_logos,
-        self_test_unverified=self_test_unverified,
-        riders=riders,
-    )
+    if form.kind == "podium":
+        html = htmlexport.render_poster_wordpress(
+            config,
+            placed,
+            opts,
+            logo_path=config.logo_path,
+            self_test_unverified=self_test_unverified,
+            riders=riders,
+        )
+    else:
+        html = htmlexport.render_wordpress(
+            config,
+            placed,
+            opts,
+            logo_path=config.logo_path,
+            team_logos=team_logos,
+            self_test_unverified=self_test_unverified,
+            riders=riders,
+        )
     auth = wordpress.BasicAuth(username=form.username, password=form.password)
     return wordpress.publish_page(
         form.base_url,
@@ -2783,9 +2802,10 @@ def _run_publish_offloop(  # noqa: PLR0913 -- context + the captured publish inp
     A successful publish posts the page's own link on the status bar and
     records it in the launch's log -- the always-on record, because a
     page that reached the internet has to be traceable from the log
-    alone. A failure shows the site's own message in one native error
-    alert and records it the same way, so a publish never fails
-    silently.
+    alone. A failure asks Retry/Cancel on the main thread and records
+    the site's own message the same way, so a publish never fails
+    silently: Retry starts a fresh worker thread on the captured
+    publish inputs, Cancel leaves the page unpublished.
     """
     from rivercrossing.ui import std_dialogs  # noqa: PLC0415 -- deferred, see module docstring
 
@@ -2806,11 +2826,22 @@ def _run_publish_offloop(  # noqa: PLR0913 -- context + the captured publish inp
             # unbound by the time CallAfter runs (Python deletes an
             # except target at the end of its block).
             wx = require_wx()
-            wx.CallAfter(std_dialogs.show_error, context.frame, "Publish Failed", str(exc))
+            wx.CallAfter(_ask_retry, str(exc))
             return
         _log_warn(context, f"Published to {page.link}")
         wx = require_wx()
         wx.CallAfter(context.frame.SetStatusText, f"Published to {page.link}")
+
+    def _ask_retry(message: str) -> None:
+        """Ask Retry/Cancel on the main thread; Retry re-publishes.
+
+        Called through ``wx.CallAfter`` so the dialog runs on the main
+        thread. Retry starts a fresh worker thread running the same
+        ``publish`` closure with the already-captured publish inputs.
+        """
+        wx = require_wx()
+        if std_dialogs.show_retry(context.frame, "Publish Failed", message) == int(wx.ID_OK):
+            threading.Thread(target=publish, daemon=True).start()
 
     threading.Thread(target=publish, daemon=True).start()
 

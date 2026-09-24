@@ -330,6 +330,29 @@ def _poster_subtitle(result: EntryResult) -> str:
     return f"{kind}{sex} — {result.name} · {result.laps} laps"
 
 
+def _bragging_clause(opts: ExportOptions) -> str:
+    """Compose the cover's bragging-rights clause (E1).
+
+    The subject list names the boards the options actually show: the
+    Laps leaderboard gates the lap-count subject exactly as
+    ``show_times`` gates times, and the two are joined with " and " --
+    the same rule ``htmlexport``'s templates apply, so the report and
+    the HTML cannot drift. The opening word is capitalized because a
+    lone "times" then starts the sentence. Both boards off returns the
+    empty string, leaving the cover's sentence at the hand clause.
+    """
+    subjects = [
+        name
+        for name, shown in (("Lap counts", opts.laps_board), ("times", opts.show_times))
+        if shown
+    ]
+    if not subjects:
+        return ""
+    joined = " and ".join(subjects)
+    subject = f"{joined[0].upper()}{joined[1:]}"
+    return f" {subject} below are unofficial and shown for bragging rights only."
+
+
 class _RideLike(Protocol):
     """The ride fields :func:`render` reads (documented seam, D15).
 
@@ -1276,11 +1299,14 @@ class _ReportPDF(FPDF):
         self.ln(0.10)
         self.set_font(_FONT_BODY, "", 8.5)
         self.set_text_color(*_INK)
+        disclaimer = (
+            "It's not a race, it's a poker run — placings are by best poker hand."
+            + _bragging_clause(payload.options)
+        )
         self.multi_cell(
             0,
             0.14,
-            text="It's not a race, it's a poker run — placings are by best poker hand. "
-            "Lap counts and times below are unofficial and shown for bragging rights only.",
+            text=disclaimer,
             new_x=XPos.LMARGIN,
             new_y=YPos.NEXT,
         )
