@@ -15,6 +15,13 @@ All notable changes to RiverCrossing are recorded here. The format follows
   settings file. The published content is the app's own results layout, scoped so it cannot restyle
   the site's theme.
 
+### Changed
+
+- **Card faces are suit-coloured again** — hearts and diamonds render in the suit red, clubs and
+  spades in ink and the joker in steel, on the results page, the WordPress fragment, the PDF report
+  and podium poster and in the app's console and standings; the PDF cards also gain the box the HTML
+  chips already had.
+
 ## [1.1.0] - 2026-09-21
 
 ### Added
