@@ -1,20 +1,36 @@
 # SPDX-License-Identifier: GPL-3.0-only
-"""``PublishWordpressDialog``: the Results publish form.
+"""The publish form and its modal progress window.
 
-Results ▸ Publish to WordPress… opens this dialog; OK hands the
-collected field values to the app's publish path, which renders the
-results page and POSTs it to the site. The five decisions the dialog
-makes are all UI-side and live here, not in the app: what each field
-opens with, which status labels the choice offers, what the
+Results ▸ Publish to WordPress… opens :class:`PublishWordpressDialog`;
+OK hands the collected field values to the app's publish path, which
+renders the results page and POSTs it to the site. The five decisions
+the form makes are all UI-side and live here, not in the app: what each
+field opens with, which status labels the choice offers, what the
 ``wp_kind_choice`` dropdown changes when it moves (the page kind, and
 with it the title and slug defaults), why a publish is refused before
 the site is ever contacted, and that a refused publish leaves the
 dialog open for a correction.
 
-This is a view in the module-skeletons.md sense: it renders values into
-its controls, reads them back, and forwards one :class:`PublishForm` --
-it holds no site state and contacts nothing. The pure decisions all
-come from :mod:`rivercrossing.ui.presenters.publish_wordpress`
+:class:`PublishRunningDialog` is the modal progress window the app shows
+while that publish runs, mirroring ``views/simulator.SimRunningDialog``
+over ``sim_running_dlg``: resolve the frozen controls, point Escape at
+the custom-id Cancel button, and defer the work into the modal loop
+:meth:`PublishRunningDialog.run` opens, so the app starts the worker
+inside it. The worker is off-loop (R-02: a wx call from a worker thread
+bus-errors the process), so every status update reaches this window
+through ``wx.CallAfter``.
+
+**Cancel does not abort an HTTP request.** The publish is a blocking
+``urllib`` call with a 30-second timeout, so a request already in flight
+cannot be stopped; Cancel marks the attempt abandoned and the app's
+worker stops at its next checkpoint -- before the next HTTP call, or as
+soon as the in-flight one returns -- and then reports a cancel rather
+than a result. The window's docstring claims nothing more.
+
+These are views in the module-skeletons.md sense: they render values
+into their controls, read them back, and forward events -- they hold no
+site state and contact nothing. The pure decisions all come from
+:mod:`rivercrossing.ui.presenters.publish_wordpress`
 (``STATUS_CHOICES``, ``PUBLISH_KIND_CHOICES``, ``default_title``,
 ``default_slug``, ``status_value``, ``kind_value``, and
 :meth:`PublishForm.errors`), so the rules are unit-tested without a
@@ -28,13 +44,14 @@ one native alert -- then the dialog stays up so the operator can fix
 the field, the form not being lost to a close. Everything that can
 fail *after* that -- DNS, TLS, a refused Application Password, a
 WordPress error document -- belongs to the app's off-thread publish
-path and reports on the status bar or in its own alert; this view is
-gone from the screen by then.
+path, which reports it in the Retry/Cancel alert after the progress
+window's modal ends.
 """
 
 from typing import TYPE_CHECKING, Any
 
 import wx
+import wx.xrc
 
 from rivercrossing.ui import ids, std_dialogs
 from rivercrossing.ui.presenters.publish_wordpress import (
@@ -46,14 +63,14 @@ from rivercrossing.ui.presenters.publish_wordpress import (
     kind_value,
     status_value,
 )
-from rivercrossing.ui.views._support import DialogFindMixin
+from rivercrossing.ui.views._support import DialogFindMixin, load_dialog
 
 if TYPE_CHECKING:
     from collections.abc import Callable
 
     from rivercrossing.ui.presenters.settings import AppSettings
 
-__all__ = ["PublishWordpressDialog"]
+__all__ = ["PublishRunningDialog", "PublishWordpressDialog", "load_publish_running_window"]
 
 # The alert's caption when the fields cannot be published -- the
 # dialog's own title, so the message names the act that was refused.
@@ -234,4 +251,111 @@ class PublishWordpressDialog(DialogFindMixin):  # _find: ui.views._support
             std_dialogs.show_error(self.dialog, _ERROR_TITLE, "\n".join(errors))
             return
         self.on_publish(form)
+        self.dialog.EndModal(wx.ID_OK)
+
+
+def load_publish_running_window(parent: wx.Window) -> wx.Dialog:
+    """Load ``publish_running_dlg`` from the shared XRC resource.
+
+    ``views.simulator._load_running_window``'s shape: the app's own
+    bootstrap fills the process-global ``XmlResource``
+    (``app._load_xrc_resources``), so the progress window loads from
+    the same resource every other app-owned window comes from, through
+    :func:`~rivercrossing.ui.views._support.load_dialog` so a degraded
+    singleton load self-heals instead of answering ``None``. The
+    *parent* is the console frame the publish form closed back to, and
+    it survives the self-heal's rebuild.
+    """
+    return load_dialog(wx.xrc.XmlResource.Get(), ids.PUBLISH_RUNNING_DLG, parent=parent)
+
+
+class PublishRunningDialog(DialogFindMixin):  # _find: ui.views._support
+    """Code-side behaviour for ``publish_running_dlg`` (Phase 4b).
+
+    Mirrors ``SimRunningDialog``: the app loads the window, decorates it
+    with this view and calls :meth:`run`, which opens the modal and
+    defers :meth:`_start` into that modal's own loop. The publish runs
+    on a worker thread, so the app's worker reports back through
+    ``wx.CallAfter`` -- :meth:`set_status` and :meth:`pulse` are the
+    main-thread seams it calls -- and calls :meth:`finish` to end the
+    modal once the attempt is over.
+
+    Cancel is a request, not an abort: the publish's HTTP call is
+    blocking and cannot be interrupted, so :meth:`_on_cancel` only
+    records the operator's decision (``is_cancelled``), and the worker
+    stops at its next checkpoint -- before the next HTTP call, or as
+    soon as the one in flight returns.
+    """
+
+    def __init__(self, dialog: wx.Dialog, *, on_start: Callable[[], None]) -> None:
+        """Decorate an already-loaded ``publish_running_dlg`` window.
+
+        Args:
+            dialog: The ``wx.Dialog`` loaded from ``dialogs.xrc``.
+            on_start: Called once :meth:`run`'s modal loop is up; the
+                app wires it to start the off-thread publish worker.
+        """
+        self.dialog = dialog
+        self.on_start = on_start
+        self._cancelled = False
+
+        self.progress_gauge = self._find(ids.PROGRESS_GAUGE, wx.Gauge)
+        self.publish_status_lbl = self._find(ids.PUBLISH_STATUS_LBL, wx.StaticText)
+        self.cancel_btn = self._find(ids.CANCEL_BTN, wx.Button)
+
+        # wx's native Escape handling only ever looks for wxID_CANCEL,
+        # and cancel_btn carries a custom id, so the escape id is set
+        # explicitly -- Escape then lands on the same cancel path a
+        # click does (SimRunningDialog's/views.dialogs.wire_escape_to's
+        # own measured reasoning).
+        self.dialog.SetEscapeId(self.cancel_btn.GetId())
+        self.dialog.Bind(wx.EVT_BUTTON, self._on_cancel, self.cancel_btn)
+        self.dialog.Fit()
+
+    def _on_cancel(self, _event: wx.CommandEvent) -> None:
+        """Record the cancel request; the worker polls it.
+
+        Nothing is aborted here: the publish's HTTP call is blocking,
+        so the worker notices the flag at its next checkpoint and
+        abandons the attempt (the module docstring's Cancel contract).
+        """
+        self._cancelled = True
+
+    def is_cancelled(self) -> bool:
+        """Return whether the operator has abandoned this attempt."""
+        return self._cancelled
+
+    def set_status(self, text: str) -> None:
+        """Set the live status line.
+
+        Called on the main thread -- the app routes it through
+        ``wx.CallAfter`` from the worker.
+        """
+        self.publish_status_lbl.SetLabel(text)
+
+    def pulse(self) -> None:
+        """Animate the gauge and pump the loop so it repaints.
+
+        ``wx.Yield()`` runs the pending events -- the gauge paint and
+        any Cancel click -- while the main thread waits on the worker.
+        """
+        self.progress_gauge.Pulse()
+        wx.Yield()
+
+    def run(self) -> None:
+        """Show the dialog modally; return once :meth:`finish` ends it.
+
+        The worker is started with ``wx.CallAfter`` so it begins inside
+        the modal loop this call opens, then ``ShowModal`` blocks until
+        the app's completion path calls :meth:`finish`.
+        """
+        wx.CallAfter(self._start)
+        self.dialog.ShowModal()
+
+    def _start(self) -> None:
+        """Begin the work: forward to the app's own start seam."""
+        self.on_start()
+
+    def finish(self) -> None:
+        """End the modal: the app's seam for closing the window."""
         self.dialog.EndModal(wx.ID_OK)

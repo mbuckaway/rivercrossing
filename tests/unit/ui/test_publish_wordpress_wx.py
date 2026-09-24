@@ -36,10 +36,13 @@ from rivercrossing.ui import ids
 from rivercrossing.ui.presenters.publish_wordpress import default_slug, default_title
 from rivercrossing.ui.presenters.settings import default_settings
 from rivercrossing.ui.views import _support
-from rivercrossing.ui.views.publish_wordpress import PublishWordpressDialog
+from rivercrossing.ui.views.publish_wordpress import (
+    PublishRunningDialog,
+    PublishWordpressDialog,
+)
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
+    from collections.abc import Callable, Iterator
 
 # The live ride name the dialog derives its title and slug from, and
 # the two dropdown labels (PUBLISH_KIND_CHOICES' own render order).
@@ -182,3 +185,184 @@ def test_publish_dialog_collect_form_given_the_podium_item_collects_the_kind(
     form = view.collect_form()
 
     assert form.kind == "podium"
+
+
+# --------------------------------------------------------------------
+# Phase 4b: the modal publish progress window (``publish_running_dlg``).
+#
+# ``PublishRunningDialog`` mirrors ``SimRunningDialog``: a code-side
+# view over an XRC progress window that resolves the status line, the
+# gauge and Cancel, points Escape at Cancel (a custom id, so wx's
+# native escape path cannot find it) and defers its start into the
+# modal loop ``run`` opens. The publish itself is a blocking HTTP
+# call, so this view never aborts a request in flight: Cancel marks
+# the attempt abandoned and the worker stops at its next checkpoint.
+
+_STATUS_TEXT = "Publishing the results page…"
+
+
+def _noop_start() -> None:
+    """Do nothing: the view only forwards ``on_start``."""
+
+
+def _running_view(
+    dialog: wx.Dialog, *, on_start: Callable[[], None] = _noop_start
+) -> PublishRunningDialog:
+    """Decorate *dialog* as the publish progress view."""
+    return PublishRunningDialog(dialog, on_start=on_start)
+
+
+@pytest.fixture
+def running_dialog(wx_app: Any) -> wx.Dialog:  # noqa: ANN401, ARG001 -- ordering only
+    """Load the shipped ``publish_running_dlg`` for one test."""
+    window: wx.Dialog = _support.fresh_resource().LoadDialog(None, ids.PUBLISH_RUNNING_DLG)
+    _WINDOWS.append(window)
+    return window
+
+
+def test_fresh_resource_given_the_packaged_dir_resolves_the_publish_running_dialog(
+    running_dialog: wx.Dialog,
+) -> None:
+    """The shipped progress window loads under its frozen name."""
+    assert isinstance(running_dialog, wx.Dialog)
+    assert running_dialog.GetName() == ids.PUBLISH_RUNNING_DLG
+
+
+def test_publish_running_dialog_init_resolves_its_three_frozen_controls(
+    running_dialog: wx.Dialog,
+) -> None:
+    """The status label, the gauge and Cancel all resolve by name."""
+    view = _running_view(running_dialog)
+
+    assert (
+        view.publish_status_lbl.GetName(),
+        view.progress_gauge.GetName(),
+        view.cancel_btn.GetName(),
+    ) == (ids.PUBLISH_STATUS_LBL, ids.PROGRESS_GAUGE, ids.CANCEL_BTN)
+
+
+def test_publish_running_dialog_set_status_given_text_sets_the_label(
+    running_dialog: wx.Dialog,
+) -> None:
+    """The live status line follows ``set_status``."""
+    view = _running_view(running_dialog)
+
+    view.set_status(_STATUS_TEXT)
+
+    assert view.publish_status_lbl.GetLabel() == _STATUS_TEXT
+
+
+def test_publish_running_dialog_cancel_click_given_the_button_sets_the_cancelled_flag(
+    running_dialog: wx.Dialog,
+) -> None:
+    """Cancel marks the attempt abandoned; the worker polls the flag."""
+    view = _running_view(running_dialog)
+    event = wx.CommandEvent(wx.EVT_BUTTON.typeId, view.cancel_btn.GetId())
+
+    view.cancel_btn.ProcessEvent(event)
+
+    assert view.is_cancelled() is True
+
+
+def test_publish_running_dialog_given_no_click_reports_not_cancelled(
+    running_dialog: wx.Dialog,
+) -> None:
+    """T-3's other arm: a freshly opened dialog is not cancelled."""
+    view = _running_view(running_dialog)
+
+    assert view.is_cancelled() is False
+
+
+def test_publish_running_dialog_escape_id_targets_the_cancel_button(
+    running_dialog: wx.Dialog,
+) -> None:
+    """Escape lands on the same cancel path a click does."""
+    view = _running_view(running_dialog)
+
+    assert running_dialog.GetEscapeId() == view.cancel_btn.GetId()
+
+
+class _FakeGauge:
+    """A wxGauge double counting its pulses."""
+
+    def __init__(self) -> None:
+        """Start with no pulse recorded."""
+        self.pulses = 0
+
+    def Pulse(self) -> None:  # noqa: N802 -- wx API name
+        """Record one pulse."""
+        self.pulses += 1
+
+
+class _FakeRunningDialog:
+    """A wx.Dialog double recording its modal traffic."""
+
+    def __init__(self) -> None:
+        """Start unshown and unended."""
+        self.shown = 0
+        self.ended: list[int] = []
+
+    def ShowModal(self) -> int:  # noqa: N802 -- wx API name
+        """Record one modal open and return its result."""
+        self.shown += 1
+        return int(wx.ID_OK)
+
+    def EndModal(self, result: int) -> None:  # noqa: N802 -- wx API name
+        """Record one modal close."""
+        self.ended.append(result)
+
+
+def test_publish_running_dialog_pulse_given_the_gauge_pulses_and_yields(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Pulse animates the gauge and pumps the loop so it repaints."""
+    shell = object.__new__(PublishRunningDialog)
+    shell.progress_gauge = _FakeGauge()
+    yields: list[int] = []
+    monkeypatch.setattr(wx, "Yield", lambda: yields.append(1))
+
+    shell.pulse()
+
+    assert (shell.progress_gauge.pulses, yields) == (1, [1])
+
+
+def test_publish_running_dialog_start_given_the_app_seam_calls_it() -> None:
+    """``_start`` is the seam the app wires its worker start into."""
+    shell = object.__new__(PublishRunningDialog)
+    started: list[str] = []
+    shell.on_start = lambda: started.append("worker")
+
+    shell._start()
+
+    assert started == ["worker"]
+
+
+def test_publish_running_dialog_finish_ends_the_modal() -> None:
+    """``finish`` is the app's seam for ending the modal."""
+    shell = object.__new__(PublishRunningDialog)
+    shell.dialog = _FakeRunningDialog()
+
+    shell.finish()
+
+    assert shell.dialog.ended == [int(wx.ID_OK)]
+
+
+def test_publish_running_dialog_run_defers_start_then_shows_the_modal(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``_start`` runs inside the modal loop ``run`` opens."""
+    shell = object.__new__(PublishRunningDialog)
+    shell.dialog = _FakeRunningDialog()
+    started: list[str] = []
+    shell._start = lambda: started.append("started")
+    deferred: list[Callable[[], None]] = []
+
+    def _call_after(callable_: Callable[[], None]) -> None:
+        deferred.append(callable_)
+        callable_()
+
+    monkeypatch.setattr(wx, "CallAfter", _call_after)
+
+    shell.run()
+
+    assert (started, deferred == [shell._start], shell.dialog.shown) == (["started"], True, 1)

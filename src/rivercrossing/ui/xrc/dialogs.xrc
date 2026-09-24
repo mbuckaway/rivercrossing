@@ -1421,4 +1421,55 @@
     </object>
   </object>
 
+  <!-- Phase 4b: the modal publish progress window, opened after
+       publish_wordpress_dlg's OK closes the form and the render + POST
+       run off-loop. Authored exactly like simulation.xrc's
+       sim_running_dlg (its own measured precedent): a live status line
+       the worker's wx.CallAfter updates fill in, a percent gauge the
+       worker pulses, and a custom-id cancel_btn that the view points
+       Escape at with SetEscapeId. cancel_btn is neither wxID_OK nor
+       wxID_CANCEL, so it sits in the sizer directly rather than in a
+       stock button row (this file's header). Fixed size: the style
+       carries no wxRESIZE_BORDER, so the pulsing gauge is the window's
+       only motion. progress_gauge and cancel_btn deliberately reuse the
+       simulator's names: section 15b requires uniqueness only within
+       one top-level window, so only publish_running_dlg and
+       publish_status_lbl are new names. -->
+  <object class="wxDialog" name="publish_running_dlg">
+    <title>Publishing to WordPress</title>
+    <style>wxDEFAULT_DIALOG_STYLE</style>
+
+    <object class="wxBoxSizer">
+      <orient>wxVERTICAL</orient>
+
+      <object class="sizeritem">
+        <flag>wxEXPAND|wxLEFT|wxRIGHT|wxTOP</flag>
+        <border>10</border>
+        <object class="wxStaticText" name="publish_status_lbl">
+          <label></label>
+        </object>
+      </object>
+
+      <object class="sizeritem">
+        <flag>wxEXPAND|wxALL</flag>
+        <border>10</border>
+        <object class="wxGauge" name="progress_gauge">
+          <size>320,16</size>
+          <range>100</range>
+          <value>0</value>
+          <style>wxGA_HORIZONTAL</style>
+        </object>
+      </object>
+
+      <object class="sizeritem">
+        <flag>wxALIGN_RIGHT|wxLEFT|wxRIGHT|wxBOTTOM</flag>
+        <border>10</border>
+        <object class="wxButton" name="cancel_btn">
+          <label>Cancel</label>
+        </object>
+      </object>
+
+    </object>
+  </object>
+
 </resource>

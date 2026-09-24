@@ -1598,3 +1598,99 @@ def test_publish_wordpress_dlg_kind_choice_sits_in_a_two_column_caption_row() ->
     ]
 
     assert (_param(row, "cols"), captions) == ("2", [WHAT_TO_PUBLISH_CAPTION])
+
+
+# --------------------------------------------------------------------
+# Phase 4b: the modal publish progress window (dialogs.xrc).
+#
+# It mirrors simulation.xrc's ``sim_running_dlg``: a live status line, a
+# percent gauge and a custom-id Cancel button, with no stock button row
+# (``cancel_btn`` is neither ``wxID_OK`` nor ``wxID_CANCEL``, so the
+# sizer holds it directly) and no resize border. ``progress_gauge`` and
+# ``cancel_btn`` legitimately repeat the simulator's names -- section
+# 15b requires uniqueness only within one top-level window -- and only
+# ``publish_running_dlg`` and ``publish_status_lbl`` are new names.
+
+PUBLISH_RUNNING_DLG = "publish_running_dlg"
+PUBLISH_RUNNING_DLG_CONTROLS = ("publish_status_lbl", "progress_gauge", "cancel_btn")
+PUBLISH_RUNNING_TITLE = "Publishing to WordPress"
+PUBLISHED_STATUS_GAUGE_BOX = "320,16"
+
+
+def _publish_running_dialog() -> Element:
+    """Return dialogs.xrc's ``publish_running_dlg`` element."""
+    return _top_level_windows("dialogs.xrc")[PUBLISH_RUNNING_DLG]
+
+
+def test_publish_running_dlg_is_declared_as_a_top_level_wx_dialog() -> None:
+    """LoadDialog resolves the progress window by its frozen name."""
+    assert _publish_running_dialog().attrib["class"] == "wxDialog"
+
+
+def test_publish_running_dlg_declares_its_controls_in_reading_order() -> None:
+    """Status line, gauge, Cancel: the ``sim_running_dlg`` sizer."""
+    names = _control_names_in(_publish_running_dialog())
+
+    assert names == list(PUBLISH_RUNNING_DLG_CONTROLS)
+
+
+def test_publish_running_dlg_declares_the_publishing_title() -> None:
+    """The window names the act it is reporting."""
+    assert _param(_publish_running_dialog(), "title") == PUBLISH_RUNNING_TITLE
+
+
+def test_publish_running_dlg_status_label_starts_empty() -> None:
+    """A static text the worker's own status updates fill in."""
+    control = _objects_by_name(_publish_running_dialog())["publish_status_lbl"]
+
+    assert (control.attrib["class"], _param(control, "label")) == ("wxStaticText", "")
+
+
+def test_publish_running_dlg_gauge_declares_the_shared_percent_bar() -> None:
+    """The indeterminate bar: 320x16, range 100, horizontal."""
+    control = _objects_by_name(_publish_running_dialog())["progress_gauge"]
+
+    assert (
+        control.attrib["class"],
+        _param(control, "size"),
+        _param(control, "range"),
+        _param(control, "style"),
+    ) == ("wxGauge", PUBLISHED_STATUS_GAUGE_BOX, "100", "wxGA_HORIZONTAL")
+
+
+def test_publish_running_dlg_cancel_button_declares_the_cancel_label() -> None:
+    """Cancel carries a custom id, so it is authored plainly."""
+    control = _objects_by_name(_publish_running_dialog())["cancel_btn"]
+
+    assert (control.attrib["class"], _param(control, "label")) == ("wxButton", "Cancel")
+
+
+def test_publish_running_dlg_declares_no_std_dialog_button_sizer() -> None:
+    """A custom-id button would never be placed by a stock sizer."""
+    classes = [obj.attrib["class"] for obj in _publish_running_dialog().iter("object")]
+
+    assert classes.count("wxStdDialogButtonSizer") == 0
+
+
+def test_publish_running_dlg_declares_no_resize_border() -> None:
+    """A fixed-size progress window: the gauge is the only motion."""
+    style = _param(_publish_running_dialog(), "style")
+
+    assert (style, "wxRESIZE_BORDER" in style) == ("wxDEFAULT_DIALOG_STYLE", False)
+
+
+def test_publish_running_dlg_declares_no_duplicate_control_name() -> None:
+    """Section 15b: names are unique within their window."""
+    counts = Counter(_control_names_in(_publish_running_dialog()))
+
+    repeated = sorted(name for name, count in counts.items() if count > 1)
+
+    assert repeated == []
+
+
+def test_publish_running_dlg_reuses_the_simulators_gauge_and_cancel_names() -> None:
+    """Section 15b: the two are shared across windows on purpose."""
+    running = set(_control_names_in(_publish_running_dialog()))
+    simulator = set(_control_names_in(_top_level_windows(SIMULATION_XRC)["sim_running_dlg"]))
+
+    assert {"progress_gauge", "cancel_btn"} <= running & simulator
