@@ -11,8 +11,10 @@ longer maps menu-item ids to modes; :class:`ThemeController` applies
 a :class:`ThemeMode` directly (:meth:`ThemeController.apply_mode`),
 the call the settings OK path makes. Per A8, this module owns
 appearance-mode logic only. module-skeletons.md:56 also plans a
-light/dark token table for this module; that table stays deferred,
-since it has no custom-drawn consumer yet (EPIC 1 open item O2).
+light/dark token table for this module; that table stays deferred --
+the one custom-drawn colour the app now picks (:func:`card_red`) is a
+two-value accessor over the card module's own reds, not a token table
+(EPIC 1 open item O2).
 
 Per-OS truth, measured against the wxPython 4.3.1 / wxWidgets 3.3.3
 pin (spec.md / xrc-windows.md footnote (6)):
@@ -45,12 +47,14 @@ from enum import Enum
 from typing import Any
 
 from rivercrossing.ui import require_wx
+from rivercrossing.ui.card_text import DARK_RED, SUIT_RED
 
 __all__ = [
     "ThemeController",
     "ThemeMode",
     "apply",
     "apply_light_mode_panel_bg",
+    "card_red",
     "notice_for_result",
 ]
 
@@ -140,6 +144,35 @@ def apply_light_mode_panel_bg(dialog: Any) -> None:  # noqa: ANN401 -- wx ships 
     if wx.SystemSettings.GetAppearance().IsDark():
         return
     dialog.SetBackgroundColour(wx.Colour(*_LIGHT_PANEL_BG))
+
+
+def card_red() -> str:
+    """Return the card-face red the rendered appearance calls for.
+
+    The card lists draw only the red explicitly (``ui/card_text.py``),
+    so that one colour has to follow the appearance: the light red is
+    3.07:1 on a dark list, under §7's 4.5:1 floor, and the dark red is
+    under it on a light one. The probe is the measured
+    ``GetAppearance().IsDark()`` :func:`apply_light_mode_panel_bg`
+    documents above, for the same reason -- the *rendered* appearance
+    decides, not the selected radio: System mode on a dark OS must take
+    the dark red, and on MSW a Light selection the OS cannot apply at
+    runtime (``CannotChange``) must not.
+
+    The console is the one modeless window, so it re-reads this through
+    the frame's own appearance-change handler rather than at
+    construction alone (``views/main_frame.py``); the modal results
+    dialog and rider editor read it when they are rebuilt.
+
+    Returns:
+        :data:`~rivercrossing.ui.card_text.DARK_RED` in a dark
+        appearance, :data:`~rivercrossing.ui.card_text.SUIT_RED`
+        otherwise.
+    """
+    wx = require_wx()
+    if wx.SystemSettings.GetAppearance().IsDark():
+        return DARK_RED
+    return SUIT_RED
 
 
 def apply(app: Any, mode: ThemeMode) -> Any:  # noqa: ANN401 -- wx ships no stubs

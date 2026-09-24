@@ -31,9 +31,9 @@ import pytest
 import wx
 from defusedxml.ElementTree import parse
 
-from rivercrossing.ui import feed_model
-from rivercrossing.ui.card_text import JOKER_STEEL, SUIT_INK, SUIT_RED
-from rivercrossing.ui.presenters.data_source import FeedRow
+from rivercrossing.ui import feed_model, theme
+from rivercrossing.ui.card_text import DARK_RED, SUIT_RED
+from rivercrossing.ui.presenters.data_source import FeedRow, RiderRow
 from rivercrossing.ui.views import main_frame
 
 if TYPE_CHECKING:
@@ -43,6 +43,19 @@ if TYPE_CHECKING:
 XRC_DIR = Path(__file__).resolve().parents[3] / "src" / "rivercrossing" / "ui" / "xrc"
 
 MAIN_XRC = "main.xrc"
+
+
+@pytest.fixture(autouse=True)
+def _light_card_red(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Resolve the feed's card red without a live ``wx.App``.
+
+    ``theme.card_red()`` probes ``wx.SystemSettings.GetAppearance()``,
+    which raises ``PyNoAppError`` headless (measured;
+    ``test_theme.py``'s own split), so every ``show_feed`` below sees
+    the light appearance's red. The dark red is pinned by building the
+    model directly and by the one test that overrides the probe.
+    """
+    monkeypatch.setattr(theme, "card_red", lambda: SUIT_RED)
 
 
 # --------------------------------------------------------- the doubles
@@ -208,12 +221,17 @@ class _Presenter:
     """A presenter double recording the forwarded search text."""
 
     def __init__(self) -> None:
-        """Start with no forwarded text."""
+        """Start with no forwarded text and no gate refresh."""
         self.search_texts: list[str] = []
+        self.gates = 0
 
     def on_search_text(self, text: str) -> None:
         """Record one forwarded search-box value."""
         self.search_texts.append(text)
+
+    def refresh_console_gates(self) -> None:
+        """Record one console-gate refresh."""
+        self.gates += 1
 
 
 class _Shell:
@@ -463,6 +481,169 @@ def test_show_feed_given_rows_associates_a_model_carrying_them_all() -> None:
 
     assert control.model.GetCount() == 2
     assert control.model.GetValueByRow(0, feed_model.COL_PLATE) == "12"
+
+
+def test_show_feed_given_rows_retains_them_for_the_next_appearance_switch() -> None:
+    """A theme change rebuilds from the rows the last render kept.
+
+    The presenter early-returns on an unchanged row set, so the view
+    must hold the rows itself for the appearance rebuild.
+    """
+    shell = _Shell()
+    rows = [_feed_row(plate="12")]
+
+    main_frame.MainFrame.show_feed(shell, rows)
+
+    assert shell._feed_rows == rows
+
+
+# ------------------------------- the console's live appearance switch
+#
+# The console is the one modeless window (the standings dialog and the
+# rider editor are modal, rebuilt per open), so a Live/Dark switch under
+# it leaves both card models holding the red of the appearance they were
+# built in. `_reapply_card_red` rebuilds them -- deliberately not
+# via `show_feed`/`show_riders`, which fire the ride-changed seam and
+# the console-gate refresh, side effects a theme change must not have.
+
+
+class _RidersControl:
+    """A ``console_riders_list`` double for the appearance rebuild."""
+
+    def __init__(self) -> None:
+        """Start with no associated model and no columns."""
+        self.model: Any = None
+        self.columns: dict[int, _Column] = {}
+
+    def GetColumn(self, index: int) -> _Column | None:  # noqa: N802 -- wx API name
+        """Return the column at *index*, or ``None``."""
+        return self.columns.get(index)
+
+    def AssociateModel(self, model: object) -> None:  # noqa: N802 -- wx API name
+        """Record the associated model."""
+        self.model = model
+
+
+class _AppearanceShell:
+    """A ``MainFrame`` double owning the state a rebuild reads."""
+
+    def __init__(self) -> None:
+        """Own both lists' state and counts of the firing seams."""
+        self.crossings_list = _CrossingsListControl()
+        self.console_riders_list = _RidersControl()
+        self._crossings_model: Any = None
+        self._riders_model: Any = None
+        self._feed_rows: list[FeedRow] = []
+        self._riders_rows: list[RiderRow] = []
+        self._feed_sort_column = feed_model.COL_TIME
+        self._feed_sort_ascending = False
+        self._riders_sort_column: int | None = None
+        self._riders_sort_ascending = True
+        self.rides_changed = 0
+        self._presenter = _Presenter()
+
+    def _notify_ride_changed(self) -> None:
+        """Record the menu-binder notification the real frame fires."""
+        self.rides_changed += 1
+
+    def _apply_feed_sort(self) -> None:
+        """Run the real handler so the rebuild's sort re-apply runs."""
+        main_frame.MainFrame._apply_feed_sort(self)
+
+    def _apply_sort(self) -> None:
+        """Run the real handler so the rebuild's sort re-apply runs."""
+        main_frame.MainFrame._apply_sort(self)
+
+    def _reapply_card_red(self) -> None:
+        """Run the real rebuild so the handler runs the real code."""
+        main_frame.MainFrame._reapply_card_red(self)
+
+
+_ROWS = [RiderRow(plate="123", name="Sam Ellis", team=None, sex="F", cards=("AS", "KH"))]
+
+
+def _rendered_shell() -> _AppearanceShell:
+    """Return a shell that has rendered both card lists (arrange)."""
+    shell = _AppearanceShell()
+    main_frame.MainFrame.show_feed(shell, [_feed_row(card="9H")])
+    main_frame.MainFrame.show_riders(shell, _ROWS)
+    return shell
+
+
+def test_reapply_card_red_given_a_dark_appearance_rebuilds_the_feeds_card_model(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The feed's Card cell takes the appearance now rendered."""
+    monkeypatch.setattr(theme, "card_red", lambda: DARK_RED)
+    shell = _rendered_shell()
+
+    main_frame.MainFrame._reapply_card_red(shell)
+
+    assert shell._crossings_model.GetValueByRow(0, feed_model.COL_CARD) == (
+        f'<span color="{DARK_RED}">9♥</span>'
+    )
+
+
+def test_reapply_card_red_given_a_dark_appearance_rebuilds_the_riders_card_model(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The riders sidebar's Cards cell takes the same new red."""
+    monkeypatch.setattr(theme, "card_red", lambda: DARK_RED)
+    shell = _rendered_shell()
+
+    main_frame.MainFrame._reapply_card_red(shell)
+
+    assert shell._riders_model.GetValueByRow(0, main_frame.RIDERS_COL_CARDS) == (
+        f'A♠ <span color="{DARK_RED}">K♥</span>'
+    )
+
+
+def test_reapply_card_red_given_an_appearance_change_re_applies_the_remembered_sorts(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A fresh model drops the sort key, so the arrow is put back."""
+    monkeypatch.setattr(theme, "card_red", lambda: DARK_RED)
+    shell = _rendered_shell()
+    column = _Column(feed_model.COL_TIME, is_sort_key=True)
+    shell.crossings_list.columns[feed_model.COL_TIME] = column
+
+    main_frame.MainFrame._reapply_card_red(shell)
+
+    assert column.operations == ["unset", "set"]
+
+
+def test_reapply_card_red_given_an_appearance_change_fires_no_ride_changed_seam() -> None:
+    """T-3 negative: a theme change is not a ride change.
+
+    ``show_feed`` fires the menu-binder seam and the console-gate
+    refresh, and the arrange below runs it -- so both counters are
+    already one before the rebuild. The rebuild must leave them there.
+    """
+    shell = _rendered_shell()
+    before = (shell.rides_changed, shell._presenter.gates)
+
+    main_frame.MainFrame._reapply_card_red(shell)
+
+    # The arrange's own render fired both, so the check below cannot
+    # pass vacuously on a shell that never fires them at all.
+    assert before == (1, 1)
+    assert (shell.rides_changed, shell._presenter.gates) == before
+
+
+def test_on_sys_colour_changed_given_an_appearance_change_rebuilds_and_skips(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The frame's handler: rebuild, then let wx redraw everything."""
+    monkeypatch.setattr(theme, "card_red", lambda: DARK_RED)
+    shell = _rendered_shell()
+    event = _SortEvent()
+
+    main_frame.MainFrame._on_sys_colour_changed(shell, event)
+
+    assert shell._riders_model.GetValueByRow(0, main_frame.RIDERS_COL_CARDS) == (
+        f'A♠ <span color="{DARK_RED}">K♥</span>'
+    )
+    assert event.skipped is True
 
 
 def test_on_feed_column_sorted_given_a_column_remembers_its_state() -> None:
@@ -1364,19 +1545,33 @@ def test_get_attr_by_row_given_any_column_sets_no_cell_colour(column: int) -> No
     [
         ("9H", f'<span color="{SUIT_RED}">9♥</span>'),
         ("10D", f'<span color="{SUIT_RED}">10♦</span>'),
-        ("AS", f'<span color="{SUIT_INK}">A♠</span>'),
-        ("JK", f'<span color="{JOKER_STEEL}">JK★</span>'),
+        ("AS", "A♠"),
+        ("JK", "JK★"),
         ("", ""),
     ],
     ids=["hearts", "diamonds", "spades", "joker", "miss"],
 )
-def test_get_value_by_row_given_a_card_cell_returns_its_coloured_markup(
+def test_get_value_by_row_given_a_card_cell_returns_its_cell_text(
     card: str, expected: str
 ) -> None:
-    """The Card cell is the card's coloured span: the painted value."""
+    """The Card cell is the card's own cell: red spanned, black bare."""
     model = _model(_feed_row(card=card))
 
     assert model.GetValueByRow(0, feed_model.COL_CARD) == expected
+
+
+def test_get_value_by_row_given_a_card_model_uses_the_red_it_was_built_with() -> None:
+    """The model's own ``red`` is what a red card's span carries."""
+    model = main_frame.CrossingsFeedModel([_feed_row(card="9H")], DARK_RED)
+
+    assert model.GetValueByRow(0, feed_model.COL_CARD) == f'<span color="{DARK_RED}">9♥</span>'
+
+
+def test_get_value_by_row_given_a_dark_red_leaves_a_black_card_bare() -> None:
+    """T-3 negative: the feed's ♠/♣ cell carries no red either way."""
+    model = main_frame.CrossingsFeedModel([_feed_row(card="AS")], DARK_RED)
+
+    assert model.GetValueByRow(0, feed_model.COL_CARD) == "A♠"
 
 
 def test_get_value_by_row_given_a_voided_card_cell_returns_the_plain_word() -> None:

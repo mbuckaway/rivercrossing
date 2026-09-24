@@ -48,7 +48,8 @@ import wx.dataview
 import wx.xrc  # Submodule: plain `import wx` does not load it.
 
 from rivercrossing.ride import RideStatus
-from rivercrossing.ui import feed_model, ids, sound, std_dialogs
+from rivercrossing.ui import feed_model, ids, sound, std_dialogs, theme
+from rivercrossing.ui.card_text import SUIT_RED
 from rivercrossing.ui.presenters.console import MISS_SYMBOLS, status_text, stop_light_mode
 from rivercrossing.ui.presenters.data_source import Counters
 from rivercrossing.ui.rider_columns import CONSOLE_RIDER_COLUMNS
@@ -347,12 +348,17 @@ class CrossingsFeedModel(wx.dataview.DataViewIndexListModel):  # type: ignore[mi
     model holds every crossing and the list scrolls; the presenter
     only rebuilds it when the ride's own data changed
     (``ConsolePresenter._feed_state``).
+
+    ``red`` is the appearance's own card red (``theme.card_red()``);
+    the Card cell passes it to ``card_cell_text``, so a model built
+    under a dark appearance spans its ♥/♦ faces in the dark red.
     """
 
-    def __init__(self, rows: Sequence[FeedRow]) -> None:
-        """Wrap *rows*, newest first."""
+    def __init__(self, rows: Sequence[FeedRow], red: str = SUIT_RED) -> None:
+        """Wrap *rows*, newest first, colouring red cards in *red*."""
         super().__init__(len(rows))
         self._rows = tuple(rows)
+        self._red = red
         self._held_or_duplicate = feed_model.held_duplicate_row_indexes(self._rows)
         self._edited = feed_model.edited_row_indexes(self._rows)
 
@@ -368,7 +374,7 @@ class CrossingsFeedModel(wx.dataview.DataViewIndexListModel):  # type: ignore[mi
         """Return the cell value at *row*/*col*."""
         feed_row = self._rows[row]
         if col == feed_model.COL_CARD:
-            return feed_model.card_cell_text(feed_row)
+            return feed_model.card_cell_text(feed_row, self._red)
         return _TEXT_ACCESSORS[col](feed_row)
 
     def Compare(  # noqa: PLR0913, PLR0917 -- wx's own four-argument callback shape
@@ -894,6 +900,10 @@ class MainFrame(DialogFindMixin):  # _find: ui.views._support, over self.frame
         self._show_held_only = False
         self._flagged_rows: list[FeedRow] = []
         self._riders_model: RiderRowListModel | None = None
+        # The rows the last show_riders kept, so a system appearance
+        # change can rebuild the Cards cells in the new red (the
+        # presenter early-returns on an unchanged row set).
+        self._riders_rows: list[RiderRow] = []
         # The operator's current riders-tab header sort, re-applied
         # whenever the model is rebuilt (a new model drops the
         # control's sort key). No column sorts until a header click.
@@ -972,6 +982,13 @@ class MainFrame(DialogFindMixin):  # _find: ui.views._support, over self.frame
         command.
         """
         self.frame.Bind(wx.EVT_DISPLAY_CHANGED, self._on_display_changed)
+        # app.py already binds this event on the frame, but routes it
+        # only to the theme controller, so no view hears it. The console
+        # is the one modeless window whose card cells can be on screen
+        # when the appearance changes (the standings dialog and the
+        # rider editor are modal, rebuilt per open), so it binds the
+        # rebuild for its own two card models.
+        self.frame.Bind(wx.EVT_SYS_COLOUR_CHANGED, self._on_sys_colour_changed)
         # Phase 6: F2 opens the selected feed row's Crossing Detail.
         # The id is frame-local (wx.NewIdRef) because no menu item owns
         # this command; accelerator_entries() also hands the entry to
@@ -1013,6 +1030,10 @@ class MainFrame(DialogFindMixin):  # _find: ui.views._support, over self.frame
         self._lap_time_column: Any = None
         self._build_columns()
         self._crossings_model: CrossingsFeedModel | None = None
+        # The rows the last show_feed kept, so a system appearance
+        # change can rebuild the Card cells in the new red (the
+        # presenter early-returns on an unchanged row set).
+        self._feed_rows: list[FeedRow] = []
         self._feed_sort_column: int = DEFAULT_FEED_SORT[0]
         self._feed_sort_ascending: bool = DEFAULT_FEED_SORT[1]
 
@@ -1128,10 +1149,12 @@ class MainFrame(DialogFindMixin):  # _find: ui.views._support, over self.frame
         per-column keys.
 
         Every column is text. The Card column renders the dealt card's
-        glyph display in its own suit colour, so it alone is built by
-        hand through ``_support.append_markup_column``: a
-        ``DataViewItemAttr`` colours a whole cell, and the card's suit
-        colour is a per-*card* fact (``ui.card_text.card_markup``).
+        glyph display, its red suits in the appearance's own colour, so
+        it alone is built by hand through
+        ``_support.append_markup_column``: a ``DataViewItemAttr``
+        colours a whole cell, while a card's colour is a per-*card*
+        fact (``ui.card_text.card_markup``). The ♠/♣/★ faces carry no
+        colour of their own and take the list's foreground.
         """
         for col, label in enumerate(feed_model.COLUMN_LABELS):
             width = feed_model.COLUMN_WIDTHS[col]
@@ -1640,6 +1663,17 @@ class MainFrame(DialogFindMixin):  # _find: ui.views._support, over self.frame
             self.frame.SetSize(wx.Size(*MIN_SIZE))
         fit_frame_to_screen(self.frame, MIN_SIZE)
 
+    def _on_sys_colour_changed(self, event: Any) -> None:  # noqa: ANN401 -- wx ships no stubs
+        """Rebuild the card models, then let wx repaint the new colours.
+
+        A system appearance change (Live/Dark) leaves the two card
+        models holding the red of the appearance they were built in;
+        :meth:`_reapply_card_red` rebuilds them before the default
+        handler repaints, and ``event.Skip()`` is what runs it.
+        """
+        self._reapply_card_red()
+        event.Skip()
+
     def _on_display_changed(self, event: Any) -> None:  # noqa: ANN401 -- wx ships no stubs
         """Re-fit the frame when the display arrangement changes.
 
@@ -1724,8 +1758,12 @@ class MainFrame(DialogFindMixin):  # _find: ui.views._support, over self.frame
         box; the list's own header sort is then re-applied
         (:meth:`_apply_feed_sort`), which is what actually paints the
         operator's chosen order onto the new model.
+
+        The rows are kept as well, so :meth:`_reapply_card_red` can
+        rebuild the model when the appearance changes.
         """
-        self._crossings_model = CrossingsFeedModel(rows)
+        self._feed_rows = list(rows)
+        self._crossings_model = CrossingsFeedModel(rows, theme.card_red())
         self.crossings_list.AssociateModel(self._crossings_model)
         self._apply_feed_sort()
         self._notify_ride_changed()
@@ -1778,8 +1816,36 @@ class MainFrame(DialogFindMixin):  # _find: ui.views._support, over self.frame
         the rows keep the source's own order: the tab's native header
         sort (answered by ``RiderRowListModel.Compare``) is re-applied
         to this new model by :meth:`_apply_sort`.
+
+        The rows are kept as well, so :meth:`_reapply_card_red` can
+        rebuild the model when the appearance changes.
         """
-        self._riders_model = RiderRowListModel(rows, CONSOLE_RIDER_COLUMNS)
+        self._riders_rows = list(rows)
+        self._riders_model = RiderRowListModel(rows, CONSOLE_RIDER_COLUMNS, theme.card_red())
+        self.console_riders_list.AssociateModel(self._riders_model)
+        self._apply_sort()
+
+    def _reapply_card_red(self) -> None:
+        """Rebuild both card models for the appearance now in effect.
+
+        Only the red is explicit markup: ♠/♣ and the joker draw bare
+        and take the list's own foreground, so they follow a Live/Dark
+        switch by themselves. The red cannot, and the console is the
+        one modeless window whose card cells can be on screen when the
+        appearance changes (the standings dialog and the rider editor
+        are modal, rebuilt per open), so both models here are rebuilt
+        from the rows the last render kept. Deliberately not through
+        :meth:`show_feed`/:meth:`show_riders`: those fire the
+        ride-changed binding and the console-gate refresh, side effects
+        a theme change must not have. Both remembered header sorts are
+        re-applied, because a fresh model drops the control's sort key.
+        """
+        self._crossings_model = CrossingsFeedModel(self._feed_rows, theme.card_red())
+        self.crossings_list.AssociateModel(self._crossings_model)
+        self._apply_feed_sort()
+        self._riders_model = RiderRowListModel(
+            self._riders_rows, CONSOLE_RIDER_COLUMNS, theme.card_red()
+        )
         self.console_riders_list.AssociateModel(self._riders_model)
         self._apply_sort()
 

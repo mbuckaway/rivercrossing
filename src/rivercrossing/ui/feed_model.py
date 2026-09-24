@@ -18,7 +18,7 @@ split ``cards_imagelist.py`` draws between its pure helpers and
 
 from typing import TYPE_CHECKING, Any
 
-from rivercrossing.ui.card_text import card_markup
+from rivercrossing.ui.card_text import SUIT_RED, card_markup
 from rivercrossing.ui.rider_columns import plate_order_key
 
 if TYPE_CHECKING:
@@ -188,8 +188,8 @@ def entry_text(row: FeedRow) -> str:
     return f"{row.entry} DNF" if row.dnf else row.entry
 
 
-def card_markup_or_blank(card: str) -> str:
-    """Return *card*'s coloured cell markup, or ``""`` for no card.
+def card_markup_or_blank(card: str, red: str = SUIT_RED) -> str:
+    """Return *card*'s cell markup, or ``""`` for no card.
 
     W9: the feed's Card column always carries a real dealt code -- a
     held crossing's row shows the held card's own code, not the
@@ -199,10 +199,11 @@ def card_markup_or_blank(card: str) -> str:
     to markup mapping to the shared
     :func:`~rivercrossing.ui.card_text.card_markup`, turning its
     ``KeyError`` (unknown suit) and ``IndexError`` (empty code) into
-    the blank cell.
+    the blank cell. *red* is the appearance's own red, threaded in by
+    the model's construction.
     """
     try:
-        return card_markup(card)
+        return card_markup(card, red)
     except KeyError, IndexError:
         return ""
 
@@ -233,19 +234,21 @@ def card_status_text(row: FeedRow) -> str:
     return _CARD_STATUS_TEXTS[row.card_status]
 
 
-def card_cell_text(row: FeedRow) -> str:
+def card_cell_text(row: FeedRow, red: str = SUIT_RED) -> str:
     """Return the feed Card column's cell value for *row*.
 
     A voided card reads "Void" -- the card is out of the ride, so its
     glyph would mislead -- while a held, credited or duplicate row
-    keeps the real dealt card's glyph, in its own suit colour
-    (:func:`card_markup_or_blank`). The Card column is built with the
-    markup renderer, so a dealt card's value is that coloured span and
-    the "Void"/blank cells are plain text the renderer passes through.
+    keeps the real dealt card's glyph: a red suit in *red* (the
+    appearance's own, threaded in by the model's construction) and a
+    ♠/♣ bare, so those faces take the list's own foreground and follow
+    the appearance. The Card column is built with the markup renderer,
+    so a dealt red card's value is that span and the "Void", blank and
+    bare cells are plain text the renderer passes through.
     """
     if row.card_status == "voided":
         return _CARD_STATUS_TEXTS["voided"]
-    return card_markup_or_blank(row.card)
+    return card_markup_or_blank(row.card, red)
 
 
 def held_duplicate_row_indexes(rows: Sequence[FeedRow]) -> frozenset[int]:

@@ -9,7 +9,7 @@ style:
   every column pinned to its own width (G6 plus the R-14 Draw column),
   the two card cells built with the markup renderer;
 - :func:`format_best5` and :func:`format_draw` -- the two card cells'
-  per-card-coloured markup;
+  per-red-card markup;
 - :meth:`StandingsListModel.Compare` -- the native header sort's
   per-column keys, its numeric Place/Laps, its rank-then-suit Draw key
   and its non-negated row-position tie-break -- driven against a shell
@@ -57,8 +57,8 @@ from conftest import _roster_with_entries, gorba_config
 from rivercrossing.cards import Shoe
 from rivercrossing.ride import RideEngine
 from rivercrossing.roster import EntryMode, PlateModel, Roster
-from rivercrossing.ui import accelerators, std_dialogs
-from rivercrossing.ui.card_text import JOKER_STEEL, SUIT_INK, SUIT_RED
+from rivercrossing.ui import accelerators, std_dialogs, theme
+from rivercrossing.ui.card_text import DARK_RED, SUIT_RED
 from rivercrossing.ui.presenters.data_source import EngineDataSource, StandingsRow
 from rivercrossing.ui.views import results_win
 from rivercrossing.ui.views.results_win import (
@@ -93,6 +93,19 @@ if TYPE_CHECKING:
 XRC_DIR = Path(__file__).resolve().parents[3] / "src" / "rivercrossing" / "ui" / "xrc"
 
 RESULTS_DLG = "results_dlg"
+
+
+@pytest.fixture(autouse=True)
+def _light_card_red(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Resolve the standings' card red without a live ``wx.App``.
+
+    ``theme.card_red()`` probes ``wx.SystemSettings.GetAppearance()``,
+    which raises ``PyNoAppError`` headless (measured;
+    ``test_theme.py``'s own split), so every ``show_standings`` below
+    sees the light appearance's red. The dark one is pinned by building
+    the model directly.
+    """
+    monkeypatch.setattr(theme, "card_red", lambda: SUIT_RED)
 
 
 def _row(  # noqa: PLR0913 -- a fixture builder mirroring StandingsRow's fields
@@ -315,7 +328,7 @@ def test_build_columns_for_given_a_control_pins_every_column_width() -> None:
 
 
 def test_build_columns_for_given_the_two_card_columns_builds_them_for_markup() -> None:
-    """Phase 0: Best 5 and Draw render a coloured span per card."""
+    """Phase 0: Best 5 and Draw render per-card markup -- red alone."""
     control = _ListControl()
 
     ResultsWindow._build_columns_for(control)
@@ -429,7 +442,7 @@ def test_get_column_count_given_the_standings_model_is_seven() -> None:
 
 
 def test_get_column_count_given_a_rendered_row_reads_every_cell() -> None:
-    """The Draw column's cell resolves through the accessor tuple."""
+    """The Draw cell resolves through the model's card branch."""
     model = StandingsListModel([_row(tiebreak_card="10D")])
 
     assert model.GetValueByRow(0, COL_DRAW) == f'<span color="{SUIT_RED}">10♦</span>'
@@ -877,8 +890,8 @@ def test_show_standings_given_empty_sections_renders_empty_models() -> None:
 
 DRAW_CASES = (
     (_row(tiebreak_card="10D"), f'<span color="{SUIT_RED}">10♦</span>'),
-    (_row(tiebreak_card="AS"), f'<span color="{SUIT_INK}">A♠</span>'),
-    (_row(tiebreak_card="JK"), f'<span color="{JOKER_STEEL}">JK★</span>'),
+    (_row(tiebreak_card="AS"), "A♠"),
+    (_row(tiebreak_card="JK"), "JK★"),
     (_row(tiebreak_card=""), ""),  # T-4 nullable: nothing drawn
 )
 
@@ -887,8 +900,25 @@ DRAW_CASES = (
 def test_format_draw_given_a_standings_row_returns_its_drawn_card_markup(
     row: StandingsRow, expected: str
 ) -> None:
-    """The cell is the drawn card's own colour, blank when none."""
+    """The Draw cell is the card's own cell: red spanned, black bare."""
     assert format_draw(row) == expected
+
+
+def test_format_draw_given_the_appearance_dark_red_spans_a_drawn_red_card() -> None:
+    """The caller's red reaches the one-card Draw cell."""
+    cell = format_draw(_row(tiebreak_card="10D"), DARK_RED)
+
+    assert cell == f'<span color="{DARK_RED}">10♦</span>'
+
+
+def test_format_draw_given_a_drawn_black_card_and_the_dark_red_stays_bare() -> None:
+    """T-3 negative: a drawn ♠ carries no red in either appearance."""
+    assert format_draw(_row(tiebreak_card="AS"), DARK_RED) == "A♠"
+
+
+def test_format_draw_given_a_blank_card_and_the_dark_red_stays_the_empty_cell() -> None:
+    """T-3/T-4: the blank guard answers first, never an empty span."""
+    assert format_draw(_row(tiebreak_card=""), DARK_RED) == ""
 
 
 @given(
@@ -911,13 +941,16 @@ def test_format_draw_given_any_stored_code_is_blank_iff_the_code_is_blank(code: 
 # colour a cell that holds a single card -- it cannot colour a five-card
 # "Best 5" hand, whose mixed suits must each keep their own colour (a
 # whole-cell red would paint its ♠/♣ faces red: a *wrong* suit, not
-# merely a redundant cue). Every card cell therefore renders wx markup:
-# one `<span color="...">` per card (``ui.card_text``), and the two card
-# columns are the only columns built with the markup renderer.
+# merely a redundant cue). The red cards therefore render wx markup --
+# one `<span color="...">` per ♥/♦ card (``ui/card_text``) -- the two
+# card columns are the only columns built with the markup renderer.
 #
-# The glyph still spells every suit (CODINGSTANDARDS-UX-DESKTOP.md §7),
-# so the colour is decoration and never the sole channel -- which is why
-# a cell carrying no card face at all (a blank Draw) is simply empty.
+# Only the RED is markup. A ♠/♣ or the joker's ★ comes through bare and
+# the list paints it in its own adaptive foreground, which is what keeps
+# those faces visible on a dark list. The glyph still spells every suit
+# (CODINGSTANDARDS-UX-DESKTOP.md §7), so the colour is decoration and
+# never the sole channel -- which is why a cell carrying no card face at
+# all (a blank Draw) is simply empty.
 
 
 def test_get_value_by_row_given_the_best5_cell_returns_each_card_coloured() -> None:
@@ -925,12 +958,34 @@ def test_get_value_by_row_given_the_best5_cell_returns_each_card_coloured() -> N
     model = StandingsListModel([_row(best5=("KS", "KC", "KD", "JK", "9H"))])
 
     assert model.GetValueByRow(0, COL_BEST5) == (
-        f'<span color="{SUIT_INK}">K♠</span> '
-        f'<span color="{SUIT_INK}">K♣</span> '
-        f'<span color="{SUIT_RED}">K♦</span> '
-        f'<span color="{JOKER_STEEL}">JK★</span> '
-        f'<span color="{SUIT_RED}">9♥</span>'
+        f'K♠ K♣ <span color="{SUIT_RED}">K♦</span> JK★ <span color="{SUIT_RED}">9♥</span>'
     )
+
+
+def test_get_value_by_row_given_a_dark_appearance_spans_the_red_card() -> None:
+    """The red the model was built with is the red its cells carry."""
+    model = StandingsListModel([_row(best5=("KS", "9H"))], DARK_RED)
+
+    assert model.GetValueByRow(0, COL_BEST5) == f'K♠ <span color="{DARK_RED}">9♥</span>'
+
+
+def test_get_value_by_row_given_the_draw_cell_returns_the_drawn_card_coloured() -> None:
+    """The one-card Draw column takes the same per-card red."""
+    model = StandingsListModel([_row(tiebreak_card="10D")], DARK_RED)
+
+    assert model.GetValueByRow(0, COL_DRAW) == f'<span color="{DARK_RED}">10♦</span>'
+
+
+def test_get_value_by_row_given_a_blank_draw_cell_stays_empty() -> None:
+    """T-4 nullable boundary: a row that drew nothing renders "".
+
+    ``format_draw``'s blank guard answers before the card formatter, so
+    the blank cell is never handed to ``format_card`` (which would raise
+    ``IndexError`` on the empty code).
+    """
+    model = StandingsListModel([_row(tiebreak_card="")], DARK_RED)
+
+    assert model.GetValueByRow(0, COL_DRAW) == ""
 
 
 def test_get_value_by_row_given_a_blank_best5_cell_stays_empty() -> None:
@@ -955,9 +1010,9 @@ def test_get_value_by_row_given_a_text_column_never_carries_markup(column: int) 
 def test_standings_compare_given_two_best5_rows_keys_on_the_plain_text_not_the_markup() -> None:
     """The Best 5 key is the canvas text, never the markup's colour.
 
-    Keyed on the markup, a red deuce would sort *after* an ink ace (the
-    ``#c0392b`` span text outranks ``#1d1f20``); keyed on the plain
-    text, "2♥" precedes "A♠".
+    Keyed on the markup, a red deuce would sort *after* a bare ace (the
+    ``#c0392b`` span text outranks ``A♠``); keyed on the plain text,
+    "2♥" precedes "A♠".
     """
     shell = _CompareShell([_row(best5=("2H",)), _row(best5=("AS",))])
 

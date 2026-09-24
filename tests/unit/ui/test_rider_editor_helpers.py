@@ -20,7 +20,7 @@ from hypothesis import given
 from hypothesis import strategies as st
 
 from rivercrossing.ui import ids
-from rivercrossing.ui.card_text import SUIT_INK, SUIT_RED
+from rivercrossing.ui.card_text import DARK_RED, SUIT_RED
 from rivercrossing.ui.presenters.data_source import RiderRow
 from rivercrossing.ui.rider_columns import CONSOLE_RIDER_COLUMNS, EDITOR_RIDER_COLUMNS
 from rivercrossing.ui.views import rider_editor
@@ -117,9 +117,9 @@ def test_rider_row_list_model_given_any_column_reports_the_string_type() -> None
 
 
 # (column, expected cell) pairs: one row through every console column.
-# The Cards cell is markup -- one suit-coloured span per card, which the
-# console's Cards column renders through the markup renderer
-# (``ui.card_text``); the rider editor itself carries no Cards column
+# The Cards cell is markup -- one span per ♥/♦ card, which the console's
+# Cards column renders through the markup renderer (``ui.card_text``);
+# the rider editor itself carries no Cards column
 # (``EDITOR_RIDER_COLUMNS``), so this cell is the console's alone.
 CONSOLE_CELL_CASES = (
     (0, "123"),
@@ -128,7 +128,7 @@ CONSOLE_CELL_CASES = (
     (3, "F"),
     (
         4,
-        f'<span color="{SUIT_INK}">A♠</span> <span color="{SUIT_RED}">K♥</span>',
+        f'A♠ <span color="{SUIT_RED}">K♥</span>',
     ),
 )
 
@@ -142,6 +142,37 @@ def test_rider_row_list_model_given_a_row_renders_each_shared_cell(
     model = RiderRowListModel([_ROW], CONSOLE_RIDER_COLUMNS)
 
     assert model.GetValueByRow(0, column) == expected
+
+
+def test_rider_row_list_model_given_a_red_spans_the_cards_cell_with_it() -> None:
+    """Only the Cards cell takes the model's red (the appearance's)."""
+    model = RiderRowListModel([_ROW], CONSOLE_RIDER_COLUMNS, DARK_RED)
+
+    assert model.GetValueByRow(0, 4) == f'A♠ <span color="{DARK_RED}">K♥</span>'
+
+
+def test_rider_row_list_model_given_a_red_leaves_every_other_cell_alone() -> None:
+    """T-3 negative: the red reaches the Cards cell and nothing else."""
+    model = RiderRowListModel([_ROW], CONSOLE_RIDER_COLUMNS, DARK_RED)
+
+    assert [model.GetValueByRow(0, col) for col in (0, 1, 2, 3)] == [
+        "123",
+        "Sam Ellis",
+        "solo",
+        "F",
+    ]
+
+
+def test_rider_row_list_model_given_editor_columns_ignores_the_red() -> None:
+    """The editor's four-column list carries no card cell to colour."""
+    model = RiderRowListModel([_ROW], EDITOR_RIDER_COLUMNS, DARK_RED)
+
+    assert [model.GetValueByRow(0, col) for col in range(4)] == [
+        "123",
+        "Sam Ellis",
+        "solo",
+        "F",
+    ]
 
 
 # ------------------------------------------------- the native sort

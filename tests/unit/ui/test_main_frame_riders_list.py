@@ -31,7 +31,8 @@ from typing import TYPE_CHECKING, Any
 import pytest
 from defusedxml.ElementTree import parse
 
-from rivercrossing.ui.card_text import SUIT_INK, SUIT_RED
+from rivercrossing.ui import theme
+from rivercrossing.ui.card_text import DARK_RED, SUIT_RED
 from rivercrossing.ui.presenters.data_source import RiderRow
 from rivercrossing.ui.rider_columns import CONSOLE_RIDER_COLUMNS, SOLO_TEAM_TEXT
 from rivercrossing.ui.views import main_frame
@@ -44,6 +45,19 @@ if TYPE_CHECKING:
 XRC_DIR = Path(__file__).resolve().parents[3] / "src" / "rivercrossing" / "ui" / "xrc"
 
 MAIN_XRC = "main.xrc"
+
+
+@pytest.fixture(autouse=True)
+def _light_card_red(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Resolve the list's card red without a live ``wx.App``.
+
+    ``theme.card_red()`` probes ``wx.SystemSettings.GetAppearance()``,
+    which raises ``PyNoAppError`` headless (measured;
+    ``test_theme.py``'s own split), so every ``show_riders`` below sees
+    the light appearance's red. One test overrides it with the dark red
+    to prove the view threads whatever the probe returned.
+    """
+    monkeypatch.setattr(theme, "card_red", lambda: SUIT_RED)
 
 
 # ------------------------------------------------------------ the XRC
@@ -439,19 +453,43 @@ def test_show_riders_given_a_remembered_sort_re_applies_it() -> None:
         (main_frame.RIDERS_COL_SEX, "F"),
         (
             main_frame.RIDERS_COL_CARDS,
-            f'<span color="{SUIT_INK}">A♠</span> <span color="{SUIT_RED}">K♥</span>',
+            f'A♠ <span color="{SUIT_RED}">K♥</span>',
         ),
     ],
     ids=["plate", "name", "team_solo", "sex", "cards"],
 )
 def test_show_riders_given_a_row_renders_its_shared_cells(column: int, expected: str) -> None:
-    """A solo row renders "solo", its sex and its coloured hand."""
+    """A solo row renders "solo", its sex and its cells."""
     control = _RidersListControl()
     shell = _Shell(control=control)
 
     main_frame.MainFrame.show_riders(shell, [_ROW])
 
     assert control.model.GetValueByRow(0, column) == expected
+
+
+def test_show_riders_given_a_dark_appearance_renders_the_dark_red(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The Cards cell takes whatever ``theme.card_red()`` answered."""
+    monkeypatch.setattr(theme, "card_red", lambda: DARK_RED)
+    control = _RidersListControl()
+    shell = _Shell(control=control)
+
+    main_frame.MainFrame.show_riders(shell, [_ROW])
+
+    assert control.model.GetValueByRow(0, main_frame.RIDERS_COL_CARDS) == (
+        f'A♠ <span color="{DARK_RED}">K♥</span>'
+    )
+
+
+def test_show_riders_given_rows_retains_them_for_the_next_appearance_switch() -> None:
+    """A theme change rebuilds from the rows the last render kept."""
+    shell = _Shell()
+
+    main_frame.MainFrame.show_riders(shell, [_ROW])
+
+    assert shell._riders_rows == [_ROW]
 
 
 def test_build_riders_columns_given_the_console_list_builds_the_cards_column_for_markup() -> None:

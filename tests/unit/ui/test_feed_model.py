@@ -9,13 +9,14 @@ subclass that delegates to the pure functions tested here -- lives in
 exercised in this headless file.
 """
 
+import html
 import re
 
 import pytest
 from hypothesis import given
 from hypothesis import strategies as st
 
-from rivercrossing.ui.card_text import JOKER_STEEL, SUIT_INK, SUIT_RED
+from rivercrossing.ui.card_text import DARK_RED, SUIT_RED, format_card
 from rivercrossing.ui.feed_model import (
     COL_CARD,
     COL_LAP,
@@ -270,28 +271,39 @@ def test_entry_text_given_any_row_appends_the_marker_exactly_when_dnf(
 #
 # W9: the feed never emits a literal "held" cell any more -- the card
 # column always carries a real dealt code -- so the cell value is the
-# card's own coloured markup (``card_text.card_markup``), and any
-# unmappable text maps to "" (empty string boundary included, T-4);
-# "A" and "ZZ" exercise the unknown-suit KeyError arm, "" the
-# empty-code IndexError arm.
+# card's own markup (``card_text.card_markup``): a red suit takes the
+# span the appearance's red was threaded in as, a ♠/♣ or the joker stays
+# bare text, and any unmappable text maps to "" (empty string boundary
+# included, T-4); "A" and "ZZ" exercise the unknown-suit KeyError arm,
+# "" the empty-code IndexError arm.
 
 DEALT_CARD_TEXT_CASES = (
     ("9H", f'<span color="{SUIT_RED}">9♥</span>'),
     ("6H", f'<span color="{SUIT_RED}">6♥</span>'),
-    ("KS", f'<span color="{SUIT_INK}">K♠</span>'),
+    ("KS", "K♠"),
     ("10D", f'<span color="{SUIT_RED}">10♦</span>'),
-    ("JK", f'<span color="{JOKER_STEEL}">JK★</span>'),
+    ("JK", "JK★"),
 )
 
 NON_CARD_TEXT_CASES = ("", "ZZ", "A")
 
 
 @pytest.mark.parametrize(("card", "text"), DEALT_CARD_TEXT_CASES)
-def test_card_markup_or_blank_given_a_dealt_code_returns_its_coloured_glyph(
+def test_card_markup_or_blank_given_a_dealt_code_returns_its_cell_text(
     card: str, text: str
 ) -> None:
-    """A real dealt code resolves to its own suit-coloured span."""
+    """A real dealt code maps to its cell: red spanned, black bare."""
     assert card_markup_or_blank(card) == text
+
+
+def test_card_markup_or_blank_given_the_appearance_dark_red_spans_a_red_card() -> None:
+    """The caller's own red is what a red card's span carries."""
+    assert card_markup_or_blank("9H", DARK_RED) == f'<span color="{DARK_RED}">9♥</span>'
+
+
+def test_card_markup_or_blank_given_the_appearance_dark_red_leaves_a_black_card_bare() -> None:
+    """T-3 negative: a ♠/♣ cell carries no red at all, either red."""
+    assert card_markup_or_blank("KS", DARK_RED) == "K♠"
 
 
 @pytest.mark.parametrize("card", NON_CARD_TEXT_CASES)
@@ -305,13 +317,13 @@ def test_card_markup_or_blank_given_a_non_card_string_returns_blank(card: str) -
 
 
 @given(st.text(max_size=4))
-def test_card_markup_or_blank_given_arbitrary_text_never_raises_and_returns_display_or_blank(
+def test_card_markup_or_blank_given_arbitrary_text_never_raises_and_keeps_the_glyph(
     text: str,
 ) -> None:
-    """Property: every input is either "" or one well-formed span."""
+    """Property: every input is "" or a cell carrying its own text."""
     display = card_markup_or_blank(text)
 
-    assert display == "" or display.endswith("</span>")
+    assert display == "" or html.escape(format_card(text), quote=False) in display
 
 
 # --- held_duplicate_row_indexes (the feed's bold channels) ----------
@@ -699,10 +711,10 @@ def test_card_status_text_given_any_known_status_is_blank_exactly_when_that_stat
 
 CARD_CELL_CASES = (
     ("AS", "voided", "Void"),
-    ("AS", "credited", f'<span color="{SUIT_INK}">A♠</span>'),
-    ("AS", "held", f'<span color="{SUIT_INK}">A♠</span>'),
+    ("AS", "credited", "A♠"),
+    ("AS", "held", "A♠"),
     ("10D", "credited", f'<span color="{SUIT_RED}">10♦</span>'),
-    ("JK", "held", f'<span color="{JOKER_STEEL}">JK★</span>'),
+    ("JK", "held", "JK★"),
     ("", "", ""),
     ("ZZ", "credited", ""),
     # The status decides first: a voided row's glyph is gone, whatever
@@ -728,14 +740,29 @@ CARD_CELL_CASES = (
 def test_card_cell_text_given_a_rows_card_and_status_returns_the_cell_markup(
     card: str, status: str, text: str
 ) -> None:
-    """D3: "Void" plain for a voided card, the coloured span otherwise.
+    """D3: "Void" plain for a voided card, its own cell otherwise.
 
-    The "Void" word is a state, not a suit, so it carries no span and
-    the markup-enabled column renders it as plain ink
+    The "Void" word is a state, not a suit, so it carries no span; a
+    ♠/♣ card carries none either, and the markup-enabled column renders
+    both as plain text the list paints in its own foreground
     (CODINGSTANDARDS-UX-DESKTOP.md §7: the glyph still spells the suit,
     so the colour is decoration).
     """
     assert card_cell_text(_feed_row(card=card, card_status=status)) == text
+
+
+def test_card_cell_text_given_the_appearance_dark_red_spans_a_red_card() -> None:
+    """The caller's red reaches the feed's Card cell."""
+    cell = card_cell_text(_feed_row(card="9H", card_status="credited"), DARK_RED)
+
+    assert cell == f'<span color="{DARK_RED}">9♥</span>'
+
+
+def test_card_cell_text_given_the_appearance_dark_red_leaves_a_black_card_bare() -> None:
+    """T-3 negative: a ♠/♣ cell carries no red in either appearance."""
+    cell = card_cell_text(_feed_row(card="KS", card_status="credited"), DARK_RED)
+
+    assert cell == "K♠"
 
 
 @given(
