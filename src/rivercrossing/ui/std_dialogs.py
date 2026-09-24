@@ -2,7 +2,7 @@
 """Show one-shot alerts and multi-button questions as native wx dialogs.
 
 XRC-authored dialogs load and show through ``views.dialogs.run_dialog``,
-which wires their stock ids and light-mode panel tint. The eight
+which wires their stock ids and light-mode panel tint. The nine
 functions here cover the code-side native dialogs that need no XRC
 resource: one-shot alerts (``show_info``, ``show_warning``,
 ``show_error``), the three confirms -- ``show_confirm`` (a
@@ -10,10 +10,11 @@ destructive question, warning icon), ``show_danger`` (a destructive
 question that discards data, so it carries the error icon rather than
 the warning one) and ``show_prompt`` (a non-destructive question,
 information icon, OK default) -- ``show_retry`` (a failed action's
-question, error icon, Retry default) and ``show_three_choice`` (Yes
-confirms, No voids, Cancel does nothing). Each function constructs a
-plain ``wx.MessageDialog``, shows it modally, destroys it, and
-returns the modal id.
+question, error icon, Retry default), ``show_ok_open`` (a succeeded
+action's question, information icon, an OK and an Open answer) and
+``show_three_choice`` (Yes confirms, No voids, Cancel does nothing).
+Each function constructs a plain ``wx.MessageDialog``, shows it
+modally, destroys it, and returns the modal id.
 
 The confirms share :func:`_confirm`: the icon is what separates
 warning from error, and ``default_ok`` decides whether wx's
@@ -24,6 +25,13 @@ their actions lose nothing. ``show_three_choice`` is its own shape
 rather than a fourth ``_confirm``: the one dialog carries three named
 outcomes, and Cancel is the default there too, so a reflex Enter
 neither confirms nor voids.
+
+:func:`show_ok_open` is the one member whose two labels ride wx's
+stock slots the other way round. Escape always reaches wx's stock
+cancel button, so a question whose cancel slot carried the *action*
+would open a browser on a reflex Escape; here the dismiss label takes
+the cancel slot instead -- which ``wx.CANCEL_DEFAULT`` also makes
+Enter's -- leaving the action button reachable only on purpose.
 
 The XRC wiring deliberately does not apply here. The panel tint is for
 XRC-drawn dialogs whose background wx cannot restyle natively; a
@@ -45,6 +53,7 @@ __all__ = [
     "show_danger",
     "show_error",
     "show_info",
+    "show_ok_open",
     "show_prompt",
     "show_retry",
     "show_three_choice",
@@ -124,13 +133,15 @@ def _confirm(  # noqa: PLR0913, PLR0917 -- (parent, title, message, 2 labels) + 
     icon: int,
     default_ok: bool,
 ) -> int:
-    """Show *message* as a two-button confirm and return the modal id.
+    """Show *message* as a two-button question and return the modal id.
 
-    The shared core of the three public confirms: *icon* is the only
-    thing separating a warning from an error, and *default_ok* decides
-    whether ``wx.CANCEL_DEFAULT`` is added (a destructive question
-    defaults to Cancel; a non-destructive one leaves OK as the default
-    so Enter answers Yes, not No).
+    The shared core of the public two-button questions: *icon* is the
+    only thing separating a warning from an error, and *default_ok*
+    decides whether ``wx.CANCEL_DEFAULT`` is added (a destructive
+    question defaults to Cancel; a non-destructive one leaves OK as the
+    default so Enter answers Yes, not No). :func:`show_ok_open` reads
+    it the other way round -- its default rides the cancel slot because
+    that slot carries its dismiss label, which is what Escape reaches.
 
     Args:
         parent: The owning window, or ``None`` for an unparented
@@ -306,6 +317,50 @@ def show_retry(  # noqa: PLR0913, PLR0917 -- (parent, title, message) + 2 button
         cancel_label,
         icon=wx.ICON_ERROR,
         default_ok=True,
+    )
+
+
+def show_ok_open(  # noqa: PLR0913 -- (parent, title, message) + 2 keyword-only labels
+    parent: wx.Window | None,
+    title: str,
+    message: str,
+    *,
+    ok_label: str = "OK",
+    open_label: str = "Open",
+) -> int:
+    """Show *message* as an OK/Open question and return the modal id.
+
+    The published-page question (R-86): *ok_label* returns to the
+    console, *open_label* launches the page it names. The two labels
+    ride wx's stock OK/CANCEL slots the way round that keeps a reflex
+    key safe -- the dismiss label takes the cancel slot, so Escape
+    (which wx routes to the cancel button) returns to the console
+    instead of opening a browser, and ``wx.CANCEL_DEFAULT`` puts Enter
+    there too. Only an explicit activation of *open_label* opens
+    anything. The information icon says the action succeeded and lost
+    nothing.
+
+    Args:
+        parent: The owning window, or ``None`` for an unparented
+            dialog.
+        title: The dialog caption.
+        message: The question shown under the caption.
+        ok_label: The dismiss button's text.
+        open_label: The button that launches the page.
+
+    Returns:
+        ``ShowModal``'s result (``wx.ID_OK`` when the operator chose
+        *open_label*, ``wx.ID_CANCEL`` when they dismissed -- the id
+        Enter and Escape both produce).
+    """
+    return _confirm(
+        parent,
+        title,
+        message,
+        open_label,
+        ok_label,
+        icon=wx.ICON_INFORMATION,
+        default_ok=False,
     )
 
 

@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-only
 """Headless tests for ui.std_dialogs' native message-dialog helpers.
 
-The eight ``show_*`` functions are thin ``wx.MessageDialog`` wiring:
+The nine ``show_*`` functions are thin ``wx.MessageDialog`` wiring:
 construct with a fixed style, optionally override the button labels,
 show modally, destroy, and return the modal id. Real dialogs
 need a desktop and would block on ``ShowModal``, so every test swaps
@@ -21,6 +21,14 @@ must never destroy data, and must never block a safe action either.
 ``show_retry`` is the publish failure's question (Part B): the error
 icon because it reports a failure, and Retry as the default because
 retrying a failed publish loses nothing.
+
+``show_ok_open`` is the publish *success*'s question (R-86): OK
+returns to the console, Open launches the published page. Its two
+buttons land on wx's stock OK/CANCEL slots the way round that keeps a
+reflex key safe -- the dismiss button takes the cancel slot, so
+Escape (which wx routes to the cancel button) and, with
+``wx.CANCEL_DEFAULT``, Enter both return to the console. Only an
+explicit click on Open opens anything.
 
 ``show_three_choice`` is the one dialog with three outcomes -- Yes
 confirms, No voids, Cancel leaves the record alone -- so it carries
@@ -50,6 +58,10 @@ _CONFIRM_STYLE = wx.OK | wx.CANCEL | wx.CENTRE | wx.ICON_WARNING | wx.CANCEL_DEF
 _DANGER_STYLE = wx.OK | wx.CANCEL | wx.CENTRE | wx.ICON_ERROR | wx.CANCEL_DEFAULT
 _PROMPT_STYLE = wx.OK | wx.CANCEL | wx.CENTRE | wx.ICON_INFORMATION
 _RETRY_STYLE = wx.OK | wx.CANCEL | wx.CENTRE | wx.ICON_ERROR
+# R-86: the same stock OK/CANCEL pair as the prompt, but the default is
+# the OK-labelled (dismiss) button -- CANCEL_DEFAULT -- and the Open
+# label rides the cancel slot Escape reaches.
+_OK_OPEN_STYLE = wx.OK | wx.CANCEL | wx.CENTRE | wx.ICON_INFORMATION | wx.CANCEL_DEFAULT
 _THREE_CHOICE_STYLE = wx.YES_NO | wx.CANCEL | wx.CENTRE | wx.ICON_QUESTION | wx.CANCEL_DEFAULT
 
 _OK_LABEL = "Delete ride"
@@ -67,6 +79,17 @@ _THREE_CHOICE_ACT = partial(
     no_label=_NO_LABEL,
     cancel_label=_LEAVE_LABEL,
 )
+# R-86: the publish success's two answers, and the wordings the publish
+# path's own defaults carry.
+_OPEN_PAGE_OK_LABEL = "Back to the console"
+_OPEN_PAGE_OPEN_LABEL = "Open the page"
+_OK_OPEN_ACT = partial(
+    std_dialogs.show_ok_open, ok_label=_OPEN_PAGE_OK_LABEL, open_label=_OPEN_PAGE_OPEN_LABEL
+)
+# The two ids show_ok_open can return: Open reaches the caller as the
+# affirmative id, the OK/Escape dismiss as the cancel one.
+_OK_OPEN_RESULT_CASES = (wx.ID_OK, wx.ID_CANCEL)
+_OK_OPEN_RESULT_CASE_IDS = ("open", "ok")
 
 # Rows align with _SHOW_CASE_IDS by index: (act, expected style).
 _SHOW_CASES = (
@@ -77,6 +100,7 @@ _SHOW_CASES = (
     (_DANGER_ACT, _DANGER_STYLE),
     (_PROMPT_ACT, _PROMPT_STYLE),
     (_RETRY_ACT, _RETRY_STYLE),
+    (_OK_OPEN_ACT, _OK_OPEN_STYLE),
     (_THREE_CHOICE_ACT, _THREE_CHOICE_STYLE),
 )
 _SHOW_CASE_IDS = (
@@ -87,12 +111,15 @@ _SHOW_CASE_IDS = (
     "show_danger",
     "show_prompt",
     "show_retry",
+    "show_ok_open",
     "show_three_choice",
 )
 _ALERT_CASES = _SHOW_CASES[:3]
 _ALERT_CASE_IDS = _SHOW_CASE_IDS[:3]
-# The four labelled questions name their own buttons; the three alerts
-# keep wx's.
+# The four confirmed questions name their own buttons in wx's own slot
+# order; the three alerts keep wx's. show_ok_open is absent by design --
+# it is the one member whose labels ride the slots swapped, so its
+# label assertions live with its own cases below.
 _LABELLED_CONFIRM_CASES = (
     (_CONFIRM_ACT, _CONFIRM_STYLE),
     (_DANGER_ACT, _DANGER_STYLE),
@@ -104,18 +131,21 @@ _LABELLED_CONFIRM_CASE_IDS = ("show_confirm", "show_danger", "show_prompt", "sho
 # Phase 11 H2: the icon and the default button are what separate the
 # labelled two-button questions -- (act, expected icon, whether Cancel
 # is the default). show_retry (Part B) is the one error-icon question
-# whose default is the OK/Retry side.
+# whose default is the OK/Retry side. show_ok_open's default is its
+# OK-labelled dismiss button, which rides the cancel slot (R-86).
 _CONFIRM_ICON_AND_DEFAULT_CASES = (
     (_CONFIRM_ACT, wx.ICON_WARNING, True),
     (_DANGER_ACT, wx.ICON_ERROR, True),
     (_PROMPT_ACT, wx.ICON_INFORMATION, False),
     (_RETRY_ACT, wx.ICON_ERROR, False),
+    (_OK_OPEN_ACT, wx.ICON_INFORMATION, True),
 )
 _CONFIRM_ICON_AND_DEFAULT_CASE_IDS = (
     "show_confirm",
     "show_danger",
     "show_prompt",
     "show_retry",
+    "show_ok_open",
 )
 
 # Every modal id the three-choice dialog can return.
@@ -296,6 +326,58 @@ def test_show_retry_given_no_labels_names_its_buttons_retry_and_cancel(
     std_dialogs.show_retry(_PARENT, _TITLE, _MESSAGE)
 
     assert created_dialogs[0].ok_cancel_labels == ("Retry", "Cancel")
+
+
+# --- the publish success's OK / Open question (R-86) ------------------
+
+# The style, the icon/default pair, the forwarding, the returned id, the
+# destroy and the None-parent case are the shared tables' subject above
+# (``show_ok_open`` joined ``_SHOW_CASES`` and
+# ``_CONFIRM_ICON_AND_DEFAULT_CASES``); what is pinned here is the part
+# no other member has -- which slot each label rides.
+
+
+def test_show_ok_open_given_labels_maps_the_escape_slot_to_the_dismiss_label(
+    created_dialogs: list[_FakeMessageDialog],
+) -> None:
+    """Escape is wx's cancel slot, so the dismiss label rides there.
+
+    The Open label therefore never sits on the button Escape reaches,
+    and the two labels arrive verbatim: Open on the affirmative slot,
+    the dismiss on the cancel one.
+    """
+    _OK_OPEN_ACT(_PARENT, _TITLE, _MESSAGE)
+
+    assert created_dialogs[0].ok_cancel_labels == (_OPEN_PAGE_OPEN_LABEL, _OPEN_PAGE_OK_LABEL)
+
+
+def test_show_ok_open_given_no_labels_names_its_buttons_ok_and_open(
+    created_dialogs: list[_FakeMessageDialog],
+) -> None:
+    """The defaults are the wording the publish success shows.
+
+    The double records ``SetOKCancelLabels``' arguments verbatim, so
+    the OK slot (Open) comes first and the cancel slot (OK) second.
+    """
+    std_dialogs.show_ok_open(_PARENT, _TITLE, _MESSAGE)
+
+    assert created_dialogs[0].ok_cancel_labels == ("Open", "OK")
+
+
+@pytest.mark.parametrize("scripted_result", _OK_OPEN_RESULT_CASES, ids=_OK_OPEN_RESULT_CASE_IDS)
+def test_show_ok_open_returns_the_operators_chosen_modal_id(
+    created_dialogs: list[_FakeMessageDialog],
+    monkeypatch: pytest.MonkeyPatch,
+    scripted_result: int,
+) -> None:
+    """Open reaches the caller as OK, the dismiss as cancel."""
+    monkeypatch.setattr(_FakeMessageDialog, "scripted_result", scripted_result)
+
+    result = _OK_OPEN_ACT(_PARENT, _TITLE, _MESSAGE)
+
+    assert result == scripted_result
+    assert created_dialogs[0].show_modal_count == 1
+    assert created_dialogs[0].destroy_count == 1
 
 
 @pytest.mark.parametrize(("act", "expected_style"), _ALERT_CASES, ids=_ALERT_CASE_IDS)

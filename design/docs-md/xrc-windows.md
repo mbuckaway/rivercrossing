@@ -621,3 +621,13 @@ PublishCancel
 `wxID_OK ("Publish", default) · wxID_CANCEL — the stock std sizer and stock ids (§13, UX-DESKTOP §3)`
 
 ⚠ code-side (Phase 4b): Results ▸ Publish to WordPress… (`mi_publish_wordpress`, FINISHED-only) opens this form; `views/publish_wordpress.py`'s `PublishWordpressDialog` seeds the site fields from the live settings and the title/slug from the live ride's name (`default_title`/`default_slug`), collects one `PublishForm` on OK, and only then calls `app._publish_wordpress` — a refused form (`PublishForm.errors`: a blank field, or a site URL not beginning `https://`; the same rule the client's `InsecureURLError` enforces) shows its messages in one native error alert and leaves the dialog open, so the correction is a field edit and nothing is lost. The app persists the five `wp_*` settings first, then renders `htmlexport.render_wordpress` and publishes on a background thread (the console never blocks on the network): the parent page resolves as a numeric id or through `wordpress.find_page_by_slug` (a miss is top level), an existing page at the slug is updated in place rather than duplicated, and success posts "Published to <link>" on the status bar while a `WordPressError` — a refused Application Password, a WordPress error document, an unreachable host — arrives in its own native error alert. The window lives in dialogs.xrc (§15b).
+
+Publishing to WordPress`publish_running_dlg`✕
+
+Publishing to https://example.test…`publish_status_lbl`
+
+▰▰▰▰░░░░░░░░`progress_gauge (wxGauge · wxGA_HORIZONTAL · pulsing — a publish has no known duration, so the gauge is indeterminate)`
+
+Cancel`cancel_btn`
+
+⚠ code-side (Phase 4b): `publish_running_dlg` is the modal progress window a publish opens (R-86) — `views/publish_wordpress.py`'s `PublishRunningDialog` mirrors `SimRunningDialog`: it resolves the three frozen controls, points Escape at `cancel_btn` (`SetEscapeId`, since the button carries a custom id), and its `run()` starts the off-thread publish worker from inside its own modal loop (`wx.CallAfter`) and blocks until the app's completion path calls `finish()`. The worker updates the status line and pulses the gauge through `wx.CallAfter` (`set_status`/`pulse`). The window ends into a native **OK / Open** confirmation ("Published to <link>", `std_dialogs.show_ok_open` — OK returns to the console, Open opens the page in the browser) or, on failure, the native Retry / Cancel dialog (`std_dialogs.show_retry`). **Cancel** records the operator's request only — the publish's `urllib` call is blocking and cannot be interrupted, so the worker abandons the attempt at its next checkpoint (before the next HTTP call, or as soon as the one in flight returns). The window lives in dialogs.xrc (§15b).

@@ -128,6 +128,7 @@ if TYPE_CHECKING:
     from rivercrossing.ui.presenters.data_source import FeedRow
     from rivercrossing.ui.presenters.publish_wordpress import PublishForm
     from rivercrossing.ui.presenters.settings import AppSettings
+    from rivercrossing.ui.views.publish_wordpress import PublishRunningDialog
 
 __all__ = ["build_app", "build_main_window", "main"]
 
@@ -2659,6 +2660,12 @@ def _publish_wordpress(context: _RouteContext, form: PublishForm) -> None:
     The wx-touching render inputs are read here, on the main thread,
     exactly as :func:`_handle_export_command` reads them; the worker
     only renders and talks HTTP.
+
+    The publish itself is *scheduled*, not started: the dialog calls
+    this and then ``EndModal(wx.ID_OK)`` in the same handler, so running
+    the progress window here would stack it over the still-visible
+    publish form. ``wx.CallAfter`` defers the whole progress window and
+    worker until the form's modal has ended.
     """
     updated = replace(
         context.settings,
@@ -2681,16 +2688,20 @@ def _publish_wordpress(context: _RouteContext, form: PublishForm) -> None:
         context.frame.SetStatusText("No ride to publish")
         return
     teams, solo = _placed_for_export(context)
-    _run_publish_offloop(
-        context,
-        form,
-        config=engine.config,
-        teams=teams,
-        solo=solo,
-        opts=_export_options(context),
-        riders=_unique_rider_count(context.roster, engine),
-        team_logos=_team_logo_srcs(context.roster),
-        self_test_unverified=engine.self_test_unverified,
+    wx = require_wx()
+    wx.CallAfter(
+        functools.partial(
+            _run_publish_offloop,
+            context,
+            form,
+            config=engine.config,
+            teams=teams,
+            solo=solo,
+            opts=_export_options(context),
+            riders=_unique_rider_count(context.roster, engine),
+            team_logos=_team_logo_srcs(context.roster),
+            self_test_unverified=engine.self_test_unverified,
+        )
     )
 
 
@@ -2780,6 +2791,173 @@ def _publish_page(  # noqa: PLR0913, PLR0917 -- the form + its render inputs
     )
 
 
+# The publish progress window's opening status line, and the two result
+# dialogs' captions (Phase 4b).
+_PUBLISHING_STATUS = "Rendering and publishing the results page…"
+_PUBLISHED_TITLE = "Published"
+_FAILED_TITLE = "Publish Failed"
+
+
+class _PublishRun:
+    """One publish: its progress window, worker and result report.
+
+    Holds the publish inputs captured on the main thread and drives the
+    off-loop attempt R-02 requires: show ``publish_running_dlg``, start
+    the worker from the dialog's own start seam, poll the cancel flag at
+    each checkpoint, and end the modal before reporting anything. The
+    state is what earns this its class -- nine small methods sharing one
+    captured request read clearer than one 90-line closure nest, and
+    :meth:`_ask_retry` re-enters :meth:`run` for a whole fresh attempt.
+    """
+
+    def __init__(  # noqa: PLR0913 -- context + the captured publish inputs
+        self,
+        context: _RouteContext,
+        form: PublishForm,
+        *,
+        config: RideConfig,
+        teams: tuple[Placed, ...],
+        solo: tuple[Placed, ...],
+        opts: ExportOptions,
+        riders: int = 0,
+        team_logos: dict[str, str] | None = None,
+        self_test_unverified: bool = False,
+    ) -> None:
+        """Capture the inputs the worker renders and POSTs."""
+        self.context = context
+        self.form = form
+        self.config = config
+        self.placed = (*teams, *solo)
+        self.opts = opts
+        self.riders = riders
+        self.team_logos = team_logos
+        self.self_test_unverified = self_test_unverified
+
+    def run(self) -> None:
+        """Show the progress window over one publish attempt.
+
+        The window loads afresh per attempt, so a Retry gets an
+        un-cancelled one, and the modal blocks until one of the
+        ``_report_*`` methods ends it.
+        """
+        # deferred, see module docstring
+        from rivercrossing.ui.views.publish_wordpress import (  # noqa: PLC0415
+            PublishRunningDialog,
+            load_publish_running_window,
+        )
+
+        running = PublishRunningDialog(
+            load_publish_running_window(self.context.frame),
+            on_start=lambda: self._start_worker(running),
+        )
+        running.run()
+
+    def _start_worker(self, running: PublishRunningDialog) -> None:
+        """Start this attempt's worker on its own thread."""
+        threading.Thread(target=lambda: self._publish(running), daemon=True).start()
+
+    def _publish(self, running: PublishRunningDialog) -> None:
+        """Render and POST off-loop; report through ``CallAfter``.
+
+        ``is_cancelled`` is polled at every checkpoint -- before the
+        request, and again once it returns -- because the publish's
+        ``urllib`` call is blocking: an in-flight request cannot be
+        aborted, so a cancel is noticed at the next checkpoint and the
+        attempt abandoned rather than reported as a result.
+        """
+        wx = require_wx()
+        wx.CallAfter(running.set_status, _PUBLISHING_STATUS)
+        wx.CallAfter(running.pulse)
+        if self._abandoned(running):
+            return
+        try:
+            page = self._render_and_post()
+        except Exception as exc:  # noqa: BLE001 -- a failed publish is a notice, not a crash
+            if self._abandoned(running):
+                return
+            _log_warn(self.context, f"Publish failed: {exc}")
+            # The message is str()d here, not in the callback: `exc` is
+            # unbound by the time CallAfter runs (Python deletes an
+            # except target at the end of its block).
+            wx.CallAfter(self._report_failed, running, str(exc))
+            return
+        if self._abandoned(running):
+            return
+        _log_warn(self.context, f"Published to {page.link}")
+        wx.CallAfter(self._report_published, running, page.link)
+
+    def _abandoned(self, running: PublishRunningDialog) -> bool:
+        """Return whether a cancel has landed, ending the modal if so.
+
+        The worker's one cancel checkpoint, so the three call sites
+        cannot drift apart in how they honour it.
+        """
+        if not running.is_cancelled():
+            return False
+        require_wx().CallAfter(self._report_cancelled, running)
+        return True
+
+    def _render_and_post(self) -> wordpress.PublishedPage:
+        """Render the fragment and POST it: the worker's own I/O."""
+        return _publish_page(
+            self.form,
+            self.config,
+            self.placed,
+            self.opts,
+            riders=self.riders,
+            team_logos=self.team_logos,
+            self_test_unverified=self.self_test_unverified,
+        )
+
+    def _report_published(self, running: PublishRunningDialog, link: str) -> None:
+        """End the modal, then ask OK/Open on the published page.
+
+        The confirmation is deferred past the modal's own end so the
+        result dialog is never stacked inside the progress loop. R-86:
+        it offers two answers -- OK returns to the console, Open hands
+        the page's own link to the operator's browser -- and Escape is
+        the safe dismiss (``std_dialogs.show_ok_open``), so a reflex
+        Escape can never launch a browser.
+        """
+        running.finish()
+        notice = f"Published to {link}"
+        self.context.frame.SetStatusText(notice)
+        require_wx().CallAfter(self._ask_open_page, notice, link)
+
+    def _ask_open_page(self, notice: str, link: str) -> None:
+        """Ask OK/Open; Open launches the published page.
+
+        The link travels beside the notice rather than being parsed
+        back out of it, so the browser receives exactly the URL the
+        site returned.
+        """
+        from rivercrossing.ui import std_dialogs  # noqa: PLC0415 -- deferred
+
+        if std_dialogs.show_ok_open(self.context.frame, _PUBLISHED_TITLE, notice) == int(
+            require_wx().ID_OK
+        ):
+            webbrowser.open(link)
+
+    def _report_failed(self, running: PublishRunningDialog, message: str) -> None:
+        """End the modal, then ask Retry/Cancel on the main thread."""
+        running.finish()
+        require_wx().CallAfter(self._ask_retry, message)
+
+    def _ask_retry(self, message: str) -> None:
+        """Ask Retry/Cancel; Retry runs the whole attempt again."""
+        from rivercrossing.ui import std_dialogs  # noqa: PLC0415 -- deferred
+
+        if std_dialogs.show_retry(self.context.frame, _FAILED_TITLE, message) == int(
+            require_wx().ID_OK
+        ):
+            self.run()
+
+    def _report_cancelled(self, running: PublishRunningDialog) -> None:
+        """End the modal; a cancel shows no result dialog."""
+        running.finish()
+        _log_warn(self.context, "Publish cancelled")
+
+
 def _run_publish_offloop(  # noqa: PLR0913 -- context + the captured publish inputs
     context: _RouteContext,
     form: PublishForm,
@@ -2792,58 +2970,42 @@ def _run_publish_offloop(  # noqa: PLR0913 -- context + the captured publish inp
     team_logos: dict[str, str] | None = None,
     self_test_unverified: bool = False,
 ) -> None:
-    """Publish on a background thread; notice through ``CallAfter``.
+    """Show the publish progress window, then publish off-loop.
 
     R-02's off-loop rule, applied to the network: the worker renders and
     talks HTTP, and every wx touch stays on the main thread through
     ``wx.CallAfter`` (measured: a wx call from the worker bus-errors the
-    process). A publish therefore never stalls the console.
+    process). A publish therefore never stalls the console, and the
+    operator watches it through the modal progress window this opens.
 
-    A successful publish posts the page's own link on the status bar and
-    records it in the launch's log -- the always-on record, because a
-    page that reached the internet has to be traceable from the log
-    alone. A failure asks Retry/Cancel on the main thread and records
-    the site's own message the same way, so a publish never fails
-    silently: Retry starts a fresh worker thread on the captured
-    publish inputs, Cancel leaves the page unpublished.
+    Each attempt shows ``publish_running_dlg`` (the window loads afresh
+    per attempt, so a Retry gets an un-cancelled one), starts the worker
+    from the dialog's own start seam, and lets the worker's
+    ``CallAfter`` reports end it: a success posts the page's link on the
+    status bar and asks OK/Open through ``std_dialogs.show_ok_open`` --
+    OK back to the console, Open in the operator's browser, R-86 -- and
+    records the link in the launch's log, the always-on record, because
+    a page that reached the internet has to be traceable from the log
+    alone. A failure keeps the Retry/Cancel alert on the main
+    thread and records the site's own message the same way, so a publish
+    never fails silently: Retry runs the whole attempt again, progress
+    window included, on the captured publish inputs; Cancel leaves the
+    page unpublished. A cancel -- before the request or while the
+    blocking one is in flight -- ends the modal, records it and shows no
+    result dialog at all (the view's own Cancel contract: the request in
+    flight cannot be aborted, only abandoned).
     """
-    from rivercrossing.ui import std_dialogs  # noqa: PLC0415 -- deferred, see module docstring
-
-    def publish() -> None:
-        try:
-            page = _publish_page(
-                form,
-                config,
-                (*teams, *solo),
-                opts,
-                riders=riders,
-                team_logos=team_logos,
-                self_test_unverified=self_test_unverified,
-            )
-        except Exception as exc:  # noqa: BLE001 -- a failed publish is a notice, not a crash
-            _log_warn(context, f"Publish failed: {exc}")
-            # The message is str()d here, not in the callback: `exc` is
-            # unbound by the time CallAfter runs (Python deletes an
-            # except target at the end of its block).
-            wx = require_wx()
-            wx.CallAfter(_ask_retry, str(exc))
-            return
-        _log_warn(context, f"Published to {page.link}")
-        wx = require_wx()
-        wx.CallAfter(context.frame.SetStatusText, f"Published to {page.link}")
-
-    def _ask_retry(message: str) -> None:
-        """Ask Retry/Cancel on the main thread; Retry re-publishes.
-
-        Called through ``wx.CallAfter`` so the dialog runs on the main
-        thread. Retry starts a fresh worker thread running the same
-        ``publish`` closure with the already-captured publish inputs.
-        """
-        wx = require_wx()
-        if std_dialogs.show_retry(context.frame, "Publish Failed", message) == int(wx.ID_OK):
-            threading.Thread(target=publish, daemon=True).start()
-
-    threading.Thread(target=publish, daemon=True).start()
+    _PublishRun(
+        context,
+        form,
+        config=config,
+        teams=teams,
+        solo=solo,
+        opts=opts,
+        riders=riders,
+        team_logos=team_logos,
+        self_test_unverified=self_test_unverified,
+    ).run()
 
 
 def _active_top_level_window(wx: Any) -> Any:  # noqa: ANN401 -- wx ships no stubs

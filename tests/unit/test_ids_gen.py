@@ -352,6 +352,25 @@ def test_scan_xrc_directory_real_tree_registers_the_publish_kind_choice() -> Non
     assert "wp_kind_choice" in result.names
 
 
+def test_scan_xrc_directory_real_tree_registers_the_publish_running_dialog() -> None:
+    """Phase 4b: the publish progress window and status line are frozen.
+
+    ``progress_gauge`` and ``cancel_btn`` come along too -- they repeat
+    ``sim_running_dlg``'s names, which section 15b allows across
+    windows, so each stays a single constant.
+    """
+    result = gen_ids.scan_xrc_directory(gen_ids.DEFAULT_XRC_DIR)
+
+    assert {"publish_running_dlg", "publish_status_lbl"} <= set(result.names)
+
+
+def test_scan_xrc_directory_real_tree_produces_no_suffix_warnings() -> None:
+    """Every real-tree name obeys section 15b's suffix convention."""
+    result = gen_ids.scan_xrc_directory(gen_ids.DEFAULT_XRC_DIR)
+
+    assert result.warnings == ()
+
+
 def test_write_ids_module_regeneration_matches_committed_ids_byte_for_byte(
     tmp_path: Path,
 ) -> None:

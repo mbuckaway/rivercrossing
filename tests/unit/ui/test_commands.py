@@ -522,6 +522,7 @@ NEW_RIDE_ROUTE = _ROUTES_BY_LABEL["New Ride…"]
 EDIT_RIDE_ROUTE = _ROUTES_BY_LABEL["Edit Ride…"]
 CLEAR_RIDE_ROUTE = _ROUTES_BY_LABEL["Clear Ride…"]
 SIMULATION_ROUTE = _ROUTES_BY_LABEL["Simulation…"]
+PUBLISH_WORDPRESS_ROUTE = _ROUTES_BY_LABEL["Publish to WordPress…"]
 
 RIDE_OPEN_CASES = (True, False)
 RIDE_OPEN_CASE_IDS = ("ride_open", "no_ride_open")
@@ -711,6 +712,43 @@ def test_is_route_enabled_given_preview_ignores_the_other_formats_exports(  # no
     result = commands.is_route_enabled(route, state)
 
     assert result is own_exported
+
+
+# Phase 4b: Publish to WordPress… is FINISHED-only. The launch walk
+# (app.build_main_window's DRAFT apply) and every ride-state change
+# apply this same rule, so the pure table below is what decides whether
+# the publish form is reachable at all -- pinned here so it can never
+# regress into DRAFT/RUNNING/REOPENED.
+PUBLISH_WORDPRESS_CASES = tuple((status, status is RideStatus.FINISHED) for status in STATUSES)
+PUBLISH_WORDPRESS_CASE_IDS = [status.value for status in STATUSES]
+
+
+def test_publish_wordpress_route_declares_the_finished_only_gate() -> None:
+    """Phase 4b: the row's own §15 cell is FINISHED and nothing else."""
+    route = commands.route_for_id(ids.MI_PUBLISH_WORDPRESS)
+
+    assert (route.menu, route.label, route.kind) == (
+        "Results",
+        "Publish to WordPress…",
+        commands.TargetKind.DIALOG,
+    )
+    assert route.enabled_when == commands.Enablement(
+        allowed_states=frozenset({RideStatus.FINISHED})
+    )
+
+
+@pytest.mark.parametrize(
+    ("status", "expected_enabled"), PUBLISH_WORDPRESS_CASES, ids=PUBLISH_WORDPRESS_CASE_IDS
+)
+def test_is_route_enabled_given_publish_wordpress_enables_only_in_finished(
+    status: RideStatus, *, expected_enabled: bool
+) -> None:
+    """T-13: the publish row is live only on a closed ride."""
+    state = _baseline_state(status)
+
+    result = commands.is_route_enabled(PUBLISH_WORDPRESS_ROUTE, state)
+
+    assert result is expected_enabled
 
 
 @pytest.mark.parametrize(("status", "ride_stopped", "expected_enabled"), START_RIDE_CASES)

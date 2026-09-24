@@ -19,6 +19,19 @@ Part C adds the publish kind's two ends: ``_publish_page``'s branch
 page) and ``_publish_wordpress``'s persistence of ``wp_kind`` beside
 the other site fields -- driven through the real function over a real
 settings file, with only the thread boundary stubbed.
+
+Phase 4b adds the modal progress window: ``_publish_wordpress`` now
+schedules the publish (through ``wx.CallAfter``) instead of starting it,
+so the publish form's own ``EndModal`` runs first and the progress
+dialog never stacks over a form that is still on screen. The progress
+window itself is stubbed -- its own behaviour is
+``test_publish_wordpress_wx.py``'s subject -- and the completion paths
+are pinned here: success shows the native OK/Open question
+(``std_dialogs.show_ok_open``, R-86) -- OK returns to the console and
+Open hands the page's own link to ``webbrowser`` -- failure keeps the
+Retry/Cancel flow (Retry re-shows the progress dialog over a fresh
+attempt), and a cancel ends the modal, records it and shows no result
+dialog at all.
 """
 
 from dataclasses import replace
@@ -34,6 +47,7 @@ from rivercrossing.ui import app as app_module
 from rivercrossing.ui import std_dialogs
 from rivercrossing.ui.presenters import settings as settings_store
 from rivercrossing.ui.presenters.publish_wordpress import PublishForm
+from rivercrossing.ui.views import publish_wordpress as publish_wordpress_view
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -43,6 +57,10 @@ _PAGE_LINK = "https://example.test/results/"
 _FAILURE_MESSAGE = "boom"
 _FAILURE_TITLE = "Publish Failed"
 _SAVE_FAILURE = "settings file is read-only"
+# The success confirmation's own caption, and the cancel record the
+# progress dialog's Cancel path writes.
+_PUBLISHED_TITLE = "Published"
+_CANCELLED_MESSAGE = "Publish cancelled"
 
 
 class _InlineThread:
@@ -143,18 +161,22 @@ def _drive_inline(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def _stub_publish_page(
-    monkeypatch: pytest.MonkeyPatch, *, fail_times: int | None
+    monkeypatch: pytest.MonkeyPatch, *, fail_times: int | None, cancel_latest: bool = False
 ) -> list[tuple[tuple[object, ...], dict[str, object]]]:
     """Swap ``_publish_page`` for a recorder that fails, then publishes.
 
     The first *fail_times* calls raise ``OSError(_FAILURE_MESSAGE)``;
     ``None`` fails every call. Any later call returns a page whose link
-    is :data:`_PAGE_LINK`.
+    is :data:`_PAGE_LINK`. *cancel_latest* marks the newest progress
+    dialog cancelled as the request is entered, which is how a cancel
+    that lands while the blocking HTTP call is in flight is modelled.
     """
     calls: list[tuple[tuple[object, ...], dict[str, object]]] = []
 
     def _publish(*args: object, **kwargs: object) -> object:
         calls.append((args, kwargs))
+        if cancel_latest:
+            _RUNNINGS[-1].cancelled = True
         if fail_times is None or len(calls) <= fail_times:
             raise OSError(_FAILURE_MESSAGE)
         return SimpleNamespace(link=_PAGE_LINK)
@@ -164,6 +186,168 @@ def _stub_publish_page(
     # is the I/O seam, exactly like test_app_exports' _write_export.
     monkeypatch.setattr(app_module, "_publish_page", _publish)
     return calls
+
+
+# ---------------------------------- the progress dialog (Phase 4b)
+
+# The flow's thread and wx boundaries are already swapped by
+# ``_drive_inline``; these add the progress window's own two seams.
+
+
+class _StubWindow:
+    """The loaded ``publish_running_dlg`` the app hands the view."""
+
+    def __init__(self, parent: object) -> None:
+        """Record the window the loader was parented to."""
+        self.parent = parent
+
+
+class _StubRunningDialog:
+    """A ``PublishRunningDialog`` stand-in driven headlessly.
+
+    ``run`` calls the view's own start seam -- the app wires that to the
+    worker start -- which is exactly what the real ``run`` does inside
+    the modal loop it opens; ``finish`` records the modal end.
+    ``cancel_before_start`` marks the attempt abandoned before the
+    worker's first checkpoint.
+    """
+
+    def __init__(
+        self,
+        dialog: object,
+        *,
+        on_start: Callable[[], None],
+        cancel_before_start: bool = False,
+    ) -> None:
+        """Record the seams, starting un-cancelled and unfinished."""
+        self.dialog = dialog
+        self.on_start = on_start
+        self.cancel_before_start = cancel_before_start
+        self.cancelled = False
+        self.finished = False
+        self.statuses: list[str] = []
+        self.pulses = 0
+        _RUNNINGS.append(self)
+
+    def is_cancelled(self) -> bool:
+        """Return whether the operator has abandoned this attempt."""
+        return self.cancelled
+
+    def set_status(self, text: str) -> None:
+        """Record one live status-line update."""
+        self.statuses.append(text)
+
+    def pulse(self) -> None:
+        """Record one gauge pulse."""
+        self.pulses += 1
+
+    def run(self) -> None:
+        """Run the start seam, as the real modal loop does."""
+        if self.cancel_before_start:
+            self.cancelled = True
+        self.on_start()
+
+    def finish(self) -> None:
+        """Record the modal end."""
+        self.finished = True
+
+
+# Every progress-dialog double built since the last installer call.
+_RUNNINGS: list[_StubRunningDialog] = []
+
+
+def _stub_running_dialog(
+    monkeypatch: pytest.MonkeyPatch, *, cancel_before_start: bool = False
+) -> list[_StubRunningDialog]:
+    """Swap the progress view and its window loader for doubles.
+
+    logic-coverage-exempt: T-10 -- loading the XRC window and showing a
+    real modal are the GUI boundary; the view's own behaviour is
+    ``test_publish_wordpress_wx.py``'s subject.
+    """
+    _RUNNINGS.clear()
+
+    def _build(dialog: object, *, on_start: Callable[[], None]) -> _StubRunningDialog:
+        return _StubRunningDialog(
+            dialog, on_start=on_start, cancel_before_start=cancel_before_start
+        )
+
+    monkeypatch.setattr(publish_wordpress_view, "load_publish_running_window", _StubWindow)
+    monkeypatch.setattr(publish_wordpress_view, "PublishRunningDialog", _build)
+    return _RUNNINGS
+
+
+def _stub_show_ok_open(
+    monkeypatch: pytest.MonkeyPatch, *, result: int = _ImmediateWx.ID_CANCEL
+) -> list[tuple[object, ...]]:
+    """Swap ``std_dialogs.show_ok_open`` for a recorder of its calls.
+
+    *result* is the operator's answer: ``wx.ID_OK`` is Open, anything
+    else is the OK/Escape dismiss. It defaults to the dismiss so no
+    test launches a browser it did not ask for.
+
+    logic-coverage-exempt: T-10 -- the native modal is the GUI
+    boundary; the helper's own flags and labels are
+    ``test_std_dialogs.py``'s subject.
+    """
+    calls: list[tuple[object, ...]] = []
+
+    def _show(*args: object) -> int:
+        calls.append(args)
+        return result
+
+    monkeypatch.setattr(std_dialogs, "show_ok_open", _show)
+    return calls
+
+
+def _stub_browser(monkeypatch: pytest.MonkeyPatch) -> list[str]:
+    """Record the URLs the publish completion hands to the browser.
+
+    logic-coverage-exempt: T-10 -- ``webbrowser`` is the OS process
+    boundary (it launches the operator's own browser), so it is the
+    stub, not the SUT (the ``test_help.py`` seam).
+    """
+    opened: list[str] = []
+
+    def _open(url: str, *_args: object, **_kwargs: object) -> bool:
+        opened.append(url)
+        return True
+
+    monkeypatch.setattr(app_module.webbrowser, "open", _open)
+    return opened
+
+
+def _stub_log_warn(monkeypatch: pytest.MonkeyPatch) -> list[str]:
+    """Record the always-on log warnings the publish path writes."""
+    recorded: list[str] = []
+    monkeypatch.setattr(
+        app_module, "_log_warn", lambda _context, message: recorded.append(message)
+    )
+    return recorded
+
+
+def _defer_wx(monkeypatch: pytest.MonkeyPatch) -> list[Callable[[], None]]:
+    """Point ``require_wx`` at a seam that queues ``CallAfter`` calls.
+
+    The publish form's OK calls ``on_publish`` and *then* ``EndModal``,
+    so ``_publish_wordpress`` must schedule the progress dialog and the
+    worker rather than start them: this seam records what was scheduled
+    so a test can assert nothing ran while the form was still up.
+    """
+    pending: list[Callable[[], None]] = []
+
+    class _DeferredWx:
+        ID_OK = _ImmediateWx.ID_OK
+        ID_CANCEL = _ImmediateWx.ID_CANCEL
+
+        def CallAfter(  # noqa: N802 -- wx API name
+            self, callable_: Callable[[], None]
+        ) -> None:
+            """Queue one deferred call instead of running it."""
+            pending.append(callable_)
+
+    monkeypatch.setattr(app_module, "require_wx", _DeferredWx)
+    return pending
 
 
 def _stub_show_retry(
@@ -196,20 +380,105 @@ def _run(context: app_module._RouteContext) -> None:
     )
 
 
-def test_run_publish_offloop_given_a_successful_publish_posts_the_page_link(
+def test_run_publish_offloop_given_a_successful_publish_posts_the_link_and_confirms(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The success arm notices the link and never asks to retry."""
+    """R-86: the success arm offers OK/Open and never retries."""
     context = _context()
     attempts = _stub_publish_page(monkeypatch, fail_times=0)
     retries = _stub_show_retry(monkeypatch, result=_ImmediateWx.ID_OK)
+    confirmations = _stub_show_ok_open(monkeypatch)
+    runnings = _stub_running_dialog(monkeypatch)
     _drive_inline(monkeypatch)
 
     _run(context)
 
     assert context.frame.notices == [f"Published to {_PAGE_LINK}"]
-    assert len(attempts) == 1
-    assert retries == []
+    assert confirmations == [(context.frame, _PUBLISHED_TITLE, f"Published to {_PAGE_LINK}")]
+    assert (len(attempts), retries, runnings[0].finished) == (1, [], True)
+
+
+def test_run_publish_offloop_given_the_open_choice_opens_the_published_link(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """R-86: Open hands the page's own link to the browser, verbatim."""
+    context = _context()
+    _stub_publish_page(monkeypatch, fail_times=0)
+    confirmations = _stub_show_ok_open(monkeypatch, result=_ImmediateWx.ID_OK)
+    opened = _stub_browser(monkeypatch)
+    _stub_running_dialog(monkeypatch)
+    _drive_inline(monkeypatch)
+
+    _run(context)
+
+    assert confirmations == [(context.frame, _PUBLISHED_TITLE, f"Published to {_PAGE_LINK}")]
+    assert opened == [_PAGE_LINK]
+
+
+def test_run_publish_offloop_given_the_ok_choice_leaves_the_browser_closed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """R-86: the OK dismiss returns to the console and opens nothing."""
+    context = _context()
+    _stub_publish_page(monkeypatch, fail_times=0)
+    confirmations = _stub_show_ok_open(monkeypatch, result=_ImmediateWx.ID_CANCEL)
+    opened = _stub_browser(monkeypatch)
+    _stub_running_dialog(monkeypatch)
+    _drive_inline(monkeypatch)
+
+    _run(context)
+
+    assert confirmations == [(context.frame, _PUBLISHED_TITLE, f"Published to {_PAGE_LINK}")]
+    assert opened == []
+
+
+def test_run_publish_offloop_given_an_attempt_updates_the_status_line_and_pulses(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Phase 4b: the worker feeds the live status line and the gauge."""
+    context = _context()
+    _stub_publish_page(monkeypatch, fail_times=0)
+    _stub_show_ok_open(monkeypatch)
+    runnings = _stub_running_dialog(monkeypatch)
+    _drive_inline(monkeypatch)
+
+    _run(context)
+
+    assert (runnings[0].statuses, runnings[0].pulses) == ([app_module._PUBLISHING_STATUS], 1)
+
+
+def test_run_publish_offloop_given_captured_inputs_forwards_them_to_the_render(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Phase 4b: the worker renders with the captured publish inputs."""
+    context = _context()
+    form = _form()
+    config = _StubConfig()
+    opts = ExportOptions()
+    logos = {"45": "data:image/png;base64,AA"}
+    calls = _stub_publish_page(monkeypatch, fail_times=0)
+    _stub_show_ok_open(monkeypatch)
+    _stub_running_dialog(monkeypatch)
+    _drive_inline(monkeypatch)
+
+    app_module._run_publish_offloop(
+        context,
+        form,
+        config=config,  # type: ignore[arg-type] -- the stubbed render ignores it
+        teams=(),
+        solo=(),
+        opts=opts,
+        riders=7,
+        team_logos=logos,
+        self_test_unverified=True,
+    )
+
+    assert calls == [
+        (
+            (form, config, (), opts),
+            {"riders": 7, "team_logos": logos, "self_test_unverified": True},
+        )
+    ]
 
 
 def test_run_publish_offloop_given_a_failure_and_retry_republishes_the_page(
@@ -219,6 +488,8 @@ def test_run_publish_offloop_given_a_failure_and_retry_republishes_the_page(
     context = _context()
     attempts = _stub_publish_page(monkeypatch, fail_times=1)
     retries = _stub_show_retry(monkeypatch, result=_ImmediateWx.ID_OK)
+    _stub_show_ok_open(monkeypatch)
+    _stub_running_dialog(monkeypatch)
     _drive_inline(monkeypatch)
 
     _run(context)
@@ -228,6 +499,24 @@ def test_run_publish_offloop_given_a_failure_and_retry_republishes_the_page(
     assert context.frame.notices == [f"Published to {_PAGE_LINK}"]
 
 
+def test_run_publish_offloop_given_a_failure_and_retry_reshows_the_progress_dialog(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Phase 4b: Retry re-shows the progress window."""
+    context = _context()
+    _stub_publish_page(monkeypatch, fail_times=1)
+    _stub_show_retry(monkeypatch, result=_ImmediateWx.ID_OK)
+    confirmations = _stub_show_ok_open(monkeypatch)
+    runnings = _stub_running_dialog(monkeypatch)
+    _drive_inline(monkeypatch)
+
+    _run(context)
+
+    assert (len(runnings), runnings[0].finished, runnings[1].finished) == (2, True, True)
+    assert confirmations == [(context.frame, _PUBLISHED_TITLE, f"Published to {_PAGE_LINK}")]
+    assert runnings[0].dialog is not runnings[1].dialog
+
+
 def test_run_publish_offloop_given_a_failure_and_cancel_leaves_the_page_unpublished(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -235,13 +524,70 @@ def test_run_publish_offloop_given_a_failure_and_cancel_leaves_the_page_unpublis
     context = _context()
     attempts = _stub_publish_page(monkeypatch, fail_times=None)
     retries = _stub_show_retry(monkeypatch, result=_ImmediateWx.ID_CANCEL)
+    confirmations = _stub_show_ok_open(monkeypatch)
+    runnings = _stub_running_dialog(monkeypatch)
     _drive_inline(monkeypatch)
 
     _run(context)
 
     assert len(attempts) == 1
     assert retries == [((context.frame, _FAILURE_TITLE, _FAILURE_MESSAGE), {})]
-    assert context.frame.notices == []
+    assert (context.frame.notices, confirmations) == ([], [])
+    assert runnings[0].finished is True
+
+
+def test_run_publish_offloop_given_a_cancel_before_the_request_shows_no_result_dialog(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Cancel before the first HTTP call: no result dialog at all."""
+    context = _context()
+    attempts = _stub_publish_page(monkeypatch, fail_times=0)
+    retries = _stub_show_retry(monkeypatch, result=_ImmediateWx.ID_OK)
+    confirmations = _stub_show_ok_open(monkeypatch)
+    warnings = _stub_log_warn(monkeypatch)
+    runnings = _stub_running_dialog(monkeypatch, cancel_before_start=True)
+    _drive_inline(monkeypatch)
+
+    _run(context)
+
+    assert (attempts, retries, confirmations) == ([], [], [])
+    assert (runnings[0].finished, warnings) == (True, [_CANCELLED_MESSAGE])
+
+
+def test_run_publish_offloop_given_a_cancel_during_a_successful_request_suppresses_it(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A cancel that lands mid-request wins over the late success."""
+    context = _context()
+    attempts = _stub_publish_page(monkeypatch, fail_times=0, cancel_latest=True)
+    retries = _stub_show_retry(monkeypatch, result=_ImmediateWx.ID_OK)
+    confirmations = _stub_show_ok_open(monkeypatch)
+    warnings = _stub_log_warn(monkeypatch)
+    runnings = _stub_running_dialog(monkeypatch)
+    _drive_inline(monkeypatch)
+
+    _run(context)
+
+    assert (len(attempts), retries, confirmations, context.frame.notices) == (1, [], [], [])
+    assert (runnings[0].finished, warnings) == (True, [_CANCELLED_MESSAGE])
+
+
+def test_run_publish_offloop_given_a_cancel_during_a_failing_request_suppresses_retry(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A cancel that lands mid-request wins over the failure's Retry."""
+    context = _context()
+    attempts = _stub_publish_page(monkeypatch, fail_times=None, cancel_latest=True)
+    retries = _stub_show_retry(monkeypatch, result=_ImmediateWx.ID_OK)
+    confirmations = _stub_show_ok_open(monkeypatch)
+    warnings = _stub_log_warn(monkeypatch)
+    runnings = _stub_running_dialog(monkeypatch)
+    _drive_inline(monkeypatch)
+
+    _run(context)
+
+    assert (len(attempts), retries, confirmations) == (1, [], [])
+    assert (runnings[0].finished, warnings) == (True, [_CANCELLED_MESSAGE])
 
 
 # ------------------------------------- the publish kind's render branch
@@ -382,6 +728,7 @@ def test_publish_wordpress_given_a_podium_form_persists_the_kind_with_the_site_f
     settings_path = tmp_path / "settings.json"
     context = _publish_context(settings_path, _StubEngine())
     _stub_offloop(monkeypatch)
+    _drive_inline(monkeypatch)
 
     app_module._publish_wordpress(context, replace(_form(), kind="podium"))
 
@@ -395,6 +742,7 @@ def test_publish_wordpress_given_no_engine_notices_and_starts_no_publish(
     """T-3's other arm: with no ride threaded nothing is published."""
     context = _publish_context(tmp_path / "settings.json", engine=None)
     calls = _stub_offloop(monkeypatch)
+    _drive_inline(monkeypatch)
 
     app_module._publish_wordpress(context, _form())
 
@@ -408,6 +756,7 @@ def test_publish_wordpress_given_a_refused_settings_write_still_publishes(
     """A refused write costs the persistence, never the publish."""
     context = _publish_context(tmp_path / "settings.json", _StubEngine())
     calls = _stub_offloop(monkeypatch)
+    _drive_inline(monkeypatch)
 
     def _refuse(_settings: object, _path: object = None) -> None:
         raise OSError(_SAVE_FAILURE)
@@ -421,3 +770,42 @@ def test_publish_wordpress_given_a_refused_settings_write_still_publishes(
     assert context.frame.notices == [f"Could not save settings: {_SAVE_FAILURE}"]
     assert context.settings.wp_kind == "podium"
     assert len(calls) == 1
+
+
+def test_publish_wordpress_given_a_ride_schedules_the_publish_after_the_form_closes(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Phase 4b: nothing starts while the publish form is still up.
+
+    The form's OK calls ``on_publish`` and then ``EndModal``, so the
+    progress dialog and the worker must be scheduled: only running the
+    deferred call starts them, which is what happens after the form is
+    gone.
+    """
+    context = _publish_context(tmp_path / "settings.json", _StubEngine())
+    form = replace(_form(), kind="podium")
+    calls = _stub_offloop(monkeypatch)
+    pending = _defer_wx(monkeypatch)
+
+    app_module._publish_wordpress(context, form)
+
+    assert (calls, len(pending)) == ([], 1)
+    pending[0]()
+    assert len(calls) == 1
+    assert (calls[0][0], calls[0][1]) == (context, form)
+
+
+def test_publish_wordpress_given_a_ride_parents_the_progress_dialog_to_the_frame(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The progress window stacks over the console, not over nothing."""
+    context = _publish_context(tmp_path / "settings.json", _StubEngine())
+    _stub_publish_page(monkeypatch, fail_times=0)
+    _stub_show_ok_open(monkeypatch)
+    runnings = _stub_running_dialog(monkeypatch)
+    _drive_inline(monkeypatch)
+
+    app_module._publish_wordpress(context, _form())
+
+    assert len(runnings) == 1
+    assert runnings[0].dialog.parent is context.frame
