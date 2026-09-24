@@ -172,7 +172,9 @@ known Windows failure was root-caused and fixed and Windows testers became avail
 
 ## Source control
 
-- **Never commit to `master`** — use `topic/*` branches.
+- **Never commit to `master`** — use `topic/*` branches. **Release version bumps MUST go on a
+  `release/v<X.Y.Z>` branch merged by PR** (e.g. `release/v1.0.15`) — never a direct commit to
+  `master`; see `CONTRIBUTING.md` § Releasing.
 - **No new branches or PRs without explicit approval** if a working branch already exists — ask first.
 - Conventional Commits, scope = module. Test-first shows in the history: `test(hands): E2.1.1 red`,
   then `feat(hands): E2.1.1 green`.
