@@ -30,6 +30,7 @@ from hypothesis import given
 from hypothesis import strategies as st
 
 from rivercrossing.ride import RideStatus
+from rivercrossing.ui.card_text import JOKER_STEEL, SUIT_INK, SUIT_RED
 from rivercrossing.ui.presenters.data_source import RiderRow, StandingsRow
 from rivercrossing.ui.rider_columns import EDITOR_RIDER_COLUMNS, SOLO_TEAM_TEXT
 from rivercrossing.ui.views.results_win import (
@@ -156,13 +157,45 @@ def test_format_card_given_any_valid_code_ends_in_a_known_suit_glyph_or_is_the_j
 
 
 # --- results_win.format_best5 ---------------------------------------
+#
+# The Best 5 cell holds up to five cards of mixed suits, so its value is
+# markup: one `<span color="...">` per card, each in that card's own
+# suit colour. A whole-cell attribute could only colour the entire cell
+# one colour, which would mislabel the ♠/♣ faces of a mixed hand.
 
 BEST5_CASES = (
-    (("KS", "KC", "KD", "JK", "9H"), "K♠ K♣ K♦ JK★ 9♥"),
-    (("QH", "JH", "10H", "9H", "8H"), "Q♥ J♥ 10♥ 9♥ 8♥"),
-    (("AC", "AD", "AH", "4D", "4S"), "A♣ A♦ A♥ 4♦ 4♠"),
+    (
+        ("KS", "KC", "KD", "JK", "9H"),
+        (
+            f'<span color="{SUIT_INK}">K♠</span> '
+            f'<span color="{SUIT_INK}">K♣</span> '
+            f'<span color="{SUIT_RED}">K♦</span> '
+            f'<span color="{JOKER_STEEL}">JK★</span> '
+            f'<span color="{SUIT_RED}">9♥</span>'
+        ),
+    ),
+    (
+        ("QH", "JH", "10H", "9H", "8H"),
+        (
+            f'<span color="{SUIT_RED}">Q♥</span> '
+            f'<span color="{SUIT_RED}">J♥</span> '
+            f'<span color="{SUIT_RED}">10♥</span> '
+            f'<span color="{SUIT_RED}">9♥</span> '
+            f'<span color="{SUIT_RED}">8♥</span>'
+        ),
+    ),
+    (
+        ("AC", "AD", "AH", "4D", "4S"),
+        (
+            f'<span color="{SUIT_INK}">A♣</span> '
+            f'<span color="{SUIT_RED}">A♦</span> '
+            f'<span color="{SUIT_RED}">A♥</span> '
+            f'<span color="{SUIT_RED}">4♦</span> '
+            f'<span color="{SUIT_INK}">4♠</span>'
+        ),
+    ),
     ((), ""),  # T-4 collection boundary: empty
-    (("JK",), JOKER_DISPLAY),  # T-4 collection boundary: single
+    (("JK",), f'<span color="{JOKER_STEEL}">JK★</span>'),  # T-4 boundary: single
 )
 
 
@@ -178,10 +211,10 @@ def test_format_best5_given_a_hand_returns_the_canvas_exact_best5_cell(
 def test_format_best5_given_any_non_empty_hand_preserves_its_card_count(
     cards: list[str],
 ) -> None:
-    """Property: length preservation -- one display token per card."""
+    """Property: length preservation -- one coloured span per card."""
     text = format_best5(cards)
 
-    assert len(text.split(" ")) == len(cards)
+    assert text.count("<span ") == len(cards)
 
 
 # --- results_win.format_place (E6.4.1 ⚠ badge) ---------------------

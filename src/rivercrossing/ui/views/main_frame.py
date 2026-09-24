@@ -57,6 +57,7 @@ from rivercrossing.ui.views._support import (
     DialogFindMixin,
     RiderRowListModel,
     _ordering,
+    append_markup_column,
     associate_model,
     find_control,
     fit_frame_to_screen,
@@ -104,8 +105,10 @@ __all__ = [
     "REVIEW_NOTEBOOK",
     "RIDERS_COLUMN_LABELS",
     "RIDERS_COLUMN_WIDTHS",
+    "RIDERS_COL_CARDS",
     "RIDERS_COL_NAME",
     "RIDERS_COL_PLATE",
+    "RIDERS_COL_SEX",
     "RIDERS_COL_TEAM",
     "RIDERS_LIST_COLUMN_FLAGS",
     "RIDERS_PAGE_LABEL",
@@ -221,11 +224,14 @@ EDIT_PLATE_CROSSING_KEY = ord("E")
 # shared column (``ui.rider_columns.CONSOLE_RIDER_COLUMNS`` -- Plate |
 # Name | Team | Sex | Cards), so the headers, the cells and the sort
 # keys are the rider editor's own plus the Cards column, never a
-# second copy. The three indexes below name the columns the console's
-# own code reads back (``_on_rider_activated`` takes the Plate cell).
+# second copy. The four indexes below name the columns the console's
+# own code reads back (``_on_rider_activated`` takes the Plate cell,
+# ``_build_riders_columns`` builds the Cards cell as markup).
 RIDERS_COL_PLATE = 0
 RIDERS_COL_NAME = 1
 RIDERS_COL_TEAM = 2
+RIDERS_COL_SEX = 3
+RIDERS_COL_CARDS = 4
 RIDERS_COLUMN_LABELS: tuple[str, ...] = tuple(column.label for column in CONSOLE_RIDER_COLUMNS)
 
 # AppendTextColumn's own default flags include
@@ -417,8 +423,15 @@ class CrossingsFeedModel(wx.dataview.DataViewIndexListModel):  # type: ignore[mi
         *col* is unused: xrc-windows.md's code-side note bolds the
         whole row, not one cell. A DNF row is *not* a third bold
         channel -- it carries a text marker instead
-        (``feed_model.entry_text``), so meaning never rides on weight
+        (``feed_model.entry_text``) -- so meaning never rides on weight
         or colour alone.
+
+        Colour deliberately does *not* live here: a
+        ``DataViewItemAttr`` carries one text colour per CELL, and the
+        card cells render markup instead (the Card column via
+        ``_support.append_markup_column``; see ``ui/card_text``). A
+        bold attribute and a markup renderer coexist -- measured in a
+        probe: the same glyph bolded draws ~30 % more coloured pixels.
         """
         if row not in self._held_or_duplicate and row not in self._edited:
             return False
@@ -1114,15 +1127,22 @@ class MainFrame(DialogFindMixin):  # _find: ui.views._support, over self.frame
         and orders through :meth:`CrossingsFeedModel.Compare`'s own
         per-column keys.
 
-        Every column is text: the Card column renders the dealt
-        card's glyph display (``feed_model.card_cell_text``), not
-        a bitmap, so all eight share the one renderer.
+        Every column is text. The Card column renders the dealt card's
+        glyph display in its own suit colour, so it alone is built by
+        hand through ``_support.append_markup_column``: a
+        ``DataViewItemAttr`` colours a whole cell, and the card's suit
+        colour is a per-*card* fact (``ui.card_text.card_markup``).
         """
         for col, label in enumerate(feed_model.COLUMN_LABELS):
             width = feed_model.COLUMN_WIDTHS[col]
-            column = self.crossings_list.AppendTextColumn(
-                label, col, width=width, flags=FEED_COLUMN_FLAGS
-            )
+            if col == feed_model.COL_CARD:
+                column = append_markup_column(
+                    self.crossings_list, label, col, width=width, flags=FEED_COLUMN_FLAGS
+                )
+            else:
+                column = self.crossings_list.AppendTextColumn(
+                    label, col, width=width, flags=FEED_COLUMN_FLAGS
+                )
             if col in feed_model.TOTAL_COLUMN:
                 self._total_column = column
             if col in feed_model.LAP_TIME_COLUMN:
@@ -1135,6 +1155,12 @@ class MainFrame(DialogFindMixin):  # _find: ui.views._support, over self.frame
         Card | Plate | Lap | Lap time | Rider -- each pinned to its
         own :data:`FLAG_COLUMN_WIDTHS` entry, so a long Issue cell
         never squeezes the identity cells beside it.
+
+        Every column is plain text, Card included: the review tab's
+        Card cell is a disposition word ("Held"/"Credited"/"Void",
+        ``feed_model.card_status_text``), not a card face, so there is
+        no suit to colour and no markup renderer to build (unlike the
+        console feed's own Card column).
         """
         return tuple(
             self.flagged_list.AppendTextColumn(label, col, width=FLAG_COLUMN_WIDTHS[col])
@@ -1155,11 +1181,24 @@ class MainFrame(DialogFindMixin):  # _find: ui.views._support, over self.frame
         :meth:`~rivercrossing.ui.views._support.RiderRowListModel.
         Compare` -- keyed by the shared column's own ``sort_key``.
 
+        The Cards column alone is built by hand
+        (:func:`~rivercrossing.ui.views._support.append_markup_column`):
+        its cell holds up to a full hand, and each card takes its own
+        suit colour, which a per-cell ``DataViewItemAttr`` cannot draw.
+
         Returns:
             The appended columns in order.
         """
         return [
-            self.console_riders_list.AppendTextColumn(
+            append_markup_column(
+                self.console_riders_list,
+                column.label,
+                index,
+                width=RIDERS_COLUMN_WIDTHS[index],
+                flags=RIDERS_LIST_COLUMN_FLAGS,
+            )
+            if index == RIDERS_COL_CARDS
+            else self.console_riders_list.AppendTextColumn(
                 column.label,
                 index,
                 width=RIDERS_COLUMN_WIDTHS[index],

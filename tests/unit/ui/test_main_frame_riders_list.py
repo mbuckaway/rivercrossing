@@ -26,11 +26,12 @@ is not pinned here.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import pytest
 from defusedxml.ElementTree import parse
 
+from rivercrossing.ui.card_text import SUIT_INK, SUIT_RED
 from rivercrossing.ui.presenters.data_source import RiderRow
 from rivercrossing.ui.rider_columns import CONSOLE_RIDER_COLUMNS, SOLO_TEAM_TEXT
 from rivercrossing.ui.views import main_frame
@@ -117,7 +118,11 @@ def test_riders_column_sex_and_cards_indexes_given_the_shared_order() -> None:
     """Phase 4: Sex and Cards are the console's own last two columns."""
     labels = main_frame.RIDERS_COLUMN_LABELS
 
-    assert (labels[3], labels[4]) == ("Sex", "Cards")
+    assert (main_frame.RIDERS_COL_SEX, main_frame.RIDERS_COL_CARDS) == (3, 4)
+    assert (labels[main_frame.RIDERS_COL_SEX], labels[main_frame.RIDERS_COL_CARDS]) == (
+        "Sex",
+        "Cards",
+    )
 
 
 # --------------------------------------------------- test doubles
@@ -181,8 +186,10 @@ class _RidersListControl:
     def __init__(self, *, sorting: _Column | None = None) -> None:
         """Carry the control's current sorting column, if any."""
         self.sorting = sorting
-        self.columns: dict[int, _Column] = {}
+        self.columns: dict[int, Any] = {}
         self.model: object | None = None
+        self.markup_columns: list[Any] = []
+        self.text_columns: list[tuple[str, int, int, int]] = []
 
     def GetSortingColumn(self) -> _Column | None:  # noqa: N802 -- wx API name
         """Return the column the control currently sorts by."""
@@ -195,6 +202,21 @@ class _RidersListControl:
     def AssociateModel(self, model: object) -> None:  # noqa: N802 -- wx API name
         """Record the associated model."""
         self.model = model
+
+    def AppendTextColumn(  # noqa: N802, PLR0913 -- wx API name and shape
+        self, label: str, model_col: int, *, width: int, flags: int
+    ) -> _Column:
+        """Record one plain text column and return its double."""
+        column = _Column(model_col)
+        self.columns[model_col] = column
+        self.text_columns.append((label, model_col, width, flags))
+        return column
+
+    def AppendColumn(self, column: Any) -> Any:  # noqa: ANN401, N802 -- wx API name
+        """Record one hand-built (markup) column and return it."""
+        self.markup_columns.append(column)
+        self.columns[column.GetModelColumn()] = column
+        return column
 
     def Refresh(self) -> None:  # noqa: N802 -- wx API name the double mirrors
         """No-op repaint (nothing to paint)."""
@@ -414,16 +436,58 @@ def test_show_riders_given_a_remembered_sort_re_applies_it() -> None:
         (main_frame.RIDERS_COL_PLATE, "123"),
         (main_frame.RIDERS_COL_NAME, "Sam Ellis"),
         (main_frame.RIDERS_COL_TEAM, SOLO_TEAM_TEXT),
-        (3, "F"),
-        (4, "A♠ K♥"),
+        (main_frame.RIDERS_COL_SEX, "F"),
+        (
+            main_frame.RIDERS_COL_CARDS,
+            f'<span color="{SUIT_INK}">A♠</span> <span color="{SUIT_RED}">K♥</span>',
+        ),
     ],
     ids=["plate", "name", "team_solo", "sex", "cards"],
 )
 def test_show_riders_given_a_row_renders_its_shared_cells(column: int, expected: str) -> None:
-    """A solo row renders "solo", its sex, and its card glyphs."""
+    """A solo row renders "solo", its sex and its coloured hand."""
     control = _RidersListControl()
     shell = _Shell(control=control)
 
     main_frame.MainFrame.show_riders(shell, [_ROW])
 
     assert control.model.GetValueByRow(0, column) == expected
+
+
+def test_build_riders_columns_given_the_console_list_builds_the_cards_column_for_markup() -> None:
+    """Phase 0: the Cards cell colours a whole hand, card by card."""
+    control = _RidersListControl()
+    shell = _Shell(control=control)
+
+    main_frame.MainFrame._build_riders_columns(shell)
+
+    assert [
+        (column.GetModelColumn(), type(column.GetRenderer()).__name__)
+        for column in control.markup_columns
+    ] == [(main_frame.RIDERS_COL_CARDS, "DataViewTextRenderer")]
+
+
+def test_build_riders_columns_given_the_console_list_marks_only_cards() -> None:
+    """T-3: only the Cards column needs the markup renderer."""
+    control = _RidersListControl()
+    shell = _Shell(control=control)
+
+    main_frame.MainFrame._build_riders_columns(shell)
+
+    assert [label for label, _col, _width, _flags in control.text_columns] == [
+        column.label for column in CONSOLE_RIDER_COLUMNS if column.label != "Cards"
+    ]
+
+
+def test_build_riders_columns_given_the_console_list_pins_every_text_column_width() -> None:
+    """Phase 4's widths: Name opens at 160, every other column at 80."""
+    control = _RidersListControl()
+    shell = _Shell(control=control)
+
+    main_frame.MainFrame._build_riders_columns(shell)
+
+    assert [width for _label, _col, width, _flags in control.text_columns] == [
+        main_frame.RIDERS_COLUMN_WIDTHS[col]
+        for col in range(len(CONSOLE_RIDER_COLUMNS))
+        if col != main_frame.RIDERS_COL_CARDS
+    ]

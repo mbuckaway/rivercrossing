@@ -265,7 +265,14 @@ class _ColumnShell:
 
 
 def test_build_flagged_columns_given_the_six_labels_appends_each_with_its_width() -> None:
-    """``_build_flagged_columns`` pins every column to a width."""
+    """``_build_flagged_columns`` pins every column to a width.
+
+    Every column here is plain text -- including Card: the review tab's
+    Card cell is a disposition word ("Held"/"Credited"/"Void"), not a
+    card face, so it has no suit to colour and takes no markup renderer
+    (unlike the console feed's own Card column, which holds the dealt
+    card's glyph). ``test_flagged_cell_cards_*`` pins that wording.
+    """
     shell = _ColumnShell()
 
     columns = main_frame.MainFrame._build_flagged_columns(shell)

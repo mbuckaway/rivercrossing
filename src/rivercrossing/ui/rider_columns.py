@@ -13,8 +13,9 @@ header sort answers through
 Pure Python -- no ``wx`` import may ever land here (R-71). Both the
 presenters (``ui.presenters.riders``, filtering rows) and the views
 (``ui.views._support``, building columns and cells) import it, so it
-must stay importable headless. The Cards cell's text comes from
-``ui.card_text``, the one formatter all three call sites share.
+must stay importable headless. The Cards cell's value comes from
+``ui.card_text``, the one formatter all three call sites share: each
+card's own suit-coloured markup span.
 """
 
 from __future__ import annotations
@@ -22,7 +23,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
-from rivercrossing.ui.card_text import format_card
+from rivercrossing.ui.card_text import cards_markup
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -104,8 +105,16 @@ def _sex_cell(row: RiderRow) -> str:
 
 
 def _cards_cell(row: RiderRow) -> str:
-    """Return the Cards cell: the dealt codes as canvas suit glyphs."""
-    return " ".join(format_card(code) for code in row.cards)
+    """Return the Cards cell: the dealt cards, each in its own colour.
+
+    The console's list builds this column with the markup renderer
+    (``ui.views._support.append_markup_column``), so the value is markup
+    -- one ``<span color="...">`` per card (``ui.card_text``), which
+    is what lets a five-card hand carry five suit colours in one
+    cell. The rider editor has no Cards column, so this is the
+    console's cell alone.
+    """
+    return cards_markup(row.cards)
 
 
 def _plate_sort_key(row: RiderRow) -> tuple[int, int] | tuple[int, str]:

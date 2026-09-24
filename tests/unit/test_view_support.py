@@ -215,3 +215,158 @@ def test_find_control_re_walks_the_tree_on_each_settle_attempt(
 
     assert _support.find_control(window, "plate_input", _FakeWindow) is settled
     assert lookups == 3
+
+
+# ------------------------------- append_markup_column (the card cells)
+#
+# A ``DataViewItemAttr`` carries one colour per CELL, so a cell holding
+# several cards of different suits cannot use it -- every card cell
+# renders wx markup instead (``ui.card_text``), and a column only parses
+# markup when its own renderer has it enabled. ``AppendTextColumn``
+# cannot: it builds its renderer internally and takes no renderer
+# argument (measured on wxPython 4.3.1), so a markup column is
+# hand-built as ``DataViewColumn(label, renderer, model_col, ...)`` and
+# appended with ``AppendColumn``. These tests pin that call shape; the
+# per-span *painting* is what the throwaway probe measured.
+
+
+def _markup_column_calls(monkeypatch: pytest.MonkeyPatch) -> MagicMock:
+    """Patch ``wx.dataview.DataViewColumn`` and return the recorder."""
+    columns = MagicMock()
+    monkeypatch.setattr(wx.dataview, "DataViewColumn", columns)
+    return columns
+
+
+def test_append_markup_column_given_a_label_builds_the_columns_own_renderer(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``AppendTextColumn`` takes no renderer -- build one."""
+    columns = _markup_column_calls(monkeypatch)
+    control = MagicMock()
+
+    _support.append_markup_column(control, "Best 5", 4, width=160, flags=3)
+
+    assert isinstance(columns.call_args.args[1], wx.dataview.DataViewTextRenderer)
+
+
+def test_append_markup_column_given_a_column_passes_the_label_and_model_column(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The column still names its header and its model column."""
+    columns = _markup_column_calls(monkeypatch)
+    control = MagicMock()
+
+    _support.append_markup_column(control, "Draw", 6, width=60, flags=3)
+
+    assert columns.call_args.args[:1] == ("Draw",)
+    assert columns.call_args.args[2] == 6
+
+
+def test_append_markup_column_given_a_width_pins_it_on_the_constructor(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """G6's pinned widths: a hand-built column takes the same width."""
+    columns = _markup_column_calls(monkeypatch)
+    control = MagicMock()
+
+    _support.append_markup_column(control, "Draw", 6, width=60, flags=3)
+
+    assert columns.call_args.kwargs["width"] == 60
+
+
+def test_append_markup_column_given_the_shared_flags_passes_them_through(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Sortable + resizable: explicit flags replace defaults."""
+    columns = _markup_column_calls(monkeypatch)
+    control = MagicMock()
+
+    _support.append_markup_column(control, "Cards", 4, width=80, flags=7)
+
+    assert columns.call_args.kwargs["flags"] == 7
+
+
+def test_append_markup_column_given_a_left_aligned_list_mirrors_append_text_column(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``DataViewColumn`` centres by default; the cells are left."""
+    columns = _markup_column_calls(monkeypatch)
+    control = MagicMock()
+
+    _support.append_markup_column(control, "Cards", 4, width=80, flags=7)
+
+    assert columns.call_args.kwargs["align"] == wx.ALIGN_NOT
+
+
+def test_append_markup_column_given_a_control_appends_the_built_column(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The built column reaches the control through ``AppendColumn``."""
+    columns = _markup_column_calls(monkeypatch)
+    control = MagicMock()
+    control.AppendColumn.return_value = "the-control's-own-handle"
+
+    result = _support.append_markup_column(control, "Cards", 4, width=80, flags=7)
+
+    control.AppendColumn.assert_called_once_with(columns.return_value)
+    assert result == "the-control's-own-handle"
+
+
+class _RecordingControl:
+    """A DataViewCtrl double recording the columns it is given."""
+
+    def __init__(self) -> None:
+        """Start with no columns appended."""
+        self.columns: list[wx.dataview.DataViewColumn] = []
+
+    def AppendColumn(self, column: wx.dataview.DataViewColumn) -> object:  # noqa: N802 -- wx API name
+        """Record one appended column and return it."""
+        self.columns.append(column)
+        return column
+
+
+def test_append_markup_column_given_the_real_classes_appends_a_real_column() -> None:
+    """The real objects: title, model column, flags, alignment."""
+    control = _RecordingControl()
+
+    column = _support.append_markup_column(
+        control, "Best 5", 4, width=160, flags=wx.dataview.DATAVIEW_COL_SORTABLE
+    )
+
+    assert (column.GetTitle(), column.GetModelColumn()) == ("Best 5", 4)
+    assert column.GetFlags() == wx.dataview.DATAVIEW_COL_SORTABLE
+    assert column.GetAlignment() == wx.ALIGN_NOT
+    assert control.columns == [column]
+
+
+def test_append_markup_column_given_the_real_classes_uses_a_text_renderer() -> None:
+    """Only a text renderer carries the markup parser this needs."""
+    control = _RecordingControl()
+
+    column = _support.append_markup_column(control, "Cards", 4, width=80, flags=0)
+
+    assert isinstance(column.GetRenderer(), wx.dataview.DataViewTextRenderer)
+
+
+def test_append_markup_column_given_two_columns_builds_a_renderer_for_each_one(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Measured: a ``DataViewColumn`` owns its renderer; sharing dies.
+
+    Two columns built on one renderer kill the interpreter (wxPython
+    4.3.1: the second ``DataViewColumn`` construction aborts), so the
+    builder must mint a renderer per column.
+
+    # logic-coverage-exempt: T-8 -- the invariant under test ("one
+    renderer per column") is a property of two calls, so this test has
+    two Acts; splitting it would assert nothing.
+    """
+    renderers = MagicMock()
+    monkeypatch.setattr(wx.dataview, "DataViewTextRenderer", renderers)
+    monkeypatch.setattr(wx.dataview, "DataViewColumn", MagicMock())
+    control = MagicMock()
+
+    _support.append_markup_column(control, "Best 5", 4, width=160, flags=0)
+    _support.append_markup_column(control, "Draw", 6, width=60, flags=0)
+
+    assert renderers.call_count == 2

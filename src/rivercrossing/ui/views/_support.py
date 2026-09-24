@@ -39,6 +39,10 @@ columns with the sortable flag and answer wx's header sort through
 ride library do. That retired the presenter-owned ▲/▼ marker
 (``apply_sort_indicator``): the platform's own header arrow replaces
 it.
+
+:func:`append_markup_column` is the one hand-built column the four card
+cells need -- ``AppendTextColumn`` cannot enable markup -- see its own
+docstring for the three measured details it carries.
 """
 
 from __future__ import annotations
@@ -66,6 +70,7 @@ __all__ = [
     "XRC_WARN",
     "DialogFindMixin",
     "RiderRowListModel",
+    "append_markup_column",
     "associate_model",
     "clamp_to_display",
     "default_card_images",
@@ -509,6 +514,50 @@ def associate_model(control: Any, model: Any) -> None:  # noqa: ANN401 -- wx shi
     control.AssociateModel(model)
     control.Refresh()
     control.Update()
+
+
+def append_markup_column(  # noqa: PLR0913 -- mirrors the wx append-column shape
+    control: Any,  # noqa: ANN401 -- wx ships no stubs
+    label: str,
+    col: int,
+    *,
+    width: int,
+    flags: int,
+) -> Any:  # noqa: ANN401 -- the appended wx.DataViewColumn
+    """Append a text column whose renderer parses **wx markup**.
+
+    The card cells are glyphs, and a card's "suit colour" is a text
+    colour -- but a ``DataViewItemAttr`` carries ONE colour per CELL,
+    which cannot colour a cell holding several cards of different suits
+    (the standings' five-card "Best 5", the console Riders sidebar's
+    Cards cell). Such a cell renders markup instead: one
+    ``<span color="...">`` per card (``ui.card_text``).
+
+    ``AppendTextColumn`` cannot do that -- it builds its renderer
+    internally and takes no renderer argument (measured: wxPython
+    4.3.1 exposes no such overload) -- so the column is built by hand as
+    ``DataViewColumn(label, renderer, model_col, ...)`` and appended
+    with ``AppendColumn``. Three details are load-bearing:
+
+    * ``EnableMarkup()``, or the renderer draws the markup source text;
+    * a **fresh** renderer per call: a ``DataViewColumn`` owns its
+      renderer, and handing one renderer to two columns aborts the
+      process (measured: the second construction segfaults);
+    * ``align=wx.ALIGN_NOT``, because ``DataViewColumn`` defaults to
+      centred text while ``AppendTextColumn``'s own default is the
+      left-aligned ``ALIGN_NOT`` -- the columns beside these are
+      left-aligned, so the card cells must be too.
+
+    The width is passed to that constructor exactly as
+    ``AppendTextColumn``'s is; a hand-built column resolves it when a
+    control takes ownership.
+    """
+    renderer = wx.dataview.DataViewTextRenderer()
+    renderer.EnableMarkup()
+    column = wx.dataview.DataViewColumn(
+        label, renderer, col, width=width, align=wx.ALIGN_NOT, flags=flags
+    )
+    return control.AppendColumn(column)
 
 
 class RiderRowListModel(wx.dataview.DataViewIndexListModel):  # type: ignore[misc]

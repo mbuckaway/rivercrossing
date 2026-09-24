@@ -32,6 +32,7 @@ import wx
 from defusedxml.ElementTree import parse
 
 from rivercrossing.ui import feed_model
+from rivercrossing.ui.card_text import JOKER_STEEL, SUIT_INK, SUIT_RED
 from rivercrossing.ui.presenters.data_source import FeedRow
 from rivercrossing.ui.views import main_frame
 
@@ -151,7 +152,8 @@ class _CrossingsListControl:
         self.sorting = sorting
         self.columns: dict[int, _Column] = {}
         self.model: Any = None  # whatever AssociateModel was handed
-        self.appended: list[tuple[str, int, int, int]] = []
+        self.appended: list[tuple[str, int, int | None, int]] = []
+        self.markup_columns: list[Any] = []
 
     def GetSortingColumn(self) -> _Column | None:  # noqa: N802 -- wx API name
         """Return the column the control currently sorts by."""
@@ -168,11 +170,26 @@ class _CrossingsListControl:
     def AppendTextColumn(  # noqa: N802, PLR0913 -- wx API name; its own four fields
         self, label: str, model_col: int, *, width: int, flags: int
     ) -> Any:  # noqa: ANN401 -- wx ships no stubs
-        """Record one appended column and return its double."""
+        """Record one plain text column and return its double."""
         self.appended.append((label, model_col, width, flags))
         column = _Column(model_col)
         self.columns[model_col] = column
         return column
+
+    def AppendColumn(self, column: Any) -> Any:  # noqa: ANN401, N802 -- wx API name
+        """Record one hand-built (markup) column and return its handle.
+
+        The real column is recorded for the renderer assertions; the
+        control's own handle is a ``_Column`` double, so the width
+        re-pin ``set_time_columns`` does after every toggle is
+        observable (a hand-built column reports no width and ignores
+        ``SetWidth`` until a real control owns it -- measured).
+        """
+        self.markup_columns.append(column)
+        self.appended.append((column.GetTitle(), column.GetModelColumn(), None, column.GetFlags()))
+        handle = _Column(column.GetModelColumn())
+        self.columns[column.GetModelColumn()] = handle
+        return handle
 
 
 class _SearchCtrl:
@@ -317,7 +334,12 @@ def test_feed_column_flags_include_the_sortable_and_resizable_bits() -> None:
 
 
 def test_build_columns_given_the_shell_appends_every_feed_column_with_flags() -> None:
-    """Eight columns, canvas order, pinned widths and both flags."""
+    """Eight columns, canvas order, pinned widths and both flags.
+
+    The Card column is the one hand-built column (markup renderer), so
+    its width reads back as ``None`` here; ``test_view_support.py`` pins
+    the width that column is constructed with.
+    """
     control = _CrossingsListControl()
     shell = _Shell(control=control)
 
@@ -326,12 +348,29 @@ def test_build_columns_given_the_shell_appends_every_feed_column_with_flags() ->
     assert [(label, col) for label, col, _width, _flags in control.appended] == list(
         zip(feed_model.COLUMN_LABELS, range(len(feed_model.COLUMN_LABELS)), strict=True)
     )
-    assert [width for _label, _col, width, _flags in control.appended] == list(
-        feed_model.COLUMN_WIDTHS
-    )
+    assert {
+        col: width for _label, col, width, _flags in control.appended if width is not None
+    } == {
+        col: width
+        for col, width in enumerate(feed_model.COLUMN_WIDTHS)
+        if col != feed_model.COL_CARD
+    }
     assert {flags for _label, _col, _width, flags in control.appended} == {
         main_frame.FEED_COLUMN_FLAGS
     }
+
+
+def test_build_columns_given_the_shell_builds_the_card_column_for_markup() -> None:
+    """Phase 0: the Card cell colours one card face by its suit."""
+    control = _CrossingsListControl()
+    shell = _Shell(control=control)
+
+    main_frame.MainFrame._build_columns(shell)
+
+    assert [
+        (column.GetModelColumn(), type(column.GetRenderer()).__name__)
+        for column in control.markup_columns
+    ] == [(feed_model.COL_CARD, "DataViewTextRenderer")]
 
 
 def test_build_columns_given_the_shell_keeps_the_total_and_lap_time_handles() -> None:
@@ -1122,15 +1161,34 @@ def _model(*rows: FeedRow) -> main_frame.CrossingsFeedModel:
 
 
 class _Attr:
-    """A ``wx.DataViewItemAttr`` double recording each bold request."""
+    """A ``wx.DataViewItemAttr`` double recording each request."""
 
     def __init__(self) -> None:
-        """Start with no bold request recorded."""
+        """Start with no bold or colour request recorded."""
         self.bold_calls: list[bool] = []
+        self.colour_calls: list[wx.Colour] = []
 
     def SetBold(self, bold: bool) -> None:  # noqa: N802, FBT001 -- wx API name
         """Record one ``SetBold`` call."""
         self.bold_calls.append(bold)
+
+    def SetColour(self, colour: wx.Colour) -> None:  # noqa: N802 -- wx API name
+        """Record one ``SetColour`` call -- the model makes none."""
+        self.colour_calls.append(colour)
+
+
+def _assert_bold_only(result: bool, attr: _Attr, expected: bool) -> None:  # noqa: FBT001
+    """Assert the model's answer and that no cell colour was applied.
+
+    Phase 0 moved the card colour to wx markup: the suit is a per-*card*
+    fact, and this attribute is per *cell*. The bold channels are what
+    is left here, and they still ride this callback.
+    """
+    assert (result, attr.bold_calls, attr.colour_calls) == (
+        expected,
+        [True] if expected else [],
+        [],
+    )
 
 
 def test_get_attr_by_row_given_a_held_row_bolds_it() -> None:
@@ -1140,7 +1198,7 @@ def test_get_attr_by_row_given_a_held_row_bolds_it() -> None:
 
     result = model.GetAttrByRow(0, 0, attr)
 
-    assert (result, attr.bold_calls) == (True, [True])
+    _assert_bold_only(result, attr, expected=True)
 
 
 def test_get_attr_by_row_given_a_duplicate_row_bolds_it() -> None:
@@ -1150,7 +1208,7 @@ def test_get_attr_by_row_given_a_duplicate_row_bolds_it() -> None:
 
     result = model.GetAttrByRow(0, 0, attr)
 
-    assert (result, attr.bold_calls) == (True, [True])
+    _assert_bold_only(result, attr, expected=True)
 
 
 def test_get_attr_by_row_given_an_edited_row_bolds_it() -> None:
@@ -1160,7 +1218,7 @@ def test_get_attr_by_row_given_an_edited_row_bolds_it() -> None:
 
     result = model.GetAttrByRow(0, 0, attr)
 
-    assert (result, attr.bold_calls) == (True, [True])
+    _assert_bold_only(result, attr, expected=True)
 
 
 @pytest.mark.parametrize(
@@ -1177,7 +1235,7 @@ def test_get_attr_by_row_given_a_credited_row_never_bolds_it(
 
     result = model.GetAttrByRow(0, 0, attr)
 
-    assert (result, attr.bold_calls) == (False, [])
+    _assert_bold_only(result, attr, expected=False)
 
 
 def test_get_attr_by_row_given_a_voided_short_lap_never_bolds_it() -> None:
@@ -1187,7 +1245,7 @@ def test_get_attr_by_row_given_a_voided_short_lap_never_bolds_it() -> None:
 
     result = model.GetAttrByRow(0, 0, attr)
 
-    assert (result, attr.bold_calls) == (False, [])
+    _assert_bold_only(result, attr, expected=False)
 
 
 def test_get_attr_by_row_given_a_plain_row_returns_false_without_setting_bold() -> None:
@@ -1197,7 +1255,7 @@ def test_get_attr_by_row_given_a_plain_row_returns_false_without_setting_bold() 
 
     result = model.GetAttrByRow(0, 0, attr)
 
-    assert (result, attr.bold_calls) == (False, [])
+    _assert_bold_only(result, attr, expected=False)
 
 
 def test_get_attr_by_row_given_a_miss_row_returns_false() -> None:
@@ -1207,7 +1265,7 @@ def test_get_attr_by_row_given_a_miss_row_returns_false() -> None:
 
     result = model.GetAttrByRow(0, 0, attr)
 
-    assert (result, attr.bold_calls) == (False, [])
+    _assert_bold_only(result, attr, expected=False)
 
 
 @pytest.mark.parametrize(
@@ -1222,7 +1280,7 @@ def test_get_attr_by_row_given_any_column_bolds_the_whole_row(column: int) -> No
 
     result = model.GetAttrByRow(0, column, attr)
 
-    assert (result, attr.bold_calls) == (True, [True])
+    _assert_bold_only(result, attr, expected=True)
 
 
 @pytest.mark.parametrize(
@@ -1258,8 +1316,71 @@ def test_get_attr_by_row_given_the_three_bold_channels_bolds_on_either(  # noqa:
     """T-13: bold = held OR duplicate OR edited, for all eight rows."""
     model = _model(_feed_row(held=held, duplicate=duplicate, edited=edited))
     attr = _Attr()
-    expected_calls = [True] if expected else []
 
     result = model.GetAttrByRow(0, 0, attr)
 
-    assert (result, attr.bold_calls) == (expected, expected_calls)
+    _assert_bold_only(result, attr, expected=expected)
+
+
+# --------------- CrossingsFeedModel cell colour (Phase 0, retired)
+#
+# xrc-windows.md:7 asked for "red suits" in this DataView. They were
+# first done through ``GetAttrByRow`` + ``SetColour``, which carries ONE
+# text colour per CELL: fine for the feed's single-card Card cell, but
+# wrong for a cell holding several cards (the standings' Best 5, the
+# console's Riders Cards), and it could not express the joker's steel at
+# all. Every card cell now renders wx markup instead -- one
+# ``<span color="...">`` per card (``ui.card_text``) -- so this model's
+# override is back to its one real job, the held/duplicate/edited bold,
+# and no card colour is applied through the attribute anywhere.
+
+
+@pytest.mark.parametrize(
+    "column",
+    [
+        feed_model.COL_CARD,
+        feed_model.COL_TIME,
+        feed_model.COL_PLATE,
+        feed_model.COL_NAME,
+        feed_model.COL_TEAM,
+        feed_model.COL_LAP,
+        feed_model.COL_LAP_TIME,
+        feed_model.COL_TOTAL,
+    ],
+    ids=["card", "time", "plate", "name", "team", "lap", "lap_time", "total"],
+)
+def test_get_attr_by_row_given_any_column_sets_no_cell_colour(column: int) -> None:
+    """T-3: the colour rides the markup now, never this attribute."""
+    model = _model(_feed_row(card="9H", held=True, card_status="held"))
+    attr = _Attr()
+
+    result = model.GetAttrByRow(0, column, attr)
+
+    _assert_bold_only(result, attr, expected=True)
+
+
+@pytest.mark.parametrize(
+    ("card", "expected"),
+    [
+        ("9H", f'<span color="{SUIT_RED}">9♥</span>'),
+        ("10D", f'<span color="{SUIT_RED}">10♦</span>'),
+        ("AS", f'<span color="{SUIT_INK}">A♠</span>'),
+        ("JK", f'<span color="{JOKER_STEEL}">JK★</span>'),
+        ("", ""),
+    ],
+    ids=["hearts", "diamonds", "spades", "joker", "miss"],
+)
+def test_get_value_by_row_given_a_card_cell_returns_its_coloured_markup(
+    card: str, expected: str
+) -> None:
+    """The Card cell is the card's coloured span: the painted value."""
+    model = _model(_feed_row(card=card))
+
+    assert model.GetValueByRow(0, feed_model.COL_CARD) == expected
+
+
+def test_get_value_by_row_given_a_voided_card_cell_returns_the_plain_word() -> None:
+    """A voided cell is a state word, so it carries no span at all."""
+    model = _model(_feed_row(card="QH", card_status="voided"))
+
+    assert model.GetValueByRow(0, feed_model.COL_CARD) == "Void"

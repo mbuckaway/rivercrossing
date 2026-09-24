@@ -20,6 +20,7 @@ from hypothesis import given
 from hypothesis import strategies as st
 
 from rivercrossing.ui import ids
+from rivercrossing.ui.card_text import SUIT_INK, SUIT_RED
 from rivercrossing.ui.presenters.data_source import RiderRow
 from rivercrossing.ui.rider_columns import CONSOLE_RIDER_COLUMNS, EDITOR_RIDER_COLUMNS
 from rivercrossing.ui.views import rider_editor
@@ -116,12 +117,19 @@ def test_rider_row_list_model_given_any_column_reports_the_string_type() -> None
 
 
 # (column, expected cell) pairs: one row through every console column.
+# The Cards cell is markup -- one suit-coloured span per card, which the
+# console's Cards column renders through the markup renderer
+# (``ui.card_text``); the rider editor itself carries no Cards column
+# (``EDITOR_RIDER_COLUMNS``), so this cell is the console's alone.
 CONSOLE_CELL_CASES = (
     (0, "123"),
     (1, "Sam Ellis"),
     (2, "solo"),
     (3, "F"),
-    (4, "A♠ K♥"),
+    (
+        4,
+        f'<span color="{SUIT_INK}">A♠</span> <span color="{SUIT_RED}">K♥</span>',
+    ),
 )
 
 

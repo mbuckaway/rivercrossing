@@ -19,6 +19,7 @@ import pytest
 from hypothesis import given
 from hypothesis import strategies as st
 
+from rivercrossing.ui.card_text import JOKER_STEEL, SUIT_INK, SUIT_RED, cards_markup
 from rivercrossing.ui.presenters.data_source import RiderRow
 from rivercrossing.ui.rider_columns import (
     CONSOLE_RIDER_COLUMNS,
@@ -111,19 +112,29 @@ def test_column_value_given_a_row_returns_its_canvas_cell_text(
 
 CARD_CELL_CASES = (
     ((), ""),  # T-4 collection boundary: empty
-    (("AS",), "A♠"),  # T-4 collection boundary: single
-    (("AS", "KH", "10D"), "A♠ K♥ 10♦"),  # T-4 collection boundary: many
-    (("9H", "KD"), "9♥ K♦"),  # the goal's own example
-    (("JK",), "JK★"),  # the joker marker
+    (("AS",), f'<span color="{SUIT_INK}">A♠</span>'),  # T-4 boundary: single
+    (
+        ("AS", "KH", "10D"),
+        (
+            f'<span color="{SUIT_INK}">A♠</span> '
+            f'<span color="{SUIT_RED}">K♥</span> '
+            f'<span color="{SUIT_RED}">10♦</span>'
+        ),
+    ),  # T-4 boundary: many
+    (
+        ("9H", "KD"),
+        f'<span color="{SUIT_RED}">9♥</span> <span color="{SUIT_RED}">K♦</span>',
+    ),  # the goal's own example
+    (("JK",), f'<span color="{JOKER_STEEL}">JK★</span>'),  # the joker marker
 )
 
 
 @pytest.mark.parametrize(("cards", "expected"), CARD_CELL_CASES)
-def test_cards_column_value_given_a_hand_returns_the_space_joined_glyph_text(
+def test_cards_column_value_given_a_hand_returns_each_card_in_its_own_colour(
     cards: tuple[str, ...],
     expected: str,
 ) -> None:
-    """The console Cards cell is the dealt codes as glyphs."""
+    """The console Cards cell colours each card by its own suit."""
     assert _column("Cards").value(_row(cards=cards)) == expected
 
 
@@ -143,10 +154,18 @@ _VALID_CARD_CODE = st.builds(
 
 @given(cards=st.lists(_VALID_CARD_CODE, min_size=1, max_size=6))
 def test_cards_column_value_given_any_hand_preserves_its_card_count(cards: list[str]) -> None:
-    """Property (T-7): one display token per dealt card."""
-    text = _column("Cards").value(_row(cards=tuple(cards)))
+    """Property (T-7): one coloured span per dealt card."""
+    cell = _column("Cards").value(_row(cards=tuple(cards)))
 
-    assert len(text.split(" ")) == len(cards)
+    assert cell.count("<span ") == len(cards)
+
+
+@given(cards=st.lists(_VALID_CARD_CODE, min_size=1, max_size=6))
+def test_cards_column_value_given_any_hand_is_the_shared_builders_markup(cards: list[str]) -> None:
+    """Property (T-7): the cell is the one builder's own markup."""
+    cell = _column("Cards").value(_row(cards=tuple(cards)))
+
+    assert cell == cards_markup(tuple(cards))
 
 
 # --------------------------------------------------------- sort keys
