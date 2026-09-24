@@ -3,9 +3,10 @@
 
 Everything here runs without ``wx`` and without a display: the
 stored-code to asset-key mapping, the frozen 53-key set, the
-on-disk inventory of ``ui/assets/``, the mono-steel palette
-invariant, the startup validation that turns a packaging mistake
-into a crash before the first paint, and the parity of
+on-disk inventory of ``ui/assets/``, the suit-colour palette
+invariant (hearts/diamonds in the suit red, spades/clubs in ink,
+the joker in steel), the startup validation that turns a packaging
+mistake into a crash before the first paint, and the parity of
 ``tools/gen_card_bitmaps.py`` with the committed output.
 
 Building a real ``wx.ImageList`` from these files is not pinned here;
@@ -13,7 +14,10 @@ nothing here may import ``wx``.
 """
 
 import importlib.util
+import math
 import re
+from functools import cache
+from itertools import combinations
 from pathlib import Path
 from types import ModuleType  # noqa: TC003 -- used at runtime as a return type here
 
@@ -58,9 +62,14 @@ CONTACT_SHEET = "contact-sheet.png"
 # design/docs-md/sound-cues.md via design/README.md.
 SOUND_CUES = ("error.wav", "flagged.wav", "recorded.wav")
 
-# theme.css: --color-ink, --color-steel-700, --color-steel-600.
+# The card palette. theme.css: --color-ink, the suit red #c0392b
+# from .chip.r, and the joker's --color-steel-700 inside its
+# --color-steel-600 frame. A joker is not a suit, so it keeps the
+# steel the red suits gave up.
+WHITE = (255, 255, 255, 255)
 INK = (29, 31, 32, 255)
-ACCENT = (65, 97, 128, 255)
+RED = (192, 57, 43, 255)
+JOKER_STEEL = (65, 97, 128, 255)
 BORDER = (196, 198, 199, 255)
 JOKER_BORDER = (89, 126, 163, 255)
 
@@ -126,12 +135,14 @@ SCALE_FACTOR_CASES = (
 
 REMOVABLE_FILES = ("As.png", "As-2x.png", "joker.png", "9s-2x.png")
 
+# The one suit colour each kind of face is painted in; the other
+# two belong to other faces and must not appear on it.
 SUIT_COLOUR_CASES = (
     ("2c", INK),
     ("As", INK),
-    ("Ah", ACCENT),
-    ("10d", ACCENT),
-    (JOKER_KEY, ACCENT),
+    ("Ah", RED),
+    ("10d", RED),
+    (JOKER_KEY, JOKER_STEEL),
 )
 
 BORDER_COLOUR_CASES = (("2c", BORDER), ("Ah", BORDER), (JOKER_KEY, JOKER_BORDER))
@@ -158,6 +169,84 @@ def _colours(path: Path) -> set[tuple[int, int, int, int]]:
     with Image.open(path) as image:
         counted = image.convert("RGBA").getcolors(maxcolors=1 << 18)
     return {colour for _count, colour in counted}
+
+
+# The palette in RGB, white face included: the deck is drawn on
+# white, so every antialiased pixel is a convex blend of these,
+# rounded to the nearest integer.
+_PALETTE_RGBS = frozenset(
+    colour[:3] for colour in (WHITE, INK, RED, JOKER_STEEL, BORDER, JOKER_BORDER)
+)
+
+# Rounding a blend to the nearest integer moves it at most half a
+# channel-unit per channel, so a real pixel can sit that far outside
+# the hull -- and never further.
+_ROUNDING = 0.5
+
+Point = tuple[float, float, float]
+
+
+def _cross(left: Point, right: Point) -> Point:
+    """Return the cross product of two 3-vectors."""
+    return (
+        left[1] * right[2] - left[2] * right[1],
+        left[2] * right[0] - left[0] * right[2],
+        left[0] * right[1] - left[1] * right[0],
+    )
+
+
+def _dot(left: Point, right: Point) -> float:
+    """Return the dot product of two 3-vectors."""
+    return sum(a * b for a, b in zip(left, right, strict=True))
+
+
+def _palette_facets() -> tuple[tuple[Point, float, float], ...]:
+    """Return the palette hull's facets as (normal, offset, slack).
+
+    A palette triple spans a facet when every other palette colour
+    lies on one side of its plane. The normal is oriented out of
+    the hull, so a colour is inside it while
+    ``dot(normal, rgb) + offset <= 0``; the slack is the most a
+    half-unit-per-channel rounding can add on top of that, which
+    is the rounding's reach along that one normal.
+    """
+    points = [tuple(float(channel) for channel in rgb) for rgb in _PALETTE_RGBS]
+    facets = []
+    for first, second, third in combinations(points, 3):
+        normal = _cross(
+            tuple(b - a for a, b in zip(second, first, strict=True)),
+            tuple(c - a for a, c in zip(third, first, strict=True)),
+        )
+        length = math.sqrt(_dot(normal, normal))
+        if length < 1e-9:
+            continue
+        unit = tuple(component / length for component in normal)
+        offset = -_dot(unit, first)
+        inside = [_dot(unit, point) + offset for point in points]
+        if max(inside) > 1e-9:  # the triple faces the wrong way
+            unit = tuple(-component for component in unit)
+            offset = -offset
+            inside = [-value for value in inside]
+        if max(inside) <= 1e-9:  # the triple really spans a facet
+            slack = _ROUNDING * sum(abs(component) for component in unit)
+            facets.append((unit, offset, slack))
+    return tuple(facets)
+
+
+_FACETS = _palette_facets()
+
+
+@cache
+def _in_palette(rgb: tuple[int, int, int]) -> bool:
+    """Return True unless *rgb* is provably no rounded palette blend.
+
+    A blend of palette colours lies in their convex hull, and
+    rounding it to 8 bits moves it at most half a unit per
+    channel, so a real pixel can sit a rounding's width outside a
+    facet. A colour further out than that crossed a facet plane no
+    blend crosses -- no rounding could have produced it.
+    """
+    return all(_dot(normal, rgb) + offset <= slack + 1e-9 for normal, offset, slack in _FACETS)
 
 
 def _stocked_dir(target: Path) -> Path:
@@ -314,23 +403,28 @@ def test_packaged_card_bitmap_measures_its_documented_size(scale: str) -> None:
 
 
 @pytest.mark.parametrize("name", ALL_CARD_FILES)
-def test_packaged_card_bitmap_stays_inside_the_mono_steel_palette(name: str) -> None:
-    """No red: every colour satisfies r <= g <= b (design/README.md)."""
+def test_packaged_card_bitmap_stays_inside_the_card_palette(name: str) -> None:
+    """Every pixel is a palette colour, or a blend rounded to 8 bits."""
     off_palette = [
         colour
         for colour in _colours(cards_dir() / name)
-        if not colour[0] <= colour[1] <= colour[2]
+        if colour[3] != 255 or not _in_palette(colour[:3])
     ]
 
     assert off_palette == []
 
 
 @pytest.mark.parametrize(("key", "colour"), SUIT_COLOUR_CASES)
-def test_packaged_card_bitmap_paints_its_suit_in_the_expected_ink(
+def test_packaged_card_bitmap_paints_only_its_own_suit_colour(
     key: str, colour: tuple[int, int, int, int]
 ) -> None:
-    """Clubs/spades take the ink, hearts/diamonds the steel accent."""
-    assert colour in _colours(cards_dir() / asset_filename(key, SCALE_1X))
+    """Hearts/diamonds red, spades/clubs ink, the joker steel."""
+    colours = _colours(cards_dir() / asset_filename(key, SCALE_1X))
+
+    others = {INK, RED, JOKER_STEEL} - {colour}
+
+    assert colour in colours
+    assert others.isdisjoint(colours)
 
 
 @pytest.mark.parametrize(("key", "colour"), BORDER_COLOUR_CASES)
@@ -448,6 +542,13 @@ def test_preferred_scale_picks_the_face_that_needs_no_upscaling(factor: float, s
 # --- generator parity ---
 
 
+def test_generator_constants_split_the_old_accent() -> None:
+    """RED paints the red suits; the joker keeps its own steel."""
+    assert gen_card_bitmaps.RED == (192, 57, 43, 255)
+    assert gen_card_bitmaps.JOKER_STEEL == (65, 97, 128, 255)
+    assert not hasattr(gen_card_bitmaps, "ACCENT")
+
+
 def test_generate_deck_writes_exactly_the_committed_file_set(generated_dir: Path) -> None:
     """Regeneration reproduces the packaged names, one for one."""
     names = sorted(path.name for path in generated_dir.iterdir())
@@ -471,23 +572,28 @@ def test_generate_deck_matches_the_committed_pixel_sizes(generated_dir: Path, sc
 
 
 @pytest.mark.parametrize("name", ALL_CARD_FILES)
-def test_generate_deck_stays_inside_the_mono_steel_palette(generated_dir: Path, name: str) -> None:
-    """The redrawn deck keeps the no-red invariant of the starters."""
+def test_generate_deck_stays_inside_the_card_palette(generated_dir: Path, name: str) -> None:
+    """The redrawn deck keeps the committed palette invariant."""
     off_palette = [
         colour
         for colour in _colours(generated_dir / name)
-        if not colour[0] <= colour[1] <= colour[2]
+        if colour[3] != 255 or not _in_palette(colour[:3])
     ]
 
     assert off_palette == []
 
 
 @pytest.mark.parametrize(("key", "colour"), SUIT_COLOUR_CASES)
-def test_generate_deck_paints_its_suit_in_the_expected_ink(
+def test_generate_deck_paints_only_its_own_suit_colour(
     generated_dir: Path, key: str, colour: tuple[int, int, int, int]
 ) -> None:
-    """Same ink and steel accent as the committed bitmaps."""
-    assert colour in _colours(generated_dir / asset_filename(key, SCALE_1X))
+    """Same red/ink/steel split as the committed bitmaps."""
+    colours = _colours(generated_dir / asset_filename(key, SCALE_1X))
+
+    others = {INK, RED, JOKER_STEEL} - {colour}
+
+    assert colour in colours
+    assert others.isdisjoint(colours)
 
 
 @pytest.mark.parametrize(("key", "colour"), BORDER_COLOUR_CASES)
