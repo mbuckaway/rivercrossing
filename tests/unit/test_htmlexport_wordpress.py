@@ -459,7 +459,7 @@ def test_render_poster_wordpress_given_a_drawn_card_renders_the_draw_badge() -> 
 
     fragment = render_poster_wordpress(_StubRide(), drawn, _OPTIONS, generated=_GENERATED)
 
-    assert 'draw <span class="chip r">A ♥</span>' in fragment
+    assert 'draw <span class="chip r">A ♥\ufe0e</span>' in fragment
 
 
 def test_render_poster_wordpress_given_an_unverified_ride_carries_the_self_test_note() -> None:

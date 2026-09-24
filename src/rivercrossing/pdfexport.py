@@ -17,8 +17,10 @@ margins, footer rule + "Page n of N · Generated … · RiverCrossing" on
 every page, a one-line running title from page 2 on, Barlow + Barlow
 Condensed headings + DejaVu Sans suit glyphs (``♠♥♦♣★``), corner
 registration marks (two 11pt hairlines per corner), and the industry
-tokens ink ``#1D1F20``, steel ``#416180`` (hearts/diamonds/jokers and
-hand names), deep steel ``#1D2D3D`` (the P1 podium plate) -- no red.
+tokens ink ``#1D1F20`` (body text and spades/clubs), the suit red
+``#C0392B`` (hearts/diamonds card faces), steel ``#416180`` (jokers,
+hand names and the report furniture), deep steel ``#1D2D3D`` (the P1
+podium plate) -- every card face boxed like the HTML chip.
 The poster is the same shared model: a team event stocks one Letter
 page with two compact titled sections ("Teams" top 3, then "Solo
 riders" top 3); a solo event lists the top five at full card sizing.
@@ -78,9 +80,11 @@ __all__ = ["podium_poster", "render"]
 # ------------------------------------------------------------- tokens
 
 # The Industry tokens as RGB (ui-designs-retired.md [5c]): ink for
-# body text and spades/clubs, steel for hearts/diamonds/jokers and
-# hand names, deep steel for the P1 podium plate. No red anywhere.
+# body text and spades/clubs, the suit red for hearts/diamonds card
+# faces, steel for jokers, hand names and the report furniture, deep
+# steel for the P1 podium plate.
 _INK = (29, 31, 32)  # #1D1F20
+_SUIT_RED = (192, 57, 43)  # #C0392B
 _STEEL = (65, 97, 128)  # #416180
 _DEEP_STEEL = (29, 45, 61)  # #1D2D3D
 
@@ -100,6 +104,16 @@ _ROW_HEIGHT = 0.24
 # JOKER" joker face alongside the hand name without clipping. The
 # team field's hand column then takes the remaining content width.
 _CARDS_COL = 1.60
+
+# Every card face is boxed like the HTML chip: the chip's #e9e9ea
+# panel and 1px hairline border (its rgba(29,31,32,.16) composited on
+# the page's white -- fpdf2's draw colour takes no alpha), one padding
+# each side of the text and the run's gap between faces.
+_CARD_PAD = 0.04
+_CARD_GAP = 0.04
+_CARD_BOX_FILL = (233, 233, 234)  # #e9e9ea
+_CARD_BOX_BORDER = (219, 219, 219)  # rgba(29,31,32,.16) on white
+_CARD_BOX_LINE = 0.4 / 72.0
 
 # A team row's inline logo (R-61's base64 card bitmap) at the HTML's
 # compact inline size.
@@ -177,10 +191,18 @@ def _pair_text(pair: CardPair) -> str:
     return f"{rank}{_SUIT_GLYPH_BY_LETTER[suit]}"
 
 
-def _pair_is_steel(pair: CardPair) -> bool:
-    """Return True for a payload pair in the steel accent."""
-    rank, suit = pair
-    return rank == "JK" or suit in ("h", "d")
+def _card_colour(suit: str) -> tuple[int, int, int]:
+    """Return one card face's colour for its payload suit letter.
+
+    Hearts ("h") and diamonds ("d") take the suit red; spades and
+    clubs stay ink; the joker's "j" keeps the steel accent -- a joker
+    is not a suit. Both card spellings the PDF draws -- the report's
+    payload pairs and the poster's ``Card`` objects -- reduce to this
+    one lowercase letter, so this is the single colour seam.
+    """
+    if suit in ("h", "d"):
+        return _SUIT_RED
+    return _STEEL if suit == "j" else _INK
 
 
 # The muted whole-hand sub-row's sizing: the DejaVu glyph face -- the
@@ -197,7 +219,9 @@ def _drawn_text(cards: Sequence[CardPair]) -> str:
 
     "All N cards, in draw order: …" -- one spelling for the full
     field's sub-row and both podium cards, so the three surfaces can
-    never drift apart on the wording.
+    never drift apart on the wording. The line is drawn in ink (see
+    ``_drawn_row``) -- it is running prose, not card faces, so its
+    glyphs do not take the suit colours.
     """
     run = " ".join(_pair_text(pair) for pair in cards)
     return f"All {len(cards)} cards, in draw order: {run}"
@@ -226,11 +250,6 @@ def _card_text(card: Card) -> str:
     rank = cast("Rank", card.rank)
     suit = cast("Suit", card.suit)
     return f"{_RANK_LETTER[rank.value]}{_SUIT_GLYPH[suit]}"
-
-
-def _is_steel_card(card: Card) -> bool:
-    """Return True for hearts/diamonds/jokers (the steel accent)."""
-    return card.joker or card.suit in (Suit.HEARTS, Suit.DIAMONDS)
 
 
 def _poster_card_text(card: Card) -> str:
@@ -501,16 +520,29 @@ _PODIUM_HAND_STYLE = _TextStyle(_FONT_HEADING, 9.5, _STEEL, bold=True)
 _BOARD_TOTAL = _TextStyle(_FONT_BODY, 7.5, _INK, bold=True)
 
 
-def _marker_style(hand_style: _TextStyle) -> _TextStyle:
+def _marker_colour(row: ResultRow) -> tuple[int, int, int]:
+    """Return R-14's drawn marker colour: the drawn card's own face.
+
+    The marker's suit glyph takes the same colour the card takes in a
+    best-5 run -- a drawn ♥ reads red, a joker steel -- so the marker
+    never disagrees with the card faces around it. A row that drew
+    nothing never draws the marker, so its steel placeholder is
+    unused.
+    """
+    return _STEEL if row.draw is None else _card_colour(row.draw[1])
+
+
+def _marker_style(hand_style: _TextStyle, colour: tuple[int, int, int]) -> _TextStyle:
     """Return the drawn-card marker style for a hand run's own size.
 
     R-14's marker is drawn in DejaVu -- the face that carries the suit
     glyphs and the joker's "★ JOKER" text Barlow lacks (measured: fpdf2
     drops ♥ and ★ from it) -- at the hand prose's size, so the two runs
-    read as one line whatever cell they ride in. Never bold: DejaVu is
-    registered for the regular style only.
+    read as one line whatever cell they ride in, in the drawn card's
+    own face colour (*colour*, from :func:`_marker_colour`). Never
+    bold: DejaVu is registered for the regular style only.
     """
-    return _TextStyle(_FONT_GLYPH, hand_style.size, _STEEL)
+    return _TextStyle(_FONT_GLYPH, hand_style.size, colour)
 
 
 def _set_font(pdf: FPDF, style: _TextStyle) -> None:
@@ -525,23 +557,26 @@ def _cell_text(pdf: FPDF, cell: _Cell) -> None:
     pdf.cell(cell.width, cell.height, text=cell.text, align=cell.style.align)
 
 
-def _hand_runs(pdf: FPDF, cell: _Cell, marker: str) -> None:
+def _hand_runs(  # noqa: PLR0913, PLR0917 -- (pdf, cell, marker, marker_colour): one hand run
+    pdf: FPDF, cell: _Cell, marker: str, marker_colour: tuple[int, int, int]
+) -> None:
     """Draw a hand prose cell and, after it, its drawn-card marker run.
 
     *cell* carries the hand prose with its style, width and height;
     *marker* is R-14's drawn-card run, drawn in DejaVu at the prose's
     own size so the two fonts share one column and no table geometry
-    moves. The prose is measured too -- the marker sits where the prose
-    ends, not at the column's right edge -- and is bounded by the cell
-    so a long hand and a drawn card cannot push each other off the
-    margin. An empty marker draws the single cell exactly as before,
-    which is every undrawn row.
+    moves, in *marker_colour* -- the drawn card's own face colour. The
+    prose is measured too -- the marker sits where the prose ends, not
+    at the column's right edge -- and is bounded by the cell so a long
+    hand and a drawn card cannot push each other off the margin. An
+    empty marker draws the single cell exactly as before, which is
+    every undrawn row.
     """
     style = cell.style
     if not marker:
         _cell_text(pdf, cell)
         return
-    marker_style = _marker_style(style)
+    marker_style = _marker_style(style, marker_colour)
     _set_font(pdf, marker_style)
     marker_width = pdf.get_string_width(marker)
     _set_font(pdf, style)
@@ -1032,6 +1067,7 @@ class _PosterPDF(FPDF):
                 height=0.16 * scale,
             ),
             _draw_marker(row),
+            _marker_colour(row),
         )
         self.ln(0.20 * scale)
         if self._all_cards:
@@ -1045,7 +1081,9 @@ class _PosterPDF(FPDF):
 
         The report's own sub-row wording and DejaVu glyph face, sized,
         led and indented by the card's geometry so the line sits in the
-        card at the same proportion the report's card uses.
+        card at the same proportion the report's card uses. The line
+        stays ink: it is running prose, not card faces, so its glyphs
+        do not take the suit colours.
         """
         self.set_x(self.l_margin + indent)
         self.set_font(_FONT_GLYPH, "", _DRAWN_SIZE * scale)
@@ -1060,14 +1098,31 @@ class _PosterPDF(FPDF):
         self.ln(_DRAWN_GAP * scale)
 
     def _large_cards(self, cards: Sequence[Card], *, size: float, height: float) -> None:
-        """Draw best-5 cards large; steel for red suits and jokers."""
+        """Draw best-5 cards large, each boxed like the HTML chip.
+
+        Each face takes its own suit colour -- hearts/diamonds red,
+        spades/clubs ink, a joker steel -- from :func:`_card_colour`.
+        A card whose boxed face would cross the content's right edge is
+        dropped rather than spilled past the margin (the report's
+        ``_cards_cell`` rule, at the poster's sizing).
+        """
         self.set_font(_FONT_GLYPH, "", size)
+        self.set_fill_color(*_CARD_BOX_FILL)
+        self.set_draw_color(*_CARD_BOX_BORDER)
+        self.set_line_width(_CARD_BOX_LINE)
+        right = self.l_margin + self.epw
         for card in cards:
             text = _poster_card_text(card)
-            width = self.get_string_width(text) + 0.04
-            self.set_text_color(_STEEL if _is_steel_card(card) else _INK)
-            self.cell(width, height, text=text)
+            boxed = self.get_string_width(text) + 2 * _CARD_PAD
+            if self.get_x() + boxed > right:
+                break
+            suit = "j" if card.joker else cast("Suit", card.suit).value.lower()
+            self.set_text_color(*_card_colour(suit))
+            self.cell(boxed, height, text=text, align="C", border=1, fill=True)
+            self.set_x(self.get_x() + _CARD_GAP)
         self.set_text_color(*_INK)
+        self.set_fill_color(255, 255, 255)
+        self.set_draw_color(*_INK)
 
 
 class _ReportPDF(FPDF):
@@ -1202,23 +1257,30 @@ class _ReportPDF(FPDF):
     def _cards_cell(self, cards: Sequence[CardPair], width: float) -> None:
         """Draw an inline card run at the current x, clipped to *width*.
 
-        Each card is its own cell so hearts/diamonds/jokers can take
-        the steel color; a card that would cross the column's right
-        edge is dropped rather than let it spill into the next column.
-        The cards are the shared model's rank/suit pairs, so a suit's
-        glyph and its steel accent follow the pair, not a card object.
+        Each card is its own boxed cell so its face takes its own suit
+        colour (hearts/diamonds red, spades/clubs ink, a joker steel)
+        from :func:`_card_colour`; a card whose boxed face -- text plus
+        both paddings -- would cross the column's right edge is dropped
+        rather than let it spill into the next column. The cards are
+        the shared model's rank/suit pairs, so a suit's glyph and its
+        colour follow the pair, not a card object.
         """
         self.set_font(_FONT_GLYPH, "", 7)
+        self.set_fill_color(*_CARD_BOX_FILL)
+        self.set_draw_color(*_CARD_BOX_BORDER)
+        self.set_line_width(_CARD_BOX_LINE)
         right = self.get_x() + width
         for pair in cards:
             text = _pair_text(pair)
-            text_width = self.get_string_width(text)
-            if self.get_x() + text_width > right:
+            boxed = self.get_string_width(text) + 2 * _CARD_PAD
+            if self.get_x() + boxed > right:
                 break
-            self.set_text_color(_STEEL if _pair_is_steel(pair) else _INK)
-            self.cell(text_width, _ROW_HEIGHT, text=text)
-            self.set_x(self.get_x() + 0.04)
+            self.set_text_color(*_card_colour(pair[1]))
+            self.cell(boxed, _ROW_HEIGHT, text=text, align="C", border=1, fill=True)
+            self.set_x(self.get_x() + _CARD_GAP)
         self.set_text_color(*_INK)
+        self.set_fill_color(255, 255, 255)
+        self.set_draw_color(*_INK)
 
     def _row_rule(self) -> None:
         """Finish one table row with the light separator rule."""
@@ -1235,10 +1297,16 @@ class _ReportPDF(FPDF):
         The prose renders in the frozen hand style; a row that drew a
         tie-break card (R-14) renders :func:`_draw_marker` immediately
         after it, as a measured second run in DejaVu, so the two fonts
-        share one column and no table geometry moves. A row that drew
-        nothing draws the single prose cell exactly as before.
+        share one column and no table geometry moves, in the drawn
+        card's own face colour. A row that drew nothing draws the
+        single prose cell exactly as before.
         """
-        _hand_runs(self, _Cell(width, _hand_label(row.hand), _HAND_STYLE), _draw_marker(row))
+        _hand_runs(
+            self,
+            _Cell(width, _hand_label(row.hand), _HAND_STYLE),
+            _draw_marker(row),
+            _marker_colour(row),
+        )
 
     # -------------------------------------------------------- sections
 
@@ -1378,6 +1446,7 @@ class _ReportPDF(FPDF):
                 height=0.15,
             ),
             _draw_marker(row),
+            _marker_colour(row),
         )
         self.ln(0.20)
         if self._opts.all_cards:
@@ -1815,7 +1884,7 @@ def podium_poster(  # noqa: PLR0913
     hands" heading + ride title, then the top-3 placings as large
     podium cards -- big place number, ``#plate Entry name``, the
     team/solo line, the hand's title-case prose name, and the best-5
-    cards as large faces (steel accent for hearts/diamonds/jokers).
+    cards as large faces, suit-coloured and boxed like the HTML chip.
     A placing that drew a tie-break card (R-14) renders that card
     beside its hand prose, as the report's own podium card does. With
     ``all_cards`` on (the default) each card also spells out the

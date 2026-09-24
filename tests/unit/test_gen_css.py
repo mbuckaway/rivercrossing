@@ -766,6 +766,25 @@ def test_compiled_css_chip_declares_ink_color_and_joker_chip_own_background(
     assert declarations.get(declaration) == expected
 
 
+@pytest.mark.parametrize(
+    ("selector", "expected"), [(".chip.r", "#c0392b"), (".chip.j", "#416180")]
+)
+def test_compiled_css_red_chip_declares_the_suit_red_and_the_joker_keeps_steel(
+    selector: str, expected: str
+) -> None:
+    """Hearts/diamonds take the suit red; the joker's star stays steel.
+
+    The chip classes each own their ``color`` (see the test above for
+    why), so the tone is pinned per class: ``.chip.r`` is the one suit
+    red (#c0392b -- the old mono-steel #416180 accent is gone), while
+    ``.chip.j`` keeps the steel the joker had all along (it is not a
+    suit). ``.chip`` (spades/clubs, ink) is pinned by the test above.
+    """
+    declarations = _compiled_rule_declarations(selector)
+
+    assert declarations.get("color") == expected
+
+
 def test_fonts_css_contains_both_families_and_all_five_weights() -> None:
     """Both Barlow families ship, each block with its frozen weight."""
     content = _COMMITTED_FONTS_CSS.read_text(encoding="utf-8")

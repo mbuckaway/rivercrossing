@@ -697,7 +697,7 @@ def _drawn_dns_placed(  # noqa: PLR0913 -- the row's own (plate, name, code, kin
 # the table rows' badge states the steel-700 body tone.
 _CARD_DRAW_BADGE = (
     '<span class="text-[10px] uppercase border border-steel-600 px-1.5 py-0.5">'
-    'draw <span class="chip r">A ♥</span></span>'
+    'draw <span class="chip r">A ♥\ufe0e</span></span>'
 )
 
 
@@ -734,21 +734,22 @@ def test_render_public_renders_the_drawn_card_badge_in_the_top_list_row() -> Non
     """The top-list row shows the drawn card beside its hand."""
     html = render(_StubRide(), _drawn_placed(), ExportOptions())
 
-    assert 'draw <span class="chip r">A ♥</span>' in _section_after(html, ">Top ten</h2>")
+    assert 'draw <span class="chip r">A ♥\ufe0e</span>' in _section_after(html, ">Top ten</h2>")
 
 
 def test_render_public_renders_the_drawn_card_badge_in_the_full_field_row() -> None:
     """The full field's row carries the same drawn-card badge."""
     html = render(_StubRide(), _drawn_placed(), ExportOptions())
 
-    assert 'draw <span class="chip r">A ♥</span>' in _section_after(html, ">Solo riders</h3>")
+    badge = 'draw <span class="chip r">A ♥\ufe0e</span>'
+    assert badge in _section_after(html, ">Solo riders</h3>")
 
 
 def test_render_public_renders_the_drawn_card_badge_on_a_team_row() -> None:
     """A team's top-list row carries it too (its own macro)."""
     html = render(_StubRide(), _drawn_placed(kind="team"), ExportOptions())
 
-    assert 'draw <span class="chip r">A ♥</span>' in _section_after(html, ">Top teams</h2>")
+    assert 'draw <span class="chip r">A ♥\ufe0e</span>' in _section_after(html, ">Top teams</h2>")
 
 
 def test_render_public_given_no_draw_renders_no_draw_badge() -> None:
@@ -763,6 +764,36 @@ def test_render_public_given_a_drawn_joker_renders_the_joker_chip() -> None:
     html = render(_StubRide(), _drawn_placed(code="JK"), ExportOptions())
 
     assert 'draw <span class="chip j">★ JOKER</span>' in html
+
+
+@pytest.mark.parametrize(
+    ("code", "cls", "glyph"),
+    [("AH", "chip r", "♥"), ("AD", "chip r", "♦"), ("AS", "chip", "♠"), ("AC", "chip", "♣")],
+)
+def test_render_public_chip_appends_the_text_presentation_selector_to_suit_glyphs(
+    code: str, cls: str, glyph: str
+) -> None:
+    """Every suit chip's glyph carries U+FE0E (VS15).
+
+    The chip's colour comes from CSS (``.chip.r`` is the suit red), so
+    the glyph must request text presentation or an emoji-capable
+    fallback font (iOS) paints it its own colour instead. The joker's
+    star is not emoji-capable and carries none -- the T-3 negative is
+    the next test.
+    """
+    html = render(_StubRide(), _drawn_placed(code=code), ExportOptions())
+
+    assert f'draw <span class="{cls}">A {glyph}\ufe0e</span>' in _section_after(
+        html, ">Best hands — top 3</h2>"
+    )
+
+
+def test_render_public_joker_chip_carries_no_text_presentation_selector() -> None:
+    """T-3 negative: the joker's star carries no VS15."""
+    html = render(_StubRide(), _drawn_placed(code="JK"), ExportOptions())
+
+    assert 'draw <span class="chip j">★ JOKER</span>' in html
+    assert "JOKER\ufe0e" not in html
 
 
 @pytest.mark.parametrize("place", [1, 2, 3, 4])
@@ -805,17 +836,17 @@ def test_render_public_renders_the_podium_whole_hand_chips_in_draw_order() -> No
 
     ``_placed_pair``'s leader holds 9S 9D 9C KH 2S -- the same five
     codes its best-5 came from, so the line must re-emit them in that
-    order with the shared chip faces (hearts/diamonds accent, the rest
-    plain), exactly as ``drawn_row`` does on the full-field page.
+    order with the shared chip faces (hearts/diamonds in the suit red,
+    the rest ink), exactly as ``drawn_row`` does on the full-field page.
     """
     html = render(_StubRide(), _placed_pair(), ExportOptions())
 
     assert (
         '<div class="mt-2 text-xs text-paper/70">All 5 cards, in draw order: '
         '<span class="inline-flex flex-wrap gap-1">'
-        '<span class="chip">9 ♠</span><span class="chip r">9 ♦</span>'
-        '<span class="chip">9 ♣</span><span class="chip r">K ♥</span>'
-        '<span class="chip">2 ♠</span></span></div>'
+        '<span class="chip">9 ♠\ufe0e</span><span class="chip r">9 ♦\ufe0e</span>'
+        '<span class="chip">9 ♣\ufe0e</span><span class="chip r">K ♥\ufe0e</span>'
+        '<span class="chip">2 ♠\ufe0e</span></span></div>'
     ) in html
 
 
@@ -888,7 +919,7 @@ def test_render_public_renders_the_drawn_card_badge_in_the_team_full_field_row()
     """R-14: the Teams full-field row shows it like the solo one."""
     html = render(_StubRide(), _drawn_placed(kind="team"), ExportOptions())
 
-    assert 'draw <span class="chip r">A ♥</span>' in _section_after(html, ">Teams</h3>")
+    assert 'draw <span class="chip r">A ♥\ufe0e</span>' in _section_after(html, ">Teams</h3>")
 
 
 def test_render_public_given_no_draw_renders_no_badge_in_the_team_full_field_row() -> None:
@@ -1806,8 +1837,8 @@ def test_render_public_given_a_drawn_dns_row_renders_no_draw_badge() -> None:
 
     html = render(_StubRide(), placed, ExportOptions())
 
-    assert 'draw <span class="chip r">A ♥</span>' in html
-    assert 'draw <span class="chip r">7 ♦</span>' not in html
+    assert 'draw <span class="chip r">A ♥\ufe0e</span>' in html
+    assert 'draw <span class="chip r">7 ♦\ufe0e</span>' not in html
 
 
 def test_render_public_given_a_dns_row_blanks_its_time_cells() -> None:
@@ -2633,9 +2664,9 @@ def test_render_poster_given_a_podium_card_prints_the_chips_in_draw_order() -> N
     assert (
         '<div class="mt-2 text-xs text-paper/70">All 5 cards, in draw order: '
         '<span class="inline-flex flex-wrap gap-1">'
-        '<span class="chip">9 ♠</span><span class="chip r">9 ♦</span>'
-        '<span class="chip">9 ♣</span><span class="chip r">K ♥</span>'
-        '<span class="chip">2 ♠</span></span></div>'
+        '<span class="chip">9 ♠\ufe0e</span><span class="chip r">9 ♦\ufe0e</span>'
+        '<span class="chip">9 ♣\ufe0e</span><span class="chip r">K ♥\ufe0e</span>'
+        '<span class="chip">2 ♠\ufe0e</span></span></div>'
     ) in page
 
 
