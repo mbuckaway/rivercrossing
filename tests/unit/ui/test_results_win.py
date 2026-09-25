@@ -6,8 +6,10 @@ Only what genuinely needs no window is pinned here, in the
 style:
 
 - :data:`STANDINGS_COLUMN_FLAGS` and the shared standings-column list,
-  every column pinned to its own width (G6 plus the R-14 Draw column);
-- :func:`format_draw` -- the Draw cell's card text;
+  every column pinned to its own width (G6 plus the R-14 Draw column),
+  the two card cells built with the markup renderer;
+- :func:`format_best5` and :func:`format_draw` -- the two card cells'
+  per-red-card markup;
 - :meth:`StandingsListModel.Compare` -- the native header sort's
   per-column keys, its numeric Place/Laps, its rank-then-suit Draw key
   and its non-negated row-position tie-break -- driven against a shell
@@ -55,7 +57,8 @@ from conftest import _roster_with_entries, gorba_config
 from rivercrossing.cards import Shoe
 from rivercrossing.ride import RideEngine
 from rivercrossing.roster import EntryMode, PlateModel, Roster
-from rivercrossing.ui import accelerators, std_dialogs
+from rivercrossing.ui import accelerators, std_dialogs, theme
+from rivercrossing.ui.card_text import DARK_RED, SUIT_RED
 from rivercrossing.ui.presenters.data_source import EngineDataSource, StandingsRow
 from rivercrossing.ui.views import results_win
 from rivercrossing.ui.views.results_win import (
@@ -72,7 +75,7 @@ from rivercrossing.ui.views.results_win import (
     DRAW_INFO_TITLE,
     DRAW_WIDTH,
     HAND_WIDTH,
-    JOKER_DISPLAY,
+    MARKUP_COLUMNS,
     SELF_TEST_NOTE,
     STALE_NOTE,
     STANDINGS_COLUMN_FLAGS,
@@ -84,11 +87,25 @@ from rivercrossing.ui.views.results_win import (
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
+    from typing import Any
     from xml.etree.ElementTree import Element
 
 XRC_DIR = Path(__file__).resolve().parents[3] / "src" / "rivercrossing" / "ui" / "xrc"
 
 RESULTS_DLG = "results_dlg"
+
+
+@pytest.fixture(autouse=True)
+def _light_card_red(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Resolve the standings' card red without a live ``wx.App``.
+
+    ``theme.card_red()`` probes ``wx.SystemSettings.GetAppearance()``,
+    which raises ``PyNoAppError`` headless (measured;
+    ``test_theme.py``'s own split), so every ``show_standings`` below
+    sees the light appearance's red. The dark one is pinned by building
+    the model directly.
+    """
+    monkeypatch.setattr(theme, "card_red", lambda: SUIT_RED)
 
 
 def _row(  # noqa: PLR0913 -- a fixture builder mirroring StandingsRow's fields
@@ -199,15 +216,30 @@ class _ListControl:
 
     def __init__(self) -> None:
         """Start with no columns and no bindings."""
-        self.columns: list[tuple[str, int, int, int, _Column]] = []
+        self.columns: list[tuple[str, int, int | None, int, Any]] = []
         self.bindings: list[tuple[object, object]] = []
+        self.markup_columns: list[Any] = []
 
     def AppendTextColumn(  # noqa: N802, PLR0913 -- wx API name and shape
         self, label: str, col: int, *, width: int, flags: int
     ) -> _Column:
-        """Record the column and return its double."""
+        """Record one plain text column and return its double."""
         column = _Column()
         self.columns.append((label, col, width, flags, column))
+        return column
+
+    def AppendColumn(self, column: Any) -> Any:  # noqa: ANN401, N802 -- wx API name
+        """Record one hand-built (markup) column and return it.
+
+        A ``wx.dataview.DataViewColumn`` resolves its width only once
+        a control owns it (measured: ``GetWidth()`` reads 0 detached),
+        so the recorded width is ``None`` -- ``test_view_support.py``
+        pins the width the shared builder hands that constructor.
+        """
+        self.markup_columns.append(column)
+        self.columns.append(
+            (column.GetTitle(), column.GetModelColumn(), None, column.GetFlags(), column)
+        )
         return column
 
     def Bind(self, event: object, handler: object) -> None:  # noqa: N802 -- wx API name
@@ -215,8 +247,8 @@ class _ListControl:
         self.bindings.append((event, handler))
 
     def widths_by_label(self) -> dict[str, int]:
-        """Map each appended column's label to its pinned width."""
-        return {label: width for label, _col, width, _flags, _column in self.columns}
+        """Map each text column's label to its pinned width."""
+        return {label: width for label, _col, width, _flags, _column in self.columns if width}
 
 
 class _BindingDialog:
@@ -270,14 +302,41 @@ def test_build_columns_for_given_a_control_carries_the_shared_column_flags() -> 
 
 
 def test_build_columns_for_given_a_control_pins_every_column_width() -> None:
-    """G6: each column is appended with its own pinned width."""
+    """G6: each column is appended with its own pinned width.
+
+    The two card columns are hand-built (``wx.dataview.DataViewColumn``
+    + a markup renderer), and such a column only resolves its width once
+    a control owns it, so their pinned widths are asserted where the
+    constructor call itself is captured -- ``test_view_support.py``.
+    """
     control = _ListControl()
 
     ResultsWindow._build_columns_for(control)
 
-    assert [width for _label, _col, width, _flags, _column in control.columns] == list(
-        COLUMN_WIDTHS
-    )
+    text_columns = [COL_PLACE, COL_PLATE, COL_ENTRY, COL_LAPS, COL_HAND]
+    recorded = [
+        (label, width)
+        for label, col, width, _flags, _column in control.columns
+        if col in text_columns
+    ]
+
+    assert recorded == [(COLUMN_LABELS[col], COLUMN_WIDTHS[col]) for col in text_columns]
+    assert [column.GetTitle() for column in control.markup_columns] == [
+        COLUMN_LABELS[COL_BEST5],
+        COLUMN_LABELS[COL_DRAW],
+    ]
+
+
+def test_build_columns_for_given_the_two_card_columns_builds_them_for_markup() -> None:
+    """Phase 0: Best 5 and Draw render per-card markup -- red alone."""
+    control = _ListControl()
+
+    ResultsWindow._build_columns_for(control)
+
+    assert [
+        (column.GetModelColumn(), type(column.GetRenderer()).__name__)
+        for column in control.markup_columns
+    ] == [(col, "DataViewTextRenderer") for col in sorted(MARKUP_COLUMNS)]
 
 
 def test_column_widths_given_the_seven_columns_are_the_pinned_widths() -> None:
@@ -298,15 +357,21 @@ def test_min_size_given_the_solo_columns_fits_the_dialog_at_800() -> None:
 
 
 def test_build_columns_for_given_a_wide_hand_pins_only_the_hand_column() -> None:
-    """G6: the team list's Hand width is its own parameter."""
+    """G6: the team list's Hand width is its own parameter.
+
+    The two hand-built card columns report no width here (mid-file:
+    ``_ListControl.AppendColumn``); their pinned widths are covered by
+    ``test_view_support.py``.
+    """
     control = _ListControl()
 
     ResultsWindow._build_columns_for(control, hand_width=TEAM_HAND_WIDTH)
 
-    assert control.widths_by_label() == {
-        **dict(zip(COLUMN_LABELS, COLUMN_WIDTHS, strict=True)),
-        "Hand": TEAM_HAND_WIDTH,
-    }
+    expected = {**dict(zip(COLUMN_LABELS, COLUMN_WIDTHS, strict=True)), "Hand": TEAM_HAND_WIDTH}
+    del expected[COLUMN_LABELS[COL_BEST5]]
+    del expected[COLUMN_LABELS[COL_DRAW]]
+
+    assert control.widths_by_label() == expected
 
 
 def test_build_columns_for_given_no_hide_plate_leaves_every_column_visible() -> None:
@@ -315,9 +380,9 @@ def test_build_columns_for_given_no_hide_plate_leaves_every_column_visible() -> 
 
     ResultsWindow._build_columns_for(control)
 
-    assert [column.hidden for _label, _col, _width, _flags, column in control.columns] == (
-        [None] * len(COLUMN_LABELS)
-    )
+    assert [
+        getattr(column, "hidden", None) for _label, _col, _width, _flags, column in control.columns
+    ] == ([None] * len(COLUMN_LABELS))
 
 
 def test_build_columns_for_given_hide_plate_hides_only_the_plate_column() -> None:
@@ -326,9 +391,9 @@ def test_build_columns_for_given_hide_plate_hides_only_the_plate_column() -> Non
 
     ResultsWindow._build_columns_for(control, hide_plate=True)
 
-    assert [column.hidden for _label, _col, _width, _flags, column in control.columns] == [
-        True if col == COL_PLATE else None for col in range(len(COLUMN_LABELS))
-    ]
+    assert [
+        getattr(column, "hidden", None) for _label, _col, _width, _flags, column in control.columns
+    ] == [True if col == COL_PLATE else None for col in range(len(COLUMN_LABELS))]
 
 
 # ----------------------------------- the shared header (Part 2 + G6)
@@ -377,10 +442,10 @@ def test_get_column_count_given_the_standings_model_is_seven() -> None:
 
 
 def test_get_column_count_given_a_rendered_row_reads_every_cell() -> None:
-    """The Draw column's cell resolves through the accessor tuple."""
+    """The Draw cell resolves through the model's card branch."""
     model = StandingsListModel([_row(tiebreak_card="10D")])
 
-    assert model.GetValueByRow(0, COL_DRAW) == "10♦"
+    assert model.GetValueByRow(0, COL_DRAW) == f'<span color="{SUIT_RED}">10♦</span>'
 
 
 def test_get_value_by_row_given_a_dns_row_blanks_the_place_cell() -> None:
@@ -824,19 +889,36 @@ def test_show_standings_given_empty_sections_renders_empty_models() -> None:
 # deck, a flag and no card. The cell renders the canvas card text.
 
 DRAW_CASES = (
-    (_row(tiebreak_card="10D"), "10♦"),
+    (_row(tiebreak_card="10D"), f'<span color="{SUIT_RED}">10♦</span>'),
     (_row(tiebreak_card="AS"), "A♠"),
-    (_row(tiebreak_card="JK"), JOKER_DISPLAY),
+    (_row(tiebreak_card="JK"), "JK★"),
     (_row(tiebreak_card=""), ""),  # T-4 nullable: nothing drawn
 )
 
 
 @pytest.mark.parametrize(("row", "expected"), DRAW_CASES, ids=["ten", "ace", "joker", "blank"])
-def test_format_draw_given_a_standings_row_returns_its_drawn_card_text(
+def test_format_draw_given_a_standings_row_returns_its_drawn_card_markup(
     row: StandingsRow, expected: str
 ) -> None:
-    """The cell is the drawn card's text, blank when none was drawn."""
+    """The Draw cell is the card's own cell: red spanned, black bare."""
     assert format_draw(row) == expected
+
+
+def test_format_draw_given_the_appearance_dark_red_spans_a_drawn_red_card() -> None:
+    """The caller's red reaches the one-card Draw cell."""
+    cell = format_draw(_row(tiebreak_card="10D"), DARK_RED)
+
+    assert cell == f'<span color="{DARK_RED}">10♦</span>'
+
+
+def test_format_draw_given_a_drawn_black_card_and_the_dark_red_stays_bare() -> None:
+    """T-3 negative: a drawn ♠ carries no red in either appearance."""
+    assert format_draw(_row(tiebreak_card="AS"), DARK_RED) == "A♠"
+
+
+def test_format_draw_given_a_blank_card_and_the_dark_red_stays_the_empty_cell() -> None:
+    """T-3/T-4: the blank guard answers first, never an empty span."""
+    assert format_draw(_row(tiebreak_card=""), DARK_RED) == ""
 
 
 @given(
@@ -849,6 +931,105 @@ def test_format_draw_given_any_stored_code_is_blank_iff_the_code_is_blank(code: 
     text = format_draw(_row(tiebreak_card=code))
 
     assert (text == "") is (code == "")
+
+
+# ------------------------- the card cells' per-card colour (Phase 0)
+#
+# The three standings lists are ``wxDataViewCtrl``s over
+# ``StandingsListModel``, exactly like the console feed. A
+# ``DataViewItemAttr`` carries ONE text colour per CELL, so it can only
+# colour a cell that holds a single card -- it cannot colour a five-card
+# "Best 5" hand, whose mixed suits must each keep their own colour (a
+# whole-cell red would paint its ♠/♣ faces red: a *wrong* suit, not
+# merely a redundant cue). The red cards therefore render wx markup --
+# one `<span color="...">` per ♥/♦ card (``ui/card_text``) -- the two
+# card columns are the only columns built with the markup renderer.
+#
+# Only the RED is markup. A ♠/♣ or the joker's ★ comes through bare and
+# the list paints it in its own adaptive foreground, which is what keeps
+# those faces visible on a dark list. The glyph still spells every suit
+# (CODINGSTANDARDS-UX-DESKTOP.md §7), so the colour is decoration and
+# never the sole channel -- which is why a cell carrying no card face at
+# all (a blank Draw) is simply empty.
+
+
+def test_get_value_by_row_given_the_best5_cell_returns_each_card_coloured() -> None:
+    """The five-card cell a per-cell colour could not draw."""
+    model = StandingsListModel([_row(best5=("KS", "KC", "KD", "JK", "9H"))])
+
+    assert model.GetValueByRow(0, COL_BEST5) == (
+        f'K♠ K♣ <span color="{SUIT_RED}">K♦</span> JK★ <span color="{SUIT_RED}">9♥</span>'
+    )
+
+
+def test_get_value_by_row_given_a_dark_appearance_spans_the_red_card() -> None:
+    """The red the model was built with is the red its cells carry."""
+    model = StandingsListModel([_row(best5=("KS", "9H"))], DARK_RED)
+
+    assert model.GetValueByRow(0, COL_BEST5) == f'K♠ <span color="{DARK_RED}">9♥</span>'
+
+
+def test_get_value_by_row_given_the_draw_cell_returns_the_drawn_card_coloured() -> None:
+    """The one-card Draw column takes the same per-card red."""
+    model = StandingsListModel([_row(tiebreak_card="10D")], DARK_RED)
+
+    assert model.GetValueByRow(0, COL_DRAW) == f'<span color="{DARK_RED}">10♦</span>'
+
+
+def test_get_value_by_row_given_a_blank_draw_cell_stays_empty() -> None:
+    """T-4 nullable boundary: a row that drew nothing renders "".
+
+    ``format_draw``'s blank guard answers before the card formatter, so
+    the blank cell is never handed to ``format_card`` (which would raise
+    ``IndexError`` on the empty code).
+    """
+    model = StandingsListModel([_row(tiebreak_card="")], DARK_RED)
+
+    assert model.GetValueByRow(0, COL_DRAW) == ""
+
+
+def test_get_value_by_row_given_a_blank_best5_cell_stays_empty() -> None:
+    """T-4 collection boundary: a headless row draws no card at all."""
+    model = StandingsListModel([_row(best5=())])
+
+    assert model.GetValueByRow(0, COL_BEST5) == ""
+
+
+@pytest.mark.parametrize(
+    "column",
+    [COL_PLACE, COL_PLATE, COL_ENTRY, COL_LAPS, COL_HAND],
+    ids=["place", "plate", "entry", "laps", "hand"],
+)
+def test_get_value_by_row_given_a_text_column_never_carries_markup(column: int) -> None:
+    """T-3: only the two card columns render as markup."""
+    model = StandingsListModel([_row()])
+
+    assert "<span " not in model.GetValueByRow(0, column)
+
+
+def test_standings_compare_given_two_best5_rows_keys_on_the_plain_text_not_the_markup() -> None:
+    """The Best 5 key is the canvas text, never the markup's colour.
+
+    Keyed on the markup, a red deuce would sort *after* a bare ace (the
+    ``#c0392b`` span text outranks ``A♠``); keyed on the plain text,
+    "2♥" precedes "A♠".
+    """
+    shell = _CompareShell([_row(best5=("2H",)), _row(best5=("AS",))])
+
+    result = StandingsListModel.Compare(shell, 0, 1, COL_BEST5, True)  # noqa: FBT003
+
+    assert result == -1
+
+
+def test_standings_model_given_the_card_cells_overrides_no_cell_attribute() -> None:
+    """Phase 0 retired the colour attribute -- so no override is left.
+
+    A ``DataViewItemAttr`` carries one colour per cell, which is exactly
+    what a multi-card "Best 5" cell cannot use. The colour now rides the
+    markup, so this model sets no attribute at all and drops the
+    override entirely (its inherited answer is "nothing to show").
+    """
+    assert "GetAttrByRow" not in vars(StandingsListModel)
 
 
 # ------------------------------------------- the ⚠ explanation (Part 1)
@@ -1351,14 +1532,27 @@ class _WindowControl:
     def __init__(self) -> None:
         """Start with no associated model and no columns."""
         self.model: object | None = None
-        self.columns: list[tuple[str, int, int, int, _Column]] = []
+        self.columns: list[tuple[str, int, int | None, int, Any]] = []
+        self.markup_columns: list[Any] = []
 
     def AppendTextColumn(  # noqa: N802, PLR0913 -- wx API name and shape
         self, label: str, col: int, *, width: int, flags: int
     ) -> _Column:
-        """Record the column and return its double."""
+        """Record the plain text column and return its double."""
         column = _Column()
         self.columns.append((label, col, width, flags, column))
+        return column
+
+    def AppendColumn(self, column: Any) -> Any:  # noqa: ANN401, N802 -- wx API name
+        """Record the hand-built (markup) column and return it.
+
+        The width reads 0 until a real control owns the column, so it is
+        recorded as ``None`` here (mid-file: ``_ListControl``'s note).
+        """
+        self.markup_columns.append(column)
+        self.columns.append(
+            (column.GetTitle(), column.GetModelColumn(), None, column.GetFlags(), column)
+        )
         return column
 
     def Bind(self, event: object, handler: object) -> None:  # noqa: N802 -- wx API

@@ -13,8 +13,9 @@ header sort answers through
 Pure Python -- no ``wx`` import may ever land here (R-71). Both the
 presenters (``ui.presenters.riders``, filtering rows) and the views
 (``ui.views._support``, building columns and cells) import it, so it
-must stay importable headless. The Cards cell's text comes from
-``ui.card_text``, the one formatter all three call sites share.
+must stay importable headless. The Cards cell's value comes from
+``ui.card_text``, the one formatter all three call sites share: each
+♥/♦ card's own markup span, the ♠/♣ cards bare.
 """
 
 from __future__ import annotations
@@ -22,7 +23,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
-from rivercrossing.ui.card_text import format_card
+from rivercrossing.ui.card_text import SUIT_RED, cards_markup
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -32,8 +33,10 @@ if TYPE_CHECKING:
 __all__ = [
     "CONSOLE_RIDER_COLUMNS",
     "EDITOR_RIDER_COLUMNS",
+    "RIDERS_COL_CARDS",
     "SOLO_TEAM_TEXT",
     "RiderColumn",
+    "cards_cell",
     "plate_order_key",
 ]
 
@@ -103,9 +106,21 @@ def _sex_cell(row: RiderRow) -> str:
     return row.sex if row.sex is not None else ""
 
 
-def _cards_cell(row: RiderRow) -> str:
-    """Return the Cards cell: the dealt codes as canvas suit glyphs."""
-    return " ".join(format_card(code) for code in row.cards)
+def cards_cell(row: RiderRow, red: str = SUIT_RED) -> str:
+    """Return the Cards cell: the dealt cards, each red one in *red*.
+
+    The console's list builds this column with the markup renderer
+    (``ui.views._support.append_markup_column``), so the value is markup
+    -- one ``<span color="...">`` per ♥/♦ card (``ui.card_text``), which
+    is what lets a five-card hand carry its reds in one cell; a ♠/♣ card
+    is its own bare glyph, so the list paints it in the control's own
+    foreground. *red* is the appearance's own red
+    (``theme.card_red()``), which the list model passes at construction;
+    the default is the light appearance's, for the column's own
+    ``value``. The rider editor has no Cards column, so this is the
+    console's cell alone.
+    """
+    return cards_markup(row.cards, red)
 
 
 def _plate_sort_key(row: RiderRow) -> tuple[int, int] | tuple[int, str]:
@@ -156,5 +171,13 @@ EDITOR_RIDER_COLUMNS: tuple[RiderColumn, ...] = (
 # plus the Cards column -- one shared prefix, never a second copy.
 CONSOLE_RIDER_COLUMNS: tuple[RiderColumn, ...] = (
     *EDITOR_RIDER_COLUMNS,
-    RiderColumn(label="Cards", value=_cards_cell, sort_key=_cards_sort_key),
+    RiderColumn(label="Cards", value=cards_cell, sort_key=_cards_sort_key),
+)
+
+# The console's Cards column, found by its label so the index cannot
+# drift from the layout above. It is the one cell whose value depends on
+# the appearance (:func:`cards_cell`'s red), and the one column the
+# rider editor's list does not carry, so the model needs to name it.
+RIDERS_COL_CARDS = next(
+    index for index, column in enumerate(CONSOLE_RIDER_COLUMNS) if column.label == "Cards"
 )

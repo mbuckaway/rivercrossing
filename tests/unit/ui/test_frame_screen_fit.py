@@ -467,3 +467,23 @@ def test_main_frame_bind_frame_commands_wires_the_display_change_refit() -> None
 
     assert "wx.EVT_DISPLAY_CHANGED" in source
     assert "self._on_display_changed" in source
+
+
+def test_main_frame_bind_frame_commands_wires_the_appearance_change_rebuild() -> None:
+    """The frame-command constructor step wires the card-red rebuild.
+
+    The frame already receives ``EVT_SYS_COLOUR_CHANGED`` (``app.py``'s
+    theme binding), but that one routes only to the theme controller --
+    no view hears it -- so the console binds its own handler for the
+    two card models (the only modeless window's card cells).
+
+    logic-coverage-exempt: T-3 -- as above, ``wx.Bind`` needs a real
+    ``wx.Frame`` and the unit process never builds one. The handler the
+    binding names is covered behaviourally by
+    ``test_main_frame_feed_list.py``'s ``_on_sys_colour_changed`` and
+    ``_reapply_card_red`` tests; this pin covers only the wiring.
+    """
+    source = inspect.getsource(main_frame.MainFrame._bind_frame_commands)
+
+    assert "wx.EVT_SYS_COLOUR_CHANGED" in source
+    assert "self._on_sys_colour_changed" in source

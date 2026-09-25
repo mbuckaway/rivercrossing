@@ -22,7 +22,7 @@ This folder is the complete build contract. A developer or coding agent who was 
 | `screenshots/windows/` | JPG of each of the original 23 EPIC-1 window designs, named by XRC name (`main_frame.jpg`, `ride_setup_dlg.jpg`, …). **Not maintained for windows added since** — `exit_confirm_dlg`, `duplicate_ride_dlg`, `reopen_ride_dlg`, `void_card_confirm_dlg`, `team_editor_dlg`, `add_team_dlg`, `add_rider_dlg`, `rider_issues_dlg` and the retired `no_ride_dlg`/`stop_confirm_dlg`/`continue_or_new_dlg` have no JPG here, and retired windows keep theirs; **§15b's registry is the authoritative window list**, not this folder. |
 | `exports/` | The two golden results pages. Their embedded `race-data` JSON blocks are the export test fixtures. |
 | `templates/` | Production Jinja2 templates + frozen Tailwind source — **ship verbatim** into `src/rivercrossing/htmlexport/templates/`. |
-| `assets/cards/` | 53 card bitmaps (24×32 plus 48×64 `-2x`) + contact sheet. Mono steel palette; hearts/diamonds in steel, no red. |
+| `assets/cards/` | The 53-card starter set (24×32 plus 48×64 `-2x`) + contact sheet, drawn by `tools/gen_card_bitmaps.py` — the same generator that draws the shipped deck. Hearts/diamonds take the suit red `#c0392b`, clubs/spades ink, the joker steel. |
 | `assets/sounds/` | The three console cue WAVs: `recorded` (70 ms tick), `flagged` (280 ms two-tone), `error` (300 ms buzz). |
 | `REVIEW.md` | Findings from the final cross-document audit and how each was resolved. |
 

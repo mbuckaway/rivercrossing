@@ -5,36 +5,38 @@ Writes ``{rank}{suit}.png`` (24x32) and ``{rank}{suit}-2x.png``
 (48x64) for the 52 faces, plus ``joker.png`` / ``joker-2x.png`` --
 the naming the imagelist loader and the packaging manifest both
 depend on. The ``contact-sheet.png`` that sits beside the design
-originals is documentation and is deliberately not produced here.
+copy is documentation and is deliberately not produced here.
 
-Palette (design/templates/theme.css, "mono steel ... no red"):
-clubs and spades take ``--color-ink``, hearts, diamonds and the
-joker take ``--color-steel-700``, and the joker's frame is
-``--color-steel-600``. Every colour in the deck satisfies
-r <= g <= b, which is the checkable form of "no red".
+Palette (design/templates/theme.css): clubs and spades take
+``--color-ink``, hearts and diamonds the suit red ``#c0392b``,
+and the joker -- not a suit -- takes ``--color-steel-700``
+inside a ``--color-steel-600`` frame.
 
 Faces are drawn at 4x and area-averaged down, so the small bitmaps
 get real antialiasing rather than hinted stair-steps. The
-reduction is BOX rather than LANCZOS on purpose: LANCZOS rings,
-and its overshoot puts pixels a shade or two outside the palette,
-breaking r <= g <= b. An area average is a convex blend of the
-colours actually drawn, so it cannot. Suit pips are polygons
-rather than glyphs -- the card-suit codepoints are missing from
-most sans faces, and drawing them keeps the output identical on
-macOS and Windows. Rank text uses the Aileron face bundled inside
-Pillow, for the same reason.
+reduction is a box average rather than LANCZOS on purpose: LANCZOS
+rings, and its overshoot puts pixels a shade or two outside the
+palette, so it is out. An area average is a convex blend of the
+colours actually drawn, so every pixel is a palette colour or a
+blend of them, up to the half unit per channel that rounding to 8
+bits can add.
+
+Suit pips are polygons rather than glyphs -- the card-suit
+codepoints are missing from most sans faces, and drawing them
+keeps the output identical on macOS and Windows. Rank text uses
+the Aileron face bundled inside Pillow, for the same reason.
 
 Usage::
 
     python tools/gen_card_bitmaps.py            # rewrite the deck
     python tools/gen_card_bitmaps.py --out DIR  # draw elsewhere
 
-This redraws the deck from scratch. It is not a bit-for-bit
-reproduction of the starter art in ``design/assets/cards/``, which
-a different (browser) pipeline rasterized; it reproduces that
-set's filenames, sizes, layout and palette. design/README.md:
-"tasks E1.3.2 and E4.4.3 commit the generator scripts and may
-regenerate them -- keep the file names".
+This redraws the deck from scratch. Its default tree is the
+shipped deck, ``src/rivercrossing/ui/assets/cards/``; ``--out
+design/assets/cards`` redraws the design package's copy from the
+same source, so the two trees hold the identical bytes.
+design/README.md: "tasks E1.3.2 and E4.4.3 commit the generator
+scripts and may regenerate them -- keep the file names".
 """
 
 import argparse
@@ -51,15 +53,17 @@ DEFAULT_OUT = REPO_ROOT / "src" / "rivercrossing" / "ui" / "assets" / "cards"
 RANKS = ("2", "3", "4", "5", "6", "7", "8", "9", "10", "J", "Q", "K", "A")
 SUITS = ("c", "d", "h", "s")
 JOKER = "joker"
-ACCENT_SUITS = ("d", "h")
+RED_SUITS = ("d", "h")
 
 SCALE_SUFFIXES = {"": 1, "-2x": 2}
 CARD_SIZE = (24, 32)
 
-# theme.css: --color-ink, --color-steel-700, --color-steel-600.
+# theme.css: --color-ink, the suit red #c0392b from .chip.r, and
+# the joker's --color-steel-700 / --color-steel-600.
 WHITE = (255, 255, 255, 255)
 INK = (29, 31, 32, 255)
-ACCENT = (65, 97, 128, 255)
+RED = (192, 57, 43, 255)
+JOKER_STEEL = (65, 97, 128, 255)
 BORDER = (196, 198, 199, 255)
 JOKER_BORDER = (89, 126, 163, 255)
 
@@ -249,7 +253,7 @@ class _Face:
 
     def pip(self, suit: str, centre: Point) -> None:
         """Draw *suit*'s pip, in that suit's palette colour."""
-        colour = ACCENT if suit in ACCENT_SUITS else INK
+        colour = RED if suit in RED_SUITS else INK
         self.polygons(PIP_SHAPES[suit](self.spot(centre, PIP_SIZE)), colour)
 
     def legend(self, centre: Point, cap_height: float, max_width: float) -> Legend:
@@ -274,16 +278,20 @@ class _Face:
         )
 
     def reduced(self) -> Image.Image:
-        """Return the face at its final pixel size."""
-        target = (CARD_SIZE[0] * self.scale, CARD_SIZE[1] * self.scale)
-        return self.image.resize(target, Image.Resampling.BOX)
+        """Return the face at its final pixel size, area-averaged.
+
+        ``Image.reduce`` is the exact area average. ``Image.resize``
+        with BOX approximates it with fixed-point coefficients and
+        drifts up to a channel unit, off the palette.
+        """
+        return self.image.reduce(SUPERSAMPLE)
 
 
 def render_face(rank: str, suit: str, scale: int) -> Image.Image:
     """Draw one rank-and-suit card at *scale*."""
     face = _Face(scale)
     face.frame(BORDER)
-    colour = ACCENT if suit in ACCENT_SUITS else INK
+    colour = RED if suit in RED_SUITS else INK
     face.text(rank, face.legend(RANK_CENTRE, RANK_CAP_HEIGHT, RANK_MAX_WIDTH), colour)
     face.pip(suit, PIP_CENTRE)
     return face.reduced()
@@ -293,8 +301,12 @@ def render_joker(scale: int) -> Image.Image:
     """Draw the joker at *scale*: a steel star over a JK legend."""
     face = _Face(scale)
     face.frame(JOKER_BORDER)
-    face.polygons(_star(face.spot(STAR_CENTRE, STAR_SIZE)), ACCENT)
-    face.text("JK", face.legend(LEGEND_CENTRE, LEGEND_CAP_HEIGHT, LEGEND_MAX_WIDTH), ACCENT)
+    face.polygons(_star(face.spot(STAR_CENTRE, STAR_SIZE)), JOKER_STEEL)
+    face.text(
+        "JK",
+        face.legend(LEGEND_CENTRE, LEGEND_CAP_HEIGHT, LEGEND_MAX_WIDTH),
+        JOKER_STEEL,
+    )
     return face.reduced()
 
 

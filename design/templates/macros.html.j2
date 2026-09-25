@@ -1,7 +1,11 @@
 {#- rivercrossing.htmlexport — widget macros (Spec §8).
     One macro per page section; base.html.j2 imports this file as `m`.
     Card = ["rank", suit] where suit is s/h/d/c or "j" (joker).
-    Mono palette: hearts & diamonds take the steel accent (.chip.r), never red.
+    Suits render in suit colours: hearts & diamonds the suit red
+    (.chip.r), spades & clubs ink. Each suit glyph carries U+FE0E
+    (VS15) to request text presentation, so the CSS colour applies
+    where an emoji-capable fallback font would otherwise win; the
+    joker's ★ is not emoji-capable and carries none.
     Teams never render a plate anywhere: the podium card, top-teams row,
     full-field team row and "Most laps — teams" board all omit the cell, and
     the flat "Fastest" board blanks a team row's plate (its `team_plates`
@@ -22,7 +26,7 @@
     so the podium shows the whole hand too.
     autoescape is ON — all text renders through it; no |safe here. -#}
 
-{% set SUITS = {'s': '♠', 'h': '♥', 'd': '♦', 'c': '♣'} %}
+{% set SUITS = {'s': '♠︎', 'h': '♥︎', 'd': '♦︎', 'c': '♣︎'} %}{# each glyph carries U+FE0E (VS15): text presentation #}
 
 {% macro chip(c, big=false) -%}
 <span class="chip{% if c[1] == 'j' %} j{% elif c[1] in 'hd' %} r{% endif %}{% if big %} text-base leading-7 px-2{% endif %}">{% if c[1] == 'j' %}★ JOKER{% else %}{{ c[0] }} {{ SUITS[c[1]] }}{% endif %}</span>

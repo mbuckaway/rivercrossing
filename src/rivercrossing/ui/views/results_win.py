@@ -11,13 +11,28 @@ K♣ K♦ JK★ 9♥"), confirmed against ``design/docs-html``'s own table
 markup (a literal ``<td>`` string, not five drawn bitmaps) -- unlike
 ``main_frame.py``'s Card column, the standings lists need no
 ``DataViewBitmapRenderer``.
-:func:`format_best5` is the pure text formatter this column uses, and
-:func:`format_place` the E6.4.1 ⚠ badge formatter (a draw_required row
-renders ``"⚠ 2"`` in its Place cell -- this task's own reading of the
-footnote's "⚠ badge column": the canvas's own columns and their order
-are frozen, so a badge column would shift every frozen index; the
-badge instead leads the Place cell, where a scorer's eye lands first,
-and Phase 5's activation alert explains it).
+
+The two card columns ("Best 5" and Draw) colour **each red card on its
+own**: a ``DataViewItemAttr`` carries one text colour per CELL, and the
+five-card "Best 5" cell holds mixed suits, so a whole-cell colour would
+paint its ♠/♣ faces red -- the wrong suit, not merely a redundant cue.
+Both columns therefore render wx markup, one
+``<span color="...">`` per ♥/♦ card (``ui.card_text.card_markup``),
+through ``ui.views._support.append_markup_column``; the ♠/♣ cards come
+through bare, so they take the list's own adaptive foreground and stay
+visible on a dark background. The red itself follows the appearance
+(``theme.card_red()``), resolved when a model is built. The glyph still
+spells each suit, so the colour is decoration, never the sole channel
+(CODINGSTANDARDS-UX-DESKTOP.md §7).
+
+:func:`format_best5` and :func:`format_draw` are the pure cell
+formatters both columns use, and :func:`format_place` the E6.4.1 ⚠
+badge formatter (a draw_required row renders ``"⚠ 2"`` in its Place
+cell -- this task's own reading of the footnote's "⚠ badge column": the
+canvas's own columns and their order are frozen, so a badge column
+would shift every frozen index; the badge instead leads the Place cell,
+where a scorer's eye lands first, and Phase 5's activation alert
+explains it).
 
 Phase 3 split the standings by entry kind. A MIXED ride renders its
 Teams and Solo sections on the two ``results_notebook`` pages
@@ -89,13 +104,21 @@ from rivercrossing.cards import Card, draw_key
 from rivercrossing.ride import DEFAULT_TIEBREAK_ORDER
 from rivercrossing.roster import EntryMode, PlateModel
 from rivercrossing.standings import DRAW_TIE_NOTE
-from rivercrossing.ui import ids
-from rivercrossing.ui.card_text import JOKER_CODE, JOKER_DISPLAY, format_card
+from rivercrossing.ui import ids, theme
+from rivercrossing.ui.card_text import (
+    JOKER_CODE,
+    JOKER_DISPLAY,
+    SUIT_RED,
+    card_markup,
+    cards_markup,
+    format_card,
+)
 from rivercrossing.ui.presenters.results import ResultsPresenter
 from rivercrossing.ui.std_dialogs import show_info
 from rivercrossing.ui.views._support import (
     DialogFindMixin,
     _ordering,
+    append_markup_column,
     associate_model,
 )
 
@@ -120,6 +143,7 @@ __all__ = [
     "HAND_WIDTH",
     "JOKER_CODE",
     "JOKER_DISPLAY",
+    "MARKUP_COLUMNS",
     "MIN_SIZE",
     "SELF_TEST_NOTE",
     "STALE_INFOBAR",
@@ -151,6 +175,11 @@ COL_HAND = 5
 # list's Hand-width rule, which reads COL_PLATE) keep their pinned
 # meanings.
 COL_DRAW = 6
+
+# The two columns that render markup: each red card in the cell takes
+# its own suit red (``ui.card_text``). Drawn from the column indexes so
+# the set cannot drift from the accessors below.
+MARKUP_COLUMNS = frozenset({COL_BEST5, COL_DRAW})
 
 # xrc-windows.md D's column order after G6, which dropped the two
 # ride-clock columns (Total and Best lap): the scorer reads place,
@@ -245,13 +274,34 @@ STANDINGS_COLUMN_FLAGS = wx.dataview.DATAVIEW_COL_SORTABLE | wx.dataview.DATAVIE
 # retired with the UI-removals batch, so one surface owns every export.
 
 
-def format_best5(cards: Sequence[str]) -> str:
-    """Return the "Best 5" cell text for *cards*.
+def format_best5(cards: Sequence[str], red: str = SUIT_RED) -> str:
+    """Return the "Best 5" cell value for *cards*.
 
-    Space-joined, canvas exact: ``("KS", "KC", "KD", "JK", "9H")`` ->
-    ``"K♠ K♣ K♦ JK★ 9♥"``.
+    Space-joined, canvas exact, each ♥/♦ card in *red*:
+    ``("KS", "KC", "KD", "JK", "9H")`` ->
+    ``'K♠ K♣ <span color="#c0392b">K♦</span> JK★ …'``. The column is
+    built with the markup renderer (:data:`MARKUP_COLUMNS`), so this
+    markup *is* what the scorer reads; the glyph beside each colour
+    still spells its suit, and the ♠/♣ cards come through bare so the
+    list paints them in its own foreground. An empty hand is the empty
+    cell.
+
+    The column's **sort key** is not this string: sorting
+    ``<span color=…>`` would order the list by colour before rank
+    (:func:`_best5_sort_key`).
     """
-    return " ".join(format_card(card) for card in cards)
+    return cards_markup(cards, red)
+
+
+def _best5_sort_key(standing: StandingsRow) -> str:
+    """Return the Best 5 sort key: the canvas text, never markup.
+
+    Keyed on :func:`format_best5`'s markup, a red deuce would sort after
+    a bare ace (the span text ``#c0392b…`` outranks ``A♠``); the key is
+    therefore the glyph text the cell *displays*, which is what the
+    column ordered by before it carried colour at all.
+    """
+    return " ".join(format_card(card) for card in standing.best5)
 
 
 def format_place(standing: StandingsRow) -> str:
@@ -286,17 +336,23 @@ def format_laps(standing: StandingsRow) -> str:
     return str(standing.laps)
 
 
-def format_draw(standing: StandingsRow) -> str:
-    """Return the Draw cell text for *standing* (R-14).
+def format_draw(standing: StandingsRow, red: str = SUIT_RED) -> str:
+    """Return the Draw cell value for *standing*, red cards in *red*.
 
     The card the entry drew for the venue's high-card tie-break, in the
-    canvas's own card text (``format_card``: ``"10♦"``, ``"JK★"``). A
-    row whose entry drew nothing -- no hand tie, or a board read before
-    the finish's draw -- renders an empty cell.
+    canvas's own card text and the appearance's own suit red
+    (``card_markup``: ``'<span color="#c0392b">10♦</span>'``). A row
+    whose entry drew nothing -- no hand tie, or a board read before the
+    finish's draw -- renders an empty cell. The column carries the
+    markup renderer (:data:`MARKUP_COLUMNS`), and the sort key is the
+    parsed card, never this string (:func:`_draw_sort_key`).
+
+    The blank guard answers before ``card_markup``: the empty code
+    would reach ``format_card``, which raises ``IndexError`` on it.
     """
     if not standing.tiebreak_card:
         return ""
-    return format_card(standing.tiebreak_card)
+    return card_markup(standing.tiebreak_card, red)
 
 
 def draw_info_message(standing: StandingsRow) -> str:
@@ -347,8 +403,10 @@ def _draw_sort_key(standing: StandingsRow) -> int:
 
 
 # The native header sort's per-column key, in ``COLUMN_LABELS`` order:
-# Place and Laps are ints, the strings sort as text -- except the Draw
-# column, which keys on the parsed card (:func:`_draw_sort_key`).
+# Place and Laps are ints, the strings sort as text -- except Best 5,
+# which keys on the plain canvas text (``_best5_sort_key``: never the
+# markup, or the list would order by colour before rank), and Draw,
+# which keys on the parsed card (:func:`_draw_sort_key`).
 # Place and Laps both lead with the ``dns`` flag, so a DNS row sorts
 # after every placed row on either column instead of onto its
 # placeholder place 0 or its 0 laps.
@@ -357,7 +415,7 @@ _STANDINGS_SORT_KEYS: tuple[Callable[[StandingsRow], Any], ...] = (
     lambda standing: standing.plate,
     lambda standing: standing.entry,
     lambda standing: (standing.dns, standing.laps),
-    lambda standing: format_best5(standing.best5),
+    _best5_sort_key,
     lambda standing: standing.hand,
     _draw_sort_key,
 )
@@ -371,10 +429,11 @@ class StandingsListModel(wx.dataview.DataViewIndexListModel):  # type: ignore[mi
     ``CrossingsFeedModel`` carries in ``views/main_frame.py``.
     """
 
-    def __init__(self, rows: Sequence[StandingsRow]) -> None:
-        """Wrap *rows*."""
+    def __init__(self, rows: Sequence[StandingsRow], red: str = SUIT_RED) -> None:
+        """Wrap *rows*, colouring red cards in *red*."""
         super().__init__(len(rows))
         self._rows = tuple(rows)
+        self._red = red
 
     def GetColumnCount(self) -> int:
         """Return the standings' fixed column count (COLUMN_LABELS)."""
@@ -385,8 +444,21 @@ class StandingsListModel(wx.dataview.DataViewIndexListModel):  # type: ignore[mi
         return "string"
 
     def GetValueByRow(self, row: int, col: int) -> Any:  # noqa: ANN401 -- wx ships no stubs
-        """Return the cell value at *row*/*col*."""
-        return _TEXT_ACCESSORS[col](self._rows[row])
+        """Return the cell value at *row*/*col*.
+
+        The two card columns' values are markup -- one coloured span per
+        card (:data:`MARKUP_COLUMNS`) -- because a per-cell attribute
+        cannot colour a five-card hand's mixed suits. Both render
+        through this model's own ``red`` rather than the default-red
+        accessors in :data:`_TEXT_ACCESSORS`; the other five columns
+        stay plain text.
+        """
+        standing = self._rows[row]
+        if col == COL_BEST5:
+            return format_best5(standing.best5, self._red)
+        if col == COL_DRAW:
+            return format_draw(standing, self._red)
+        return _TEXT_ACCESSORS[col](standing)
 
     def standing_at(self, row: int) -> StandingsRow | None:
         """Return the row at *row*, or None when *row* names none.
@@ -560,6 +632,12 @@ class ResultsWindow(DialogFindMixin):  # _find: ui.views._support
     ) -> None:
         """Append one list's seven columns in canvas order.
 
+        The two card columns (Best 5, Draw) are built by hand with the
+        markup renderer -- each card in the cell takes its own suit
+        colour (:data:`MARKUP_COLUMNS`,
+        :func:`~rivercrossing.ui.views._support.append_markup_column`);
+        every other column is plain text.
+
         Args:
             control: The ``DataViewCtrl`` to append to.
             hide_plate: Hide the Plate column (a pooled team's list).
@@ -571,7 +649,13 @@ class ResultsWindow(DialogFindMixin):  # _find: ui.views._support
         widths = list(COLUMN_WIDTHS)
         widths[COL_HAND] = hand_width
         columns = [
-            control.AppendTextColumn(label, col, width=widths[col], flags=STANDINGS_COLUMN_FLAGS)
+            append_markup_column(
+                control, label, col, width=widths[col], flags=STANDINGS_COLUMN_FLAGS
+            )
+            if col in MARKUP_COLUMNS
+            else control.AppendTextColumn(
+                label, col, width=widths[col], flags=STANDINGS_COLUMN_FLAGS
+            )
             for col, label in enumerate(COLUMN_LABELS)
         ]
         if hide_plate:
@@ -639,14 +723,14 @@ class ResultsWindow(DialogFindMixin):  # _find: ui.views._support
         why this repaints explicitly (unverified remedy).
         """
         if self.entry_mode is EntryMode.MIXED:
-            self._teams_model = StandingsListModel(teams)
-            self._solo_model = StandingsListModel(solo)
+            self._teams_model = StandingsListModel(teams, theme.card_red())
+            self._solo_model = StandingsListModel(solo, theme.card_red())
             associate_model(self.teams_standings_list, self._teams_model)
             associate_model(self.solo_standings_list, self._solo_model)
             self.standings_list.Hide()
             self.results_notebook.Show()
         else:
-            self._model = StandingsListModel(solo)
+            self._model = StandingsListModel(solo, theme.card_red())
             associate_model(self.standings_list, self._model)
             self.results_notebook.Hide()
             self.standings_list.Show()

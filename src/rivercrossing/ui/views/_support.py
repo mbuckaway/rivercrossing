@@ -39,6 +39,10 @@ columns with the sortable flag and answer wx's header sort through
 ride library do. That retired the presenter-owned ▲/▼ marker
 (``apply_sort_indicator``): the platform's own header arrow replaces
 it.
+
+:func:`append_markup_column` is the one hand-built column the four card
+cells need -- ``AppendTextColumn`` cannot enable markup -- see its own
+docstring for the three measured details it carries.
 """
 
 from __future__ import annotations
@@ -52,6 +56,8 @@ from typing import TYPE_CHECKING, Any, ClassVar
 import wx
 import wx.xrc  # submodule, not loaded by plain `import wx`
 
+from rivercrossing.ui import rider_columns
+from rivercrossing.ui.card_text import SUIT_RED
 from rivercrossing.ui.cards_imagelist import CardImageList, load_card_image_list
 
 if TYPE_CHECKING:
@@ -66,6 +72,7 @@ __all__ = [
     "XRC_WARN",
     "DialogFindMixin",
     "RiderRowListModel",
+    "append_markup_column",
     "associate_model",
     "clamp_to_display",
     "default_card_images",
@@ -511,6 +518,51 @@ def associate_model(control: Any, model: Any) -> None:  # noqa: ANN401 -- wx shi
     control.Update()
 
 
+def append_markup_column(  # noqa: PLR0913 -- mirrors the wx append-column shape
+    control: Any,  # noqa: ANN401 -- wx ships no stubs
+    label: str,
+    col: int,
+    *,
+    width: int,
+    flags: int,
+) -> Any:  # noqa: ANN401 -- the appended wx.DataViewColumn
+    """Append a text column whose renderer parses **wx markup**.
+
+    A card's red is a text colour -- but a ``DataViewItemAttr`` carries
+    ONE colour per CELL, which cannot colour a cell holding several
+    cards of mixed suits (the standings' five-card "Best 5", the console
+    Riders sidebar's Cards cell) without painting its ♠/♣ faces red.
+    Such a cell renders markup instead: one ``<span color="...">`` per
+    ♥/♦ card (``ui.card_text``); the ♠/♣ cards stay bare text and take
+    the control's own foreground.
+
+    ``AppendTextColumn`` cannot do that -- it builds its renderer
+    internally and takes no renderer argument (measured: wxPython
+    4.3.1 exposes no such overload) -- so the column is built by hand as
+    ``DataViewColumn(label, renderer, model_col, ...)`` and appended
+    with ``AppendColumn``. Three details are load-bearing:
+
+    * ``EnableMarkup()``, or the renderer draws the markup source text;
+    * a **fresh** renderer per call: a ``DataViewColumn`` owns its
+      renderer, and handing one renderer to two columns aborts the
+      process (measured: the second construction segfaults);
+    * ``align=wx.ALIGN_NOT``, because ``DataViewColumn`` defaults to
+      centred text while ``AppendTextColumn``'s own default is the
+      left-aligned ``ALIGN_NOT`` -- the columns beside these are
+      left-aligned, so the card cells must be too.
+
+    The width is passed to that constructor exactly as
+    ``AppendTextColumn``'s is; a hand-built column resolves it when a
+    control takes ownership.
+    """
+    renderer = wx.dataview.DataViewTextRenderer()
+    renderer.EnableMarkup()
+    column = wx.dataview.DataViewColumn(
+        label, renderer, col, width=width, align=wx.ALIGN_NOT, flags=flags
+    )
+    return control.AppendColumn(column)
+
+
 class RiderRowListModel(wx.dataview.DataViewIndexListModel):  # type: ignore[misc]
     """Read-only model over ``RiderRow`` rows for a rider list.
 
@@ -521,7 +573,11 @@ class RiderRowListModel(wx.dataview.DataViewIndexListModel):  # type: ignore[mis
     and the console passes
     :data:`~rivercrossing.ui.rider_columns.CONSOLE_RIDER_COLUMNS`.
     Every cell renders through its column's own ``value`` accessor,
-    so a column and the cell it draws cannot drift.
+    so a column and the cell it draws cannot drift -- except the
+    console's Cards column, whose value depends on the appearance and
+    is therefore the one cell this model renders itself, through
+    ``rider_columns.cards_cell`` with the ``red`` it was built with
+    (``theme.card_red()``).
 
     ``# type: ignore[misc]``: wx ships no stubs, so mypy refuses to
     subclass ``Any`` -- the same unavoidable annotation
@@ -532,11 +588,17 @@ class RiderRowListModel(wx.dataview.DataViewIndexListModel):  # type: ignore[mis
         self,
         rows: Sequence[RiderRow],
         columns: Sequence[RiderColumn],
+        red: str = SUIT_RED,
     ) -> None:
-        """Wrap *rows*, rendering each cell through *columns*."""
+        """Wrap *rows*, rendering each cell through *columns*.
+
+        *red* is the appearance's own card red; a list with no Cards
+        column (the rider editor's) never reads it.
+        """
         super().__init__(len(rows))
         self._rows = tuple(rows)
         self._columns = tuple(columns)
+        self._red = red
 
     def GetColumnCount(self) -> int:
         """Return the number of shared columns this list carries."""
@@ -547,8 +609,16 @@ class RiderRowListModel(wx.dataview.DataViewIndexListModel):  # type: ignore[mis
         return "string"
 
     def GetValueByRow(self, row: int, col: int) -> Any:  # noqa: ANN401 -- wx ships no stubs
-        """Return the cell value at *row*/*col*."""
-        return self._columns[col].value(self._rows[row])
+        """Return the cell value at *row*/*col*.
+
+        The Cards column is the one cell whose value the appearance
+        changes, so it is rendered here with this model's own red
+        rather than through the column's default-red accessor.
+        """
+        row_value = self._rows[row]
+        if col == rider_columns.RIDERS_COL_CARDS:
+            return rider_columns.cards_cell(row_value, self._red)
+        return self._columns[col].value(row_value)
 
     def Compare(  # noqa: PLR0913, PLR0917 -- wx's own four-argument callback shape
         self,

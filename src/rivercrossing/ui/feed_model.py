@@ -18,7 +18,7 @@ split ``cards_imagelist.py`` draws between its pure helpers and
 
 from typing import TYPE_CHECKING, Any
 
-from rivercrossing.ui.card_text import format_card
+from rivercrossing.ui.card_text import SUIT_RED, card_markup
 from rivercrossing.ui.rider_columns import plate_order_key
 
 if TYPE_CHECKING:
@@ -41,8 +41,8 @@ __all__ = [
     "LAP_TIME_COLUMN",
     "TOTAL_COLUMN",
     "card_cell_text",
+    "card_markup_or_blank",
     "card_status_text",
-    "card_text_or_blank",
     "edited_row_indexes",
     "entry_text",
     "flash_crossing_label",
@@ -188,21 +188,22 @@ def entry_text(row: FeedRow) -> str:
     return f"{row.entry} DNF" if row.dnf else row.entry
 
 
-def card_text_or_blank(card: str) -> str:
-    """Return *card*'s display text, or ``""`` if it names no card.
+def card_markup_or_blank(card: str, red: str = SUIT_RED) -> str:
+    """Return *card*'s cell markup, or ``""`` for no card.
 
     W9: the feed's Card column always carries a real dealt code -- a
     held crossing's row shows the held card's own code, not the
     retired literal placeholder -- so the blank cell is the seam for
     any unmappable text (``""``, corrupt strings) that does not need a
     ``CardImageList`` (or ``wx``) to be detected. Delegates the code
-    to text mapping to the shared
-    :func:`~rivercrossing.ui.card_text.format_card`, turning its
+    to markup mapping to the shared
+    :func:`~rivercrossing.ui.card_text.card_markup`, turning its
     ``KeyError`` (unknown suit) and ``IndexError`` (empty code) into
-    the blank cell.
+    the blank cell. *red* is the appearance's own red, threaded in by
+    the model's construction.
     """
     try:
-        return format_card(card)
+        return card_markup(card, red)
     except KeyError, IndexError:
         return ""
 
@@ -224,23 +225,30 @@ def card_status_text(row: FeedRow) -> str:
     ``"Held"``, ``"Credited"`` or ``"Void"`` for the three states
     ``data_source._card_status_for`` derives -- and ``""`` for a row
     that dealt no card at all (``FeedRow.card_status``'s own default),
-    so an undealt row renders the blank cell ``card_text_or_blank``
+    so an undealt row renders the blank cell ``card_markup_or_blank``
     already gives it. The words are title-cased for the cell; the
-    stored field stays the lowercase token.
+    stored field stays the lowercase token. This is the review tab's
+    own Card column (``FlaggedListModel``), which names a disposition
+    rather than a card face -- so it is plain text, never markup.
     """
     return _CARD_STATUS_TEXTS[row.card_status]
 
 
-def card_cell_text(row: FeedRow) -> str:
-    """Return the feed Card column's cell text for *row*.
+def card_cell_text(row: FeedRow, red: str = SUIT_RED) -> str:
+    """Return the feed Card column's cell value for *row*.
 
     A voided card reads "Void" -- the card is out of the ride, so its
     glyph would mislead -- while a held, credited or duplicate row
-    keeps the real dealt card's glyph.
+    keeps the real dealt card's glyph: a red suit in *red* (the
+    appearance's own, threaded in by the model's construction) and a
+    ♠/♣ bare, so those faces take the list's own foreground and follow
+    the appearance. The Card column is built with the markup renderer,
+    so a dealt red card's value is that span and the "Void", blank and
+    bare cells are plain text the renderer passes through.
     """
     if row.card_status == "voided":
         return _CARD_STATUS_TEXTS["voided"]
-    return card_text_or_blank(row.card)
+    return card_markup_or_blank(row.card, red)
 
 
 def held_duplicate_row_indexes(rows: Sequence[FeedRow]) -> frozenset[int]:

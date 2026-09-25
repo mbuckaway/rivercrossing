@@ -64,7 +64,13 @@ from pypdf import PdfReader
 from rivercrossing import pdfexport
 from rivercrossing.cards import Card, Rank, Shoe, Suit
 from rivercrossing.hands import best_hand
-from rivercrossing.htmlexport import SELF_TEST_NOTE, ExportOptions, ResultRow, build_payload
+from rivercrossing.htmlexport import (
+    SELF_TEST_NOTE,
+    CardPair,
+    ExportOptions,
+    ResultRow,
+    build_payload,
+)
 from rivercrossing.standings import EntryResult, Placed
 
 if TYPE_CHECKING:
@@ -1852,21 +1858,144 @@ def test_format_km_formats_integral_and_fractional_lap_km(lap_km: float, expecte
     assert pdfexport._format_km(lap_km) == expected
 
 
-def test_cards_cell_clips_cards_wider_than_the_column() -> None:
-    """A card crossing the column's right edge is dropped, not spilled.
+# -------------------------------------- card face colours + boxed faces
+
+
+@pytest.mark.parametrize(
+    ("suit_letter", "expected"),
+    [
+        ("h", (192, 57, 43)),
+        ("d", (192, 57, 43)),
+        ("s", (29, 31, 32)),
+        ("c", (29, 31, 32)),
+        ("j", (65, 97, 128)),
+    ],
+)
+def test_card_colour_maps_the_suit_letter_to_the_face_colour(
+    suit_letter: str, expected: tuple[int, int, int]
+) -> None:
+    """Map a suit letter to its face colour.
+
+    Hearts/diamonds take the suit red, spades/clubs stay ink, and a
+    joker -- not a suit -- keeps the steel accent.
+    """
+    assert pdfexport._card_colour(suit_letter) == expected
+
+
+@pytest.mark.parametrize(
+    ("draw", "expected"),
+    [
+        (("A", "h"), (192, 57, 43)),
+        (("9", "d"), (192, 57, 43)),
+        (("9", "s"), (29, 31, 32)),
+        (("9", "c"), (29, 31, 32)),
+        (("JK", "j"), (65, 97, 128)),
+        (None, (65, 97, 128)),
+    ],
+)
+def test_marker_colour_maps_the_drawn_card_to_its_face_colour(
+    draw: CardPair | None, expected: tuple[int, int, int]
+) -> None:
+    """Take R-14's marker colour from the drawn card's own face.
+
+    A drawn ♥ reads red exactly as it does in a best-5 run. A row that
+    drew nothing never draws the run, so its steel placeholder never
+    renders.
+    """
+    row = ResultRow(place=1, plate=88, entry="X", entry_type="SOLO", laps=11, hand="", draw=draw)
+
+    assert pdfexport._marker_colour(row) == expected
+
+
+def test_marker_style_carries_the_drawn_card_colour() -> None:
+    """Carry the drawn card's colour into the DejaVu marker run.
+
+    The run draws at the hand prose's own size, in the drawn card's
+    colour rather than a fixed steel.
+    """
+    style = pdfexport._marker_style(pdfexport._HAND_STYLE, (192, 57, 43))
+
+    assert (style.font, style.size, style.color, style.bold) == (
+        pdfexport._FONT_GLYPH,
+        pdfexport._HAND_STYLE.size,
+        (192, 57, 43),
+        False,
+    )
+
+
+def test_cards_cell_clips_a_boxed_card_wider_than_the_column() -> None:
+    """Drop a boxed card wider than the column rather than spill it.
 
     The full-field/top-ten card columns are wide enough that the guard
-    never trips in a normal render; this pins its contract directly --
-    a too-narrow column yields no text past its right edge.
+    never trips in a normal render; this pins its contract directly.
+    The column sits between the raw text width and the boxed width, so
+    a clip measured on the text alone would still draw this card and
+    spill its box into the next column.
     """
     report = pdfexport._ReportPDF(
         build_ride(), golden_opts(), letter=True, created_at=FIXED_CREATED
     )
     report.add_page()
+    report.set_font(pdfexport._FONT_GLYPH, "", 7)
+    text_width = report.get_string_width("9♠")
 
-    report._cards_cell((("9", "s"), ("9", "d"), ("9", "c"), ("K", "h"), ("2", "s")), 0.05)
+    report._cards_cell((("9", "s"),), text_width + pdfexport._CARD_PAD)
 
     assert report.get_x() == report.l_margin
+
+
+def test_cards_cell_draws_a_fitting_card_as_one_boxed_cell() -> None:
+    """Draw a fitting card as one boxed cell, leaving the run's gap.
+
+    The T-3 complement to the clip test above.
+    """
+    report = pdfexport._ReportPDF(
+        build_ride(), golden_opts(), letter=True, created_at=FIXED_CREATED
+    )
+    report.add_page()
+    report.set_font(pdfexport._FONT_GLYPH, "", 7)
+    boxed = report.get_string_width("9♠") + 2 * pdfexport._CARD_PAD
+
+    report._cards_cell((("9", "s"),), boxed)
+
+    assert report.get_x() == report.l_margin + boxed + pdfexport._CARD_GAP
+
+
+def test_large_cards_clips_a_boxed_card_wider_than_the_content() -> None:
+    """Drop a boxed poster card wider than the content, not spill it.
+
+    The poster's large faces clip like the report's cells: a card
+    whose boxed face would cross the content's right edge is dropped,
+    not spilled past the margin.
+    """
+    poster = pdfexport._PosterPDF(
+        build_ride(), letter=True, created_at=FIXED_CREATED, logo_path=None
+    )
+    poster.add_page()
+    poster.set_font(pdfexport._FONT_GLYPH, "", 18)
+    text_width = poster.get_string_width("9♠")
+    poster.set_x(poster.l_margin + poster.epw - text_width - pdfexport._CARD_PAD)
+
+    poster._large_cards((Card(Rank.NINE, Suit.SPADES),), size=18, height=0.30)
+
+    assert poster.get_x() == poster.l_margin + poster.epw - text_width - pdfexport._CARD_PAD
+
+
+def test_large_cards_draws_a_fitting_card_as_one_boxed_cell() -> None:
+    """Draw a fitting poster card as one boxed cell, leaving the gap.
+
+    The T-3 complement to the clip test above.
+    """
+    poster = pdfexport._PosterPDF(
+        build_ride(), letter=True, created_at=FIXED_CREATED, logo_path=None
+    )
+    poster.add_page()
+    poster.set_font(pdfexport._FONT_GLYPH, "", 18)
+    boxed = poster.get_string_width("9♠") + 2 * pdfexport._CARD_PAD
+
+    poster._large_cards((Card(Rank.NINE, Suit.SPADES),), size=18, height=0.30)
+
+    assert poster.get_x() == poster.l_margin + boxed + pdfexport._CARD_GAP
 
 
 # ------------------------------------------------- logo seam (E6.4.2)

@@ -19,12 +19,15 @@ import pytest
 from hypothesis import given
 from hypothesis import strategies as st
 
+from rivercrossing.ui.card_text import DARK_RED, SUIT_RED, cards_markup
 from rivercrossing.ui.presenters.data_source import RiderRow
 from rivercrossing.ui.rider_columns import (
     CONSOLE_RIDER_COLUMNS,
     EDITOR_RIDER_COLUMNS,
+    RIDERS_COL_CARDS,
     SOLO_TEAM_TEXT,
     RiderColumn,
+    cards_cell,
 )
 
 if TYPE_CHECKING:
@@ -111,20 +114,44 @@ def test_column_value_given_a_row_returns_its_canvas_cell_text(
 
 CARD_CELL_CASES = (
     ((), ""),  # T-4 collection boundary: empty
-    (("AS",), "A♠"),  # T-4 collection boundary: single
-    (("AS", "KH", "10D"), "A♠ K♥ 10♦"),  # T-4 collection boundary: many
-    (("9H", "KD"), "9♥ K♦"),  # the goal's own example
+    (("AS",), "A♠"),  # T-4 boundary: single
+    (
+        ("AS", "KH", "10D"),
+        (f'A♠ <span color="{SUIT_RED}">K♥</span> <span color="{SUIT_RED}">10♦</span>'),
+    ),  # T-4 boundary: many
+    (
+        ("9H", "KD"),
+        f'<span color="{SUIT_RED}">9♥</span> <span color="{SUIT_RED}">K♦</span>',
+    ),  # the goal's own example
     (("JK",), "JK★"),  # the joker marker
 )
 
 
 @pytest.mark.parametrize(("cards", "expected"), CARD_CELL_CASES)
-def test_cards_column_value_given_a_hand_returns_the_space_joined_glyph_text(
+def test_cards_column_value_given_a_hand_spans_each_red_card_and_no_other(
     cards: tuple[str, ...],
     expected: str,
 ) -> None:
-    """The console Cards cell is the dealt codes as glyphs."""
+    """The console Cards cell reds each red card, black suits bare."""
     assert _column("Cards").value(_row(cards=cards)) == expected
+
+
+def test_cards_cell_given_the_appearance_dark_red_uses_it_for_the_red_cards() -> None:
+    """The appearance's red is what the accessor's ``red`` carries."""
+    assert cards_cell(_row(cards=("AS", "KH")), DARK_RED) == (
+        f'A♠ <span color="{DARK_RED}">K♥</span>'
+    )
+
+
+def test_riders_col_cards_given_the_shared_layout_indexes_the_cards_column() -> None:
+    """The model's own way of naming the column the red applies to."""
+    assert RIDERS_COL_CARDS == 4
+    assert CONSOLE_RIDER_COLUMNS[RIDERS_COL_CARDS].label == "Cards"
+
+
+def test_editor_columns_given_the_shared_layout_carry_no_cards_column() -> None:
+    """The editor's list has no Cards cell, so the index is unused."""
+    assert all(column.label != "Cards" for column in EDITOR_RIDER_COLUMNS)
 
 
 _VALID_RANKS = ("2", "3", "4", "5", "6", "7", "8", "9", "10", "J", "Q", "K", "A")
@@ -143,10 +170,18 @@ _VALID_CARD_CODE = st.builds(
 
 @given(cards=st.lists(_VALID_CARD_CODE, min_size=1, max_size=6))
 def test_cards_column_value_given_any_hand_preserves_its_card_count(cards: list[str]) -> None:
-    """Property (T-7): one display token per dealt card."""
-    text = _column("Cards").value(_row(cards=tuple(cards)))
+    """Property (T-7): one suit glyph per dealt card, red or bare."""
+    cell = _column("Cards").value(_row(cards=tuple(cards)))
 
-    assert len(text.split(" ")) == len(cards)
+    assert sum(cell.count(glyph) for glyph in "♠♥♦♣") == len(cards)
+
+
+@given(cards=st.lists(_VALID_CARD_CODE, min_size=1, max_size=6))
+def test_cards_column_value_given_any_hand_is_the_shared_builders_markup(cards: list[str]) -> None:
+    """Property (T-7): the cell is the one builder's own markup."""
+    cell = _column("Cards").value(_row(cards=tuple(cards)))
+
+    assert cell == cards_markup(tuple(cards))
 
 
 # --------------------------------------------------------- sort keys

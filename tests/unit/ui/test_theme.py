@@ -36,7 +36,7 @@ in a Light appearance -- is not exercised here.
 import pytest
 import wx
 
-from rivercrossing.ui import theme
+from rivercrossing.ui import card_text, theme
 
 # --- notice_for_result: the AppearanceResult matrix (T-3/T-13) ------
 
@@ -322,3 +322,31 @@ def test_apply_light_mode_panel_bg_given_dark_appearance_leaves_background_nativ
 def test_light_panel_bg_constant_is_the_neutral_light_grey_tone() -> None:
     """The panel tone is a single neutral light grey, not white."""
     assert theme._LIGHT_PANEL_BG == (230, 230, 230)
+
+
+# --- card_red: the app-list red the appearance chooses ---------------
+#
+# The card lists draw only the red explicitly (ui/card_text.py), so the
+# red has to follow the appearance: `#c0392b` is 3.07:1 on a dark list,
+# under §7's 4.5:1 floor, and the dark red is under it on a light one.
+# The probe is the same measured `GetAppearance().IsDark()` the panel
+# tint above uses, so these tests drive it through the same fake wx
+# module and never a real wx.App (module docstring).
+
+
+def test_card_red_given_a_dark_appearance_returns_the_dark_red(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A dark appearance takes the dark red."""
+    monkeypatch.setattr(theme, "require_wx", lambda: _FakeWx(dark=True))
+
+    assert theme.card_red() == card_text.DARK_RED
+
+
+def test_card_red_given_a_light_appearance_returns_the_light_suit_red(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The Light radio, or System on a light OS, keeps #c0392b."""
+    monkeypatch.setattr(theme, "require_wx", lambda: _FakeWx(dark=False))
+
+    assert theme.card_red() == card_text.SUIT_RED
