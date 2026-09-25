@@ -64,11 +64,11 @@ jobs:
         os: [macos-latest, windows-latest, windows-11-arm]
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: ${{ env.PYTHON_VERSION }}
-      - uses: astral-sh/setup-uv@v5
+      - uses: astral-sh/setup-uv@v10.2.0
         with:
           enable-cache: true
       - name: Install
@@ -99,11 +99,11 @@ jobs:
         os: [macos-latest, windows-latest, windows-11-arm]
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: ${{ env.PYTHON_VERSION }}
-      - uses: astral-sh/setup-uv@v5
+      - uses: astral-sh/setup-uv@v10.2.0
         with:
           enable-cache: true
       - name: Install
@@ -112,7 +112,7 @@ jobs:
         run: pytest tests/unit -m "not functional"
       - name: Upload coverage
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: coverage-${{ matrix.os }}
           path: coverage.json
@@ -133,11 +133,11 @@ jobs:
     runs-on: ${{ matrix.os }}
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: ${{ env.PYTHON_VERSION }}
-      - uses: astral-sh/setup-uv@v5
+      - uses: astral-sh/setup-uv@v10.2.0
         with:
           enable-cache: true
       - name: Install
@@ -155,11 +155,11 @@ jobs:
     needs: [static, unit]
     runs-on: macos-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: ${{ env.PYTHON_VERSION }}
-      - uses: astral-sh/setup-uv@v5
+      - uses: astral-sh/setup-uv@v10.2.0
         with:
           enable-cache: true
       - name: Install
@@ -171,7 +171,7 @@ jobs:
       - name: Package the dev bundle (tar preserves the symlinks)
         run: tar -czf rivercrossing-app.tgz -C dist RiverCrossing.app
       - name: Upload dev bundle
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: rivercrossing-devbundle-macos
           path: rivercrossing-app.tgz
@@ -179,7 +179,7 @@ jobs:
       # The release job needs just the DMG -- its own artifact spares it
       # a 118 MB devbundle download for one file.
       - name: Upload the DMG
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: rivercrossing-dmg
           path: dist/RiverCrossing-*.dmg
@@ -203,11 +203,11 @@ jobs:
     env:
       RIVERCROSSING_EXPECT_WIN_ARCH: x64
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: ${{ env.PYTHON_VERSION }}
-      - uses: astral-sh/setup-uv@v5
+      - uses: astral-sh/setup-uv@v10.2.0
         with:
           enable-cache: true
       - name: Install
@@ -220,21 +220,21 @@ jobs:
         run: nox -s winsetup
       - name: Upload the setup executable
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: rivercrossing-setup-windows-x64
           path: dist/RiverCrossing-*-setup.exe
           if-no-files-found: warn
       - name: Upload the Windows dev bundle
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: rivercrossing-devbundle-windows-x64
           path: dist/rivercrossing/**
           if-no-files-found: ignore
       - name: Upload packaging diagnostics
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: winsetup-diagnostics-x64
           path: |
@@ -249,11 +249,11 @@ jobs:
     env:
       RIVERCROSSING_EXPECT_WIN_ARCH: arm64
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: ${{ env.PYTHON_VERSION }}
-      - uses: astral-sh/setup-uv@v5
+      - uses: astral-sh/setup-uv@v10.2.0
         with:
           enable-cache: true
       - name: Install
@@ -265,21 +265,21 @@ jobs:
         run: nox -s winsetup
       - name: Upload the setup executable
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: rivercrossing-setup-windows-arm64
           path: dist/RiverCrossing-*-setup.exe
           if-no-files-found: warn
       - name: Upload the Windows dev bundle
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: rivercrossing-devbundle-windows-arm64
           path: dist/rivercrossing/**
           if-no-files-found: ignore
       - name: Upload packaging diagnostics
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: winsetup-diagnostics-arm64
           path: |
@@ -325,7 +325,7 @@ jobs:
       APPLE_NOTARY_KEY: ${{ secrets.APPLE_NOTARY_KEY }}
       APPLE_NOTARY_ISSUER: ${{ secrets.APPLE_NOTARY_ISSUER }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Tag matches rivercrossing.__version__
         run: |
           version="$(python3 -c "import sys; sys.path.insert(0, 'src'); import rivercrossing; print(rivercrossing.__version__)")"
@@ -347,10 +347,10 @@ jobs:
             echo "no CHANGELOG section for ${version} -- add it before tagging" >&2
             exit 1
           fi
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: ${{ env.PYTHON_VERSION }}
-      - uses: astral-sh/setup-uv@v5
+      - uses: astral-sh/setup-uv@v10.2.0
         with:
           enable-cache: true
       - name: Install
@@ -375,7 +375,7 @@ jobs:
       # ------------------------------------------------ signed path
       - name: Download the macOS dev bundle
         if: steps.signing.outputs.signed == '1'
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: rivercrossing-devbundle-macos
           path: devbundle
@@ -450,11 +450,11 @@ jobs:
       # ------------------------------------ unsigned fallback path
       - name: Download the unsigned DMG (advisory fallback)
         if: steps.signing.outputs.signed != '1'
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: rivercrossing-dmg
           path: assets
-      # upload-artifact@v4 preserves workspace-relative paths, so the
+      # upload-artifact preserves workspace-relative paths, so the
       # artifact lands as assets/dist/RiverCrossing-<version>.dmg; the
       # flat layout is handled too.
       - name: Normalize the unsigned DMG
@@ -471,12 +471,12 @@ jobs:
           fi
       # -------------------------------------------------- both paths
       - name: Download the Windows x64 installer
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: rivercrossing-setup-windows-x64
           path: assets
       - name: Download the Windows ARM64 installer
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: rivercrossing-setup-windows-arm64
           path: assets
