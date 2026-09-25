@@ -6,6 +6,8 @@ All notable changes to RiverCrossing are recorded here. The format follows
 
 ## [Unreleased]
 
+## [1.2.0] - 2026-09-24
+
 ### Added
 
 - **Publish results to WordPress** — the Results menu gains **Publish to WordPress…**, which creates
@@ -14,6 +16,9 @@ All notable changes to RiverCrossing are recorded here. The format follows
   parent "section" page, and the publish status; the connection and page defaults persist in the
   settings file. The published content is the app's own results layout, scoped so it cannot restyle
   the site's theme.
+- **Publishing is cancellable and reports its result** — the publish runs behind a progress window
+  with a **Cancel**, and when it finishes that window reports the outcome and offers **Open** to view
+  the published page in a browser, or **OK** to return to the console (R-86).
 
 ### Changed
 
